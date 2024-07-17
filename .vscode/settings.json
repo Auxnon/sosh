@@ -2,9 +2,6 @@
     "windowColors.🌈 BaseColor": "#a2a832",
     "workbench.colorCustomizations": {
         "editor.lineHighlightBackground": "#1073cf2d",
-        "editor.lineHighlightBorder": "#9fced11f",
-        "activityBar.background": "#A2A832",
-        "titleBar.activeBackground": "#C5CB50",
-        "titleBar.activeForeground": "#191A08"
+        "editor.lineHighlightBorder": "#9fced11f"
     }
 }

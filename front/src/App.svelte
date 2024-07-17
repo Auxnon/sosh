@@ -6,22 +6,13 @@
 </script>
 
 <main>
-  <div>
-    <a href="https://vitejs.dev" target="_blank" rel="noreferrer">
-      <img src={viteLogo} class="logo" alt="Vite Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank" rel="noreferrer">
-      <img src={svelteLogo} class="logo svelte" alt="Svelte Logo" />
-    </a>
+  <div class="absolute w-full h-full">
+    <Canvas />
   </div>
-  <h1 class="bg-red-500 rounded-md p-1">Vite & Svelte</h1>
+  <h1 class="bg-red-500 rounded-md p-1">Test</h1>
 
   <div class="card">
     <Counter />
-  </div>
-
-  <div class="card">
-    <Canvas />
   </div>
 
   <p>
