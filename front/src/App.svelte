@@ -11,9 +11,7 @@
   </div>
   <h1 class="bg-red-500 rounded-md p-1">Test</h1>
 
-  <div class="card">
-    <Counter />
-  </div>
+  <div class="card"></div>
 
   <p>
     Check out <a href="https://github.com/sveltejs/kit#readme" target="_blank" rel="noreferrer">SvelteKit</a>, the

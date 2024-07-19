@@ -2,14 +2,15 @@
   import { onMount } from "svelte";
   import { create } from "./instance";
 
-  export let width = 800;
-  export let height = 600;
+  export let width = window.innerWidth;
+  export let height = window.innerHeight;
 
   let element: HTMLCanvasElement;
 
   onMount(() => {
-    element.width = width || window.innerWidth;
-    element.height = height || window.innerHeight;
+    element.width = width;
+    element.height = height;
+    console.log(element.width, element.height);
     create(element);
   });
 </script>
