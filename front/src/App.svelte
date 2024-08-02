@@ -3,22 +3,16 @@
   import viteLogo from "/vite.svg";
   import Counter from "./lib/Counter.svelte";
   import Canvas from "./lib/Canvas.svelte";
+  import { Vector3 } from "three";
+
+  let point: Vector3 = new Vector3(1, 2, 3);
 </script>
 
-<main>
-  <div class="absolute w-full h-full">
-    <Canvas />
-  </div>
-  <h1 class="bg-red-500 rounded-md p-1">Test</h1>
-
-  <div class="card"></div>
-
-  <p>
-    Check out <a href="https://github.com/sveltejs/kit#readme" target="_blank" rel="noreferrer">SvelteKit</a>, the
-    official Svelte app framework powered by Vite!
-  </p>
-
-  <p class="read-the-docs">Click on the Vite and Svelte logos to learn more</p>
+<div class="absolute w-full h-full">
+  <Canvas bind:point />
+</div>
+<main class="absolute w-1/2">
+  <h1 class="bg-red-500 rounded-md p-1">{point.z}</h1>
 </main>
 
 <style>
