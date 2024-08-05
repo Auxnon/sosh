@@ -7,6 +7,8 @@ export function create(element: HTMLCanvasElement, pointSet: (point: Vector3) =>
   console.log("create");
 
   let WARP = false;
+  let BILLBOARD = false;
+  let SNAP = true;
 
   const scene = new three.Scene();
   const root = new three.Group();
@@ -37,7 +39,7 @@ export function create(element: HTMLCanvasElement, pointSet: (point: Vector3) =>
   cube(0x00ff00).position.set(0, 1, 0);
   cube(0x0000ff).position.set(0, 0, 1);
   const mover = cube(0x00ffff);
-  mover.scale.set(0.1, 0.1, 0.1);
+  mover.scale.set(0.01, 0.01, 0.01);
 
   const gridHelper1 = new three.GridHelper(10, 10);
   const gridHelper2 = gridHelper1.clone();
@@ -149,6 +151,7 @@ export function create(element: HTMLCanvasElement, pointSet: (point: Vector3) =>
         },
         highlight: { value: 0.5 },
         divisor: { value: divisor / 2 },
+        billboard: { value: BILLBOARD },
       },
       vertexShader: `
         uniform vec3 color;
@@ -157,6 +160,7 @@ export function create(element: HTMLCanvasElement, pointSet: (point: Vector3) =>
         // attribute vec3 normal;
         varying vec4 vNormal;
         varying vec2 vUv;
+        uniform bool billboard;
 
 
         void main() {
@@ -168,8 +172,9 @@ export function create(element: HTMLCanvasElement, pointSet: (point: Vector3) =>
              
 
 
-
-            // vPos+=  vec4(normal, 1.0)   ;
+            if (billboard) {
+              vPos+=  6.*vec4(normal, 1.0) *modelMatrix  ;
+            }
             gl_Position = vPos;
         }
       `,
@@ -198,10 +203,10 @@ export function create(element: HTMLCanvasElement, pointSet: (point: Vector3) =>
           } else {
            
           vec4 final = vec4(float(c.r) / 255.0, float(c.g) / 255.0, float(c.b) / 255.0, 1.0);
-          float v1= highlight - 6.5*divisor;
+          float v1= highlight - 7.*divisor;
           float v2= highlight -divisor;
           float v3= highlight +divisor;
-          float v4= highlight + 6.5*divisor;
+        float v4= highlight + 7.*divisor;
           if (vUv.x > v1 && vUv.x < v2 || vUv.x > v3 && vUv.x < v4) {
            final /= 4.0;
 
@@ -248,9 +253,15 @@ export function create(element: HTMLCanvasElement, pointSet: (point: Vector3) =>
       const p = inter.point;
       let value = 0;
       if (inter.uv) {
-        const index = -divisor / 2 + Math.floor((inter.uv.x - divisor) * array.length) / array.length;
+        let index;
+        if (SNAP) {
+          index = -divisor / 2 + Math.floor((inter.uv.x + divisor) * array.length) / array.length;
+        } else {
+          index = inter.uv.x;
+        }
 
         value = array[Math.floor(index * array.length)];
+
         ribbonMaterial.uniforms.highlight.value = index;
       }
       pointSet(new Vector3(inter.uv?.x || 0, inter.uv?.y || 0, value));
@@ -270,6 +281,11 @@ export function create(element: HTMLCanvasElement, pointSet: (point: Vector3) =>
   window.addEventListener("keydown", (e) => {
     if (e.key === " ") {
       WARP = !WARP;
+    } else if (e.key === "b") {
+      BILLBOARD = !BILLBOARD;
+      ribbonMaterial.uniforms.billboard.value = BILLBOARD;
+    } else if (e.key === "s") {
+      SNAP = !SNAP;
     }
   });
 
