@@ -2,48 +2,88 @@ import { Vector3, Box3 } from "three";
 import * as three from "three";
 import { OrbitControls } from "three/examples/jsm/Addons.js";
 
+///////////////////////////////////////////////////////
 interface Curve {
   verts: Float32Array;
   indices: number[];
   norms: three.Vector3[];
   uvs: three.Vector2[];
-  bounds: Box3[];
+  boundGroup: BoundGroup;
 }
 
-const DEBUG = true;
+interface Span {
+  start: number;
+  end: number;
+}
+
+interface BoundGroup {
+  boxes: Box3[];
+  scaledBoxes: Box3[];
+  boxPointSets: Span[];
+  /** DEBUG usage*/
+  boxMeshRef: three.Box3Helper[];
+}
+
+class Abstract {
+  setName(_s: string): void {}
+  setBoundDirty(_b: boolean): void {}
+  getThreeNode(): three.Object3D {
+    return rootGroup;
+  }
+  ISelectable: string = "";
+}
+
+class View {}
+
+class BoreHoleService {
+  getBaseWellStringCurve3(): { getPoints: () => Vector3[] } {
+    return { getPoints: () => makePoints() };
+  }
+}
+const PickResult = { OWNER_KEY: 0 };
+let SNAP = false;
+let WARP = false;
+////////////////////////////////////////////////////
+
+const DEBUG = false;
 const MAX_DATA = 16384;
 const RELATIVE_DATA_MODE = true;
 
 const THRESHOLD = 4;
 let cam: three.Camera;
 let scene: three.Scene;
-let root: three.Group;
+let rootGroup: three.Group;
 const BoundPointThreshold = 5;
-/** boxes of ribbon need to be slightly larger by scale, may need to be rebuilt on */
-let boxes: Box3[];
-/** same as boxes with a scale hypotenuse applied to compensate for scaled ribbon, rebuilt on zoom*/
-let scaledBoxes: Box3[];
-/** bounding box assocaitd points along same indicies. For instance, box at instance 1 would have it's associated ribbon points also on index 1*/
-let boxPointSets: { start: number; end: number }[];
 let testTri: three.Mesh;
 let triGeo: three.BufferGeometry;
 let triVerts: Float32Array;
+let ribbonGraphic: RibbonGraphic;
 
-/** DEBUG ONLY bounding box helpers */
-let boxMeshRef: three.Box3Helper[] = [];
-let arrow: three.ArrowHelper;
-
-const WARP = false;
 let BILLBOARD = false;
 const NAME = "RibbonGraphic";
 
 class BillboardedRibbon extends three.Mesh {
+  /** boxes of ribbon need to be slightly larger by scale, may need to be rebuilt on */
+  public boxes: Box3[];
+  /** same as boxes with a scale hypotenuse applied to compensate for scaled ribbon, rebuilt on zoom*/
+  public scaledBoxes: Box3[] = [];
+  /** bounding box assocaitd points along same indicies. For instance, box at instance 1 would have it's associated ribbon points also on index 1*/
+  public boxPointSets: { start: number; end: number }[] = [];
+
+  /** DEBUG ONLY bounding box helpers */
+  boxMeshRef: three.Box3Helper[] = [];
+  arrow?: three.ArrowHelper;
+
   constructor(
     geom: three.BufferGeometry,
     mat: three.Material,
     public points: Vector3[],
+    boundGroup: BoundGroup,
   ) {
     super(geom, mat);
+    this.boxes = boundGroup.boxes;
+    this.scaledBoxes = boundGroup.scaledBoxes;
+    this.boxPointSets = boundGroup.boxPointSets;
   }
 
   /** @inheritDoc */
@@ -56,64 +96,69 @@ class BillboardedRibbon extends three.Mesh {
     let prev_v;
     let prev;
     let next;
-    // let nextd;
-    for (let i = 0; i < this.points.length; i++) {
-      const v = this.points[i];
+    for (let j = 0; j < this.scaledBoxes.length; j++) {
+      const sb = this.scaledBoxes[j];
+      if (raycaster.ray.intersectsBox(sb)) {
+        const span = this.boxPointSets[j];
+        for (let i = span.start; i <= span.end; i++) {
+          const v = this.points[i];
 
-      const d = raycaster.ray.distanceToPoint(v);
-      if (prev_v) {
-        // const segd = raycaster.ray.distanceSqToSegment(v, prev_v);
-        const mat = cam.matrixWorldInverse;
-        const e = mat.elements;
-        // vec3 cameraRight=vec3(viewMatrix[0].x,viewMatrix[1].x,viewMatrix[2].x);
-        const camR = new Vector3(e[0], e[4], e[8]).multiplyScalar(4);
-        const perp = prev_v.clone().add(camR);
-        const perp2 = v.clone().add(camR);
-        const dummy = new Vector3();
-        const tri = raycaster.ray.intersectTriangle(
-          prev_v,
-          v,
-          perp,
-          false,
-          dummy,
-        );
-        const tri2 = raycaster.ray.intersectTriangle(
-          v,
-          perp2,
-          perp,
-          false,
-          dummy,
-        );
-        if (DEBUG && (tri || tri2)) {
-          if (tri) {
-            triVerts.set([
-              ...prev_v.toArray(),
-              ...v.toArray(),
-              ...perp.toArray(),
-            ]);
-          } else if (tri2) {
-            triVerts.set([
-              ...v.toArray(),
-              ...perp2.toArray(),
-              ...perp.toArray(),
-            ]);
+          const d = raycaster.ray.distanceToPoint(v);
+          if (prev_v) {
+            // const segd = raycaster.ray.distanceSqToSegment(v, prev_v);
+            const mat = cam.matrixWorldInverse;
+            const e = mat.elements;
+            // vec3 cameraRight=vec3(viewMatrix[0].x,viewMatrix[1].x,viewMatrix[2].x);
+            const camR = new Vector3(e[0], e[4], e[8]).multiplyScalar(4);
+            const perp = prev_v.clone().add(camR);
+            const perp2 = v.clone().add(camR);
+            const dummy = new Vector3();
+            const tri = raycaster.ray.intersectTriangle(
+              prev_v,
+              v,
+              perp,
+              false,
+              dummy,
+            );
+            const tri2 = raycaster.ray.intersectTriangle(
+              v,
+              perp2,
+              perp,
+              false,
+              dummy,
+            );
+            if (DEBUG && (tri || tri2)) {
+              if (tri) {
+                triVerts.set([
+                  ...prev_v.toArray(),
+                  ...v.toArray(),
+                  ...perp.toArray(),
+                ]);
+              } else if (tri2) {
+                triVerts.set([
+                  ...v.toArray(),
+                  ...perp2.toArray(),
+                  ...perp.toArray(),
+                ]);
+              }
+              testTri.geometry.attributes.position.needsUpdate = true;
+            }
           }
-          testTri.geometry.attributes.position.needsUpdate = true;
+          if (d < max) {
+            prev = prev_dist;
+            max = d;
+            point = v;
+            index = i;
+            // next = undefined;
+          } else if (i - 1 == index) {
+            next = d;
+          }
+          prev_dist = d;
+          prev_v = v;
         }
       }
-      if (d < max) {
-        prev = prev_dist;
-        max = d;
-        point = v;
-        index = i;
-        // next = undefined;
-      } else if (i - 1 == index) {
-        next = d;
-      }
-      prev_dist = d;
-      prev_v = v;
     }
-    console.log(array);
+
     if (!point) {
       return;
     }
@@ -126,16 +171,22 @@ class BillboardedRibbon extends three.Mesh {
       // index-=offset;
     }
 
-    console.log(index);
-    const vec = new three.Vector3(0, 0, 0);
-    const interVec = raycaster.ray.closestPointToPoint(point, vec);
-    if (!arrow) {
-      arrow = new three.ArrowHelper(new three.Vector3(), point, 30, 0xff0000);
-      arrow.setLength(3.5, 0.5, 0.33);
-      scene.add(arrow);
+    if (DEBUG) {
+      const vec = new three.Vector3(0, 0, 0);
+      const interVec = raycaster.ray.closestPointToPoint(point, vec);
+      if (!this.arrow) {
+        this.arrow = new three.ArrowHelper(
+          new three.Vector3(),
+          point,
+          30,
+          0xff0000,
+        );
+        this.arrow.setLength(3.5, 0.5, 0.33);
+        scene.add(this.arrow);
+      }
+      this.arrow.position.set(point.x, point.y, point.z);
+      this.arrow.setDirection(interVec.sub(point).normalize());
     }
-    arrow.position.set(point.x, point.y, point.z);
-    arrow.setDirection(interVec.sub(point).normalize());
     const intersection: three.Intersection = {
       distance: max,
       point,
@@ -151,8 +202,6 @@ class BillboardedRibbon extends three.Mesh {
   }
 }
 
-
-
 class RibbonGraphic extends Abstract {
   public readonly CustomTooltip = true;
   isSnap = true;
@@ -163,10 +212,10 @@ class RibbonGraphic extends Abstract {
   /** reference to the buffer used internally by the value data texture, set this ref to update values */
   valueArray: Uint8ClampedArray;
   /** reusable data representing colors to apply at certain percentages*/
-  colorRampData: Uint8Array;
+  colorRampData!: Uint8Array;
   dataHeight = MAX_DATA;
   ribbonMaterial: three.ShaderMaterial;
-  WARP = false;
+  ribbonMesh: BillboardedRibbon;
 
   constructor(service: BoreHoleService) {
     super();
@@ -193,7 +242,8 @@ class RibbonGraphic extends Abstract {
     {
       const points = new Float32Array(p.flatMap((v) => [v.x, v.y, v.z]));
 
-      const { verts, indices, norms, uvs } = this.buildCurve(points);
+      const { verts, indices, norms, uvs, boundGroup } =
+        this.buildCurve(points);
 
       const geometry = new three.BufferGeometry();
       geometry.setIndex(indices);
@@ -239,7 +289,7 @@ class RibbonGraphic extends Abstract {
           divisor: { value: this.divisor / 2 },
           dataHeight: { value: this.dataHeight },
           billboard: { value: true },
-          scale: { value: 1 },
+          scale: { value: this.scale },
         },
         vertexShader: `
 uniform vec3 color;
@@ -254,7 +304,8 @@ void main() {
     vColor = color;
     vUv = uv;
     if(billboard) {
-        vec3 cameraRight=vec3(-viewMatrix[0].x,viewMatrix[1].x,viewMatrix[2].x);
+        // invert cameraRight.x
+        vec3 cameraRight=vec3(viewMatrix[0].x,viewMatrix[1].x,viewMatrix[2].x);
         // vec3 cameraUp=vec3(viewMatrix[0].y,viewMatrix[1].y,viewMatrix[2].y);
         // vec3 vPosition=(cameraRight*position.x)+(cameraUp*position.y);
         vPos = projectionMatrix * modelViewMatrix * vec4(position + normal*cameraRight*scale, 1.0);
@@ -307,10 +358,19 @@ void main() {
       this.geometry = geometry;
       this.texture = texture;
       // Create the final object to add to the scene
-      const mesh = new BillboardedRibbon(geometry, this.ribbonMaterial);
-      mesh.name = NAME;
-      root.add(mesh);
+      this.ribbonMesh = new BillboardedRibbon(
+        geometry,
+        this.ribbonMaterial,
+        p,
+        boundGroup,
+      );
+      this.rescaleBoxes(); // call once on creation to adjust to current scale, may be unnecesary depending on when scaling first triggers
+      this.ribbonMesh.name = NAME;
+      root.add(this.ribbonMesh);
       this.setBoundDirty(true);
+      if (DEBUG) {
+        this.createDebug(root);
+      }
     }
   }
 
@@ -400,14 +460,22 @@ void main() {
     min.set(Infinity, Infinity, Infinity);
     max.set(-Infinity, -Infinity, -Infinity);
     let bounds: Box3[] = [];
+    let scaledBoxes: Box3[] = [];
+    let startPoint = 0;
+    let boxPointSets: { start: number; end: number }[] = [];
+    let boxMeshRef: three.Box3Helper[] = this.ribbonMesh?.boxMeshRef || [];
 
-    const resetBound = (x?: number, y?: number, z?: number) => {
+    const resetBound = (it: number, x?: number, y?: number, z?: number) => {
       const box = new Box3(min.clone(), max.clone());
       bounds.push(box);
+      scaledBoxes.push(box.clone());
       if (x && y && z) {
         min.set(x, y, z);
         max.set(x, y, z);
       }
+      const span = { start: startPoint, end: it };
+      startPoint = it;
+      boxPointSets.push(span);
     };
     // const hverts: Float32Array = new Float32Array(size * 2);
     // const hinds = new Array(size * 2 - 12);
@@ -465,8 +533,8 @@ void main() {
 
       pointCount++;
       if (pointCount >= BoundPointThreshold) {
+        resetBound(vi, vx, vy, vz);
         pointCount = 0;
-        resetBound(vx, vy, vz);
       }
 
       // const hi = vi * 4;
@@ -478,13 +546,13 @@ void main() {
       // hverts[hi + 1] = verts[vc + 1];
       // hverts[hi + 2] = verts[vc + 2];
     }
-    resetBound();
-    boxes = bounds;
-    scaledBoxes = boxes.map((b) => b.clone());
+    resetBound(points.length / 3 - 1);
 
     if (DEBUG) {
+      const root: three.Object3D = this.getThreeNode();
       boxMeshRef.forEach((b) => root.remove(b));
-      boxMeshRef = [];
+      boxMeshRef.splice(0, boxMeshRef.length);
+
       scaledBoxes.forEach((b) => {
         const helper = new three.Box3Helper(b, 0xff00ff);
         boxMeshRef.push(helper);
@@ -502,7 +570,13 @@ void main() {
     indices[ii] = a - 1;
     indices[ii + 1] = a;
     indices[ii + 2] = a - 2;
-    return { verts, indices, norms, uvs, bounds };
+    return {
+      verts,
+      indices,
+      norms,
+      uvs,
+      boundGroup: { boxes: bounds, scaledBoxes, boxPointSets, boxMeshRef },
+    };
   }
 
   createColorRampTexture(
@@ -555,7 +629,7 @@ void main() {
     // by using an arraybuffer instead of directly creating the TypeArray we can specify the memory address is resizable
     const uintArray = new Uint8ClampedArray(uintSize);
 
-    dataHeight = uintSize / MAX_DATA;
+    this.dataHeight = uintSize / MAX_DATA;
     alternatingArray(uintArray);
     const texture = new three.DataTexture(
       uintArray,
@@ -578,10 +652,11 @@ void main() {
   }
 
   rescaleBoxes() {
-    const n = scale;
-    for (let i = 0; i < boxes.length; i++) {
-      const b = boxes[i];
-      const sb = scaledBoxes[i];
+    const n = this.scale;
+    const rm = this.ribbonMesh;
+    for (let i = 0; i < rm.boxes.length; i++) {
+      const b = rm.boxes[i];
+      const sb = rm.scaledBoxes[i];
       sb.min.set(b.min.x - n, b.min.y, b.min.z - n);
       sb.max.set(b.max.x + n, b.max.y, b.max.z + n);
     }
@@ -641,9 +716,9 @@ export function create(
   console.log("create");
 
   scene = new three.Scene();
-  root = new three.Group();
-  root.position.set(0, 0, 0);
-  scene.add(root);
+  rootGroup = new three.Group();
+  rootGroup.position.set(0, 0, 0);
+  scene.add(rootGroup);
   cam = new three.PerspectiveCamera(
     75,
     element.clientWidth / element.clientHeight,
@@ -659,14 +734,12 @@ export function create(
 
   const raycaster = new three.Raycaster();
   const pointer = new three.Vector2();
-  let ribbonMesh: BillboardedRibbon;
-  let ribbonMaterial: three.ShaderMaterial;
 
   const cube = (c: number) => {
     const geometry = new three.BoxGeometry();
     const material = new three.MeshBasicMaterial({ color: c });
     const cub = new three.Mesh(geometry, material);
-    root.add(cub);
+    rootGroup.add(cub);
     return cub;
   };
   cube(0xff00ff);
@@ -688,145 +761,28 @@ export function create(
   gridHelper3.position.y = 5;
   gridHelper3.position.z = 5;
 
-  root.add(gridHelper1);
-  root.add(gridHelper2);
-  root.add(gridHelper3);
+  rootGroup.add(gridHelper1);
+  rootGroup.add(gridHelper2);
+  rootGroup.add(gridHelper3);
 
   cam.position.z = 20;
 
-  const curve = new three.CatmullRomCurve3([
-    new three.Vector3(0, 20, -10),
-    new three.Vector3(0, 10, 0),
-    new three.Vector3(0.4, 8, 0.1),
-    new three.Vector3(1.2, 6, -3),
-    new three.Vector3(0.1, 4, -4),
-    // new three.Vector3(-6, 2, 7),
-    // new three.Vector3(-0.6, 0, -12),
-  ]);
-  const points = curve.getPoints(40);
-  const p = new Float32Array(points.length * 3);
-  for (let i = 0; i < points.length; i++) {
-    p[i * 3] = points[i].x;
-    p[i * 3 + 1] = points[i].y;
-    p[i * 3 + 2] = points[i].z;
-  }
-
   /// BLUE
 
-  const { texture, array } = createTestTexture();
-
-  this.valueArray = array;
-  const divisor = 1 / array.length;
   {
-    const { verts, indices, norms, uvs } = buildCurve(p);
-
-    const geometry = new three.BufferGeometry();
-
-    geometry.setAttribute(
-      "position",
-      new three.Float32BufferAttribute(verts, 3),
-    );
-
-    // geometry.setAttribute("index", new three.Uint16BufferAttribute(indices, 1));
-    geometry.setIndex(indices);
-
-    const ns = norms.flatMap((v) => [v.x, v.y, v.z]);
-    geometry.setAttribute("normal", new three.Float32BufferAttribute(ns, 3));
-
-    const us = uvs.flatMap((v) => [v.x, v.y]);
-    geometry.setAttribute("uv", new three.Float32BufferAttribute(us, 2));
-
-    const colors = [0x7c00db, 0x0644e9, 0x16ac25, 0xfefa01, 0xf5bd02];
-    const ramp = createColorRamp(colors);
-
-    ribbonMaterial = new three.ShaderMaterial({
-      uniforms: {
-        color: { value: new three.Color(0x00ff00) },
-        tex: {
-          value: texture,
-        },
-        ramp: {
-          value: ramp,
-        },
-        highlight: { value: 0.5 },
-        divisor: { value: divisor / 2 },
-        dataHeight: { value: dataHeight },
-        billboard: { value: true },
-        scale: { value: scale },
-      },
-      vertexShader: `
-uniform vec3 color;
-varying vec3 vColor;
-varying vec4 vPos;
-varying vec4 vNormal;
-varying vec2 vUv;
-uniform bool billboard;
-uniform float scale;
-
-void main() {
-    vColor = color;
-    vUv = uv;
-    if(billboard) {
-        vec3 cameraRight=vec3(viewMatrix[0].x,viewMatrix[1].x,viewMatrix[2].x);
-        // vec3 cameraUp=vec3(viewMatrix[0].y,viewMatrix[1].y,viewMatrix[2].y);
-        // vec3 vPosition=(cameraRight*position.x)+(cameraUp*position.y);
-        vPos = projectionMatrix * modelViewMatrix * vec4(position + normal*cameraRight*scale, 1.0);
-    } else {
-        vPos = projectionMatrix * modelViewMatrix * vec4(position + vec3(1.,0.,0.) * scale, 1.0);
-    }
-
-    vNormal = vec4(normal, 1.0);
-    gl_Position = vPos;
-}
-      `,
-      fragmentShader: `
-        varying vec3 vColor;
-        varying vec4 vPos;
-        varying vec4 vNormal;
-        varying vec2 vUv;
-        uniform mediump usampler2D tex;
-        uniform mediump usampler2D ramp;
-        uniform float highlight;
-        uniform float divisor;
-        uniform float dataHeight;
-
-        void main() {
-          // if between highlight minus 0.1 and highlight plus 0.1
-          vec2 uv2 = vec2(vUv.x*dataHeight,vUv.y);
-          uint p = texture(tex, uv2).r;
-          float f = float(p) / 255.0;
-          uvec4 c = texture(ramp, vec2(f, 0.5));
-          if (f < vUv.y) {
-            discard;
-          } else {
-            vec4 final = vec4(float(c.r) / 255.0, float(c.g) / 255.0, float(c.b) / 255.0, 1.0);
-            float v1= highlight - 7.*divisor;
-            float v2= highlight -divisor;
-            float v3= highlight +divisor;
-            float v4= highlight + 7.*divisor;
-            if (vUv.x > v1 && vUv.x < v2 || vUv.x > v3 && vUv.x < v4) {
-             final /= 4.0;
-            }
-            gl_FragColor  = final;
-          }
-
-        }
-      `,
-      side: three.DoubleSide,
-    });
-
+    const service = new BoreHoleService();
     // Create the final object to add to the scene
-    ribbonMesh = new BillboardedRibbon(geometry, ribbonMaterial, points);
-    // YELLOW
+    ribbonGraphic = new RibbonGraphic(service);
 
-    const simpleGeometry = new three.BufferGeometry().setFromPoints(points);
+    const simpleGeometry = new three.BufferGeometry().setFromPoints(
+      ribbonGraphic.ribbonMesh.points,
+    );
     const simpleMaterial = new three.LineBasicMaterial({
       color: 0xff0000,
       linewidth: 1,
     });
     const simple = new three.Line(simpleGeometry, simpleMaterial);
-    root.add(simple);
-    root.add(ribbonMesh);
+    rootGroup.add(simple);
   }
 
   function alternatingArray(array: Uint8ClampedArray): void {
@@ -841,7 +797,10 @@ void main() {
     controls.update();
 
     raycaster.setFromCamera(pointer, cam);
-    const intersects = raycaster.intersectObjects([ribbonMesh], true);
+    const intersects = raycaster.intersectObjects(
+      [ribbonGraphic.ribbonMesh],
+      true,
+    );
     if (intersects.length > 0) {
       const inter = intersects[0];
 
@@ -856,11 +815,14 @@ void main() {
       // } else {
       //   index = inter.uv.x;
       // }
-      const index = (inter.index || 0) / ribbonMesh.points.length;
+      const index = (inter.index || 0) / ribbonGraphic.ribbonMesh.points.length;
 
-      value = array[Math.floor(index * array.length)];
+      value =
+        ribbonGraphic.valueArray[
+          Math.floor(index * ribbonGraphic.valueArray.length)
+        ];
 
-      ribbonMaterial.uniforms.highlight.value = index;
+      ribbonGraphic.ribbonMaterial.uniforms.highlight.value = index;
       // }
       pointSet(new Vector3(inter.uv?.x || 0, inter.uv?.y || 0, value));
       mover.position.x = p.x;
@@ -889,6 +851,36 @@ void main() {
   });
 
   animate();
+}
+
+function createTestTexture(): {
+  texture: three.DataTexture;
+  array: Uint8ClampedArray;
+} {
+  const uintSize = MAX_DATA;
+  // by using an arraybuffer instead of directly creating the TypeArray we can specify the memory address is resizable
+  const uintArray = new Uint8ClampedArray(MAX_DATA);
+
+  alternatingArray(uintArray);
+  const texture = new three.DataTexture(
+    uintArray,
+    uintSize,
+    1,
+    three.RedIntegerFormat,
+    three.UnsignedByteType,
+  );
+  // texture.internalFormat = "RGBA8UI";
+  texture.internalFormat = "R8UI";
+  // texture.magFilter = three.NearestFilter;
+  texture.needsUpdate = true;
+
+  return { texture, array: uintArray };
+}
+
+function alternatingArray(array: Uint8ClampedArray): void {
+  for (let j = 0; j < array.length; j++) {
+    array[j] = (j % 2) * 200 + 50;
+  }
 }
 
 function createTexture(): { texture: three.DataTexture; array: Uint8Array } {
@@ -946,15 +938,26 @@ function createColorRamp(
   return uintArray;
 }
 
-
-
-class Abstract {
-  setName(_s: string): void {}
-  setBoundDirty(_b: boolean): void {}
-  ISelectable: string = "";
+function makePoints(): Vector3[] {
+  const curve = new three.CatmullRomCurve3([
+    new three.Vector3(0, 20, -10),
+    new three.Vector3(0, 10, 0),
+    new three.Vector3(0.4, 8, 0.1),
+    new three.Vector3(1.2, 6, -3),
+    new three.Vector3(0.1, 4, -4),
+    // new three.Vector3(-6, 2, 7),
+    // new three.Vector3(-0.6, 0, -12),
+  ]);
+  const points = curve.getPoints(40);
+  // const p = new Float32Array(points.length * 3);
+  // for (let i = 0; i < points.length; i++) {
+  //   p[i * 3] = points[i].x;
+  //   p[i * 3 + 1] = points[i].y;
+  //   p[i * 3 + 2] = points[i].z;
+  // }
+  return points;
 }
 
-class View {}
 /*
 {
   let map;
