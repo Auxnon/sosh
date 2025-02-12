@@ -22,6 +22,8 @@ defmodule ChatTestWeb.RoomChannel do
     # broadcast!(socket, "joined", %{user_id: user_id, vec: vec})
 
     IO.puts("after join 1")
+    test=ChatTest.Universe.add(1,2)
+    test |> IO.puts
 
     {:ok,
      %{
