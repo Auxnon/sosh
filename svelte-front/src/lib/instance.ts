@@ -45,7 +45,7 @@ let SNAP = false;
 let WARP = false;
 ////////////////////////////////////////////////////
 
-const DEBUG = false;
+const DEBUG = true;
 const MAX_DATA = 16384;
 const RELATIVE_DATA_MODE = true;
 
@@ -84,6 +84,7 @@ class BillboardedRibbon extends three.Mesh {
     this.boxes = boundGroup.boxes;
     this.scaledBoxes = boundGroup.scaledBoxes;
     this.boxPointSets = boundGroup.boxPointSets;
+    this.boxMeshRef = boundGroup.boxMeshRef;
   }
 
   /** @inheritDoc */
@@ -98,7 +99,12 @@ class BillboardedRibbon extends three.Mesh {
     let next;
     for (let j = 0; j < this.scaledBoxes.length; j++) {
       const sb = this.scaledBoxes[j];
+      // @ts-ignore
+      if (DEBUG) this.boxMeshRef[j].material.color.set(0xff00ff);
+
       if (raycaster.ray.intersectsBox(sb)) {
+        // @ts-ignore
+        if (DEBUG) this.boxMeshRef[j].material.color.set(0xffff00);
         const span = this.boxPointSets[j];
         for (let i = span.start; i <= span.end; i++) {
           const v = this.points[i];
@@ -331,7 +337,7 @@ void main() {
 
         void main() {
           // if between highlight minus 0.1 and highlight plus 0.1
-          vec2 uv2 = vec2(vUv.x*dataHeight,vUv.y);
+          vec2 uv2 = vec2(vUv.x*0.1,vUv.y);
           uint p = texture(tex, uv2).r;
           float f = float(p) / 255.0;
           uvec4 c = texture(ramp, vec2(f, 0.5));
@@ -584,7 +590,12 @@ void main() {
     percents: number[],
     resolution: number,
   ): three.Texture {
-    const uintArray = createColorRamp(colors, percents, resolution);
+    const colors2 = [0x7c00db, 0x0644e9, 0x16ac25, 0xfefa01, 0xf5bd02];
+    const percents2 = [0.2, 0.4, 0.6, 0.8, 1];
+
+    const uintArray = createColorRampGradient(colors2, percents2, 250);
+    // const uintArray = createColorRamp(colors, percents, resolution);
+    console.log(uintArray);
     this.colorRampData = uintArray;
     const t = new three.DataTexture(
       uintArray,
@@ -651,7 +662,7 @@ void main() {
     this.ribbonMaterial.uniforms.scale.value = this.scale;
   }
 
-  rescaleBoxes() {
+  rescaleBoxes(): void {
     const n = this.scale;
     const rm = this.ribbonMesh;
     for (let i = 0; i < rm.boxes.length; i++) {
@@ -728,7 +739,8 @@ export function create(
 
   const renderer = new three.WebGLRenderer({ canvas: element, alpha: false });
   renderer.setSize(element.clientWidth, element.clientHeight);
-  renderer.setClearColor(0xc6eff7, 1);
+  // renderer.setClearColor(0xc6eff7, 1);
+  renderer.setClearColor(0x000000, 1);
 
   const controls = new OrbitControls(cam, renderer.domElement);
 
@@ -862,6 +874,7 @@ function createTestTexture(): {
   const uintArray = new Uint8ClampedArray(MAX_DATA);
 
   alternatingArray(uintArray);
+  warpArray(uintArray);
   const texture = new three.DataTexture(
     uintArray,
     uintSize,
@@ -902,13 +915,23 @@ function createTexture(): { texture: three.DataTexture; array: Uint8Array } {
   return { texture, array: uintArray };
 }
 
-function warpArray(array: Uint8Array): void {
+// function warpArray(array: Uint8ClampedArray): void {
+//   let r = 0;
+//   for (let j = 0; j < array.length; j++) {
+//     r += 0.05; // Math.random() *
+//     let d = Math.abs(Math.cos(r)) * 200 +32;
+//     // d += Math.random() * 64;
+//     array[j] = d;
+//   }
+// }
+
+function warpArray(array: Uint8ClampedArray): void {
   let r = 0;
   for (let j = 0; j < array.length; j++) {
-    r += Math.random() * 0.1;
-    let d = Math.abs(Math.cos(r)) * 127 + 64;
-    d += Math.random() * 64;
-    array[j] = d;
+    r += 1; // Math.random() *
+    if (r >= 255) r = 0;
+    // d += Math.random() * 64;
+    array[j] = flr(r);
   }
 }
 
@@ -922,7 +945,7 @@ function createColorRamp(
     throw "Cannot create a color ramp when color count doesn't match percentages";
   }
   let i = 0;
-  for (let j = 0; j < colors.length; j++) {
+  for (let j = 0; j < resolution; j++) {
     const perc = j / resolution;
     const p = percents[i];
     if (perc >= p) {
@@ -957,6 +980,58 @@ function makePoints(): Vector3[] {
   // }
   return points;
 }
+
+function createColorRampGradient(
+  colors: number[],
+  percents: number[],
+  resolution: number,
+): Uint8Array {
+  const uintArray = new Uint8Array(resolution * 4);
+  if (colors.length !== percents.length) {
+    throw "Cannot create a color ramp when color count doesn't match percentages";
+  }
+  if (colors.length < 2) throw "Cannot create color gradient with only 1 color";
+  let i = 0;
+  let prev_color = colors[0];
+  let color = colors[1];
+  let ci = 0;
+  let factor = 1 / ((percents[1] - percents[0]) * resolution);
+  let blend = 0;
+
+  for (let j = 0; j < resolution; j++) {
+    const perc = j / resolution;
+    const p = percents[i];
+    if (perc >= p) {
+      i += 1;
+      i = Math.min(i, colors.length - 1); // cap to last value
+    }
+    if (ci !== i) {
+      prev_color = color;
+      color = colors[Math.min(i + 1, colors.length - 1)];
+      const next_perc = percents[i];
+      factor = 1 / ((next_perc - perc) * resolution);
+      ci = i;
+      blend = 0;
+    }
+    blend += factor;
+    const inverse = 1 - blend;
+
+    uintArray[j * 4] = flr(red(prev_color) * inverse + red(color) * blend);
+    uintArray[j * 4 + 1] = flr(
+      green(prev_color) * inverse + green(color) * blend,
+    );
+    uintArray[j * 4 + 2] = flr(
+      blue(prev_color) * inverse + blue(color) * blend,
+    );
+    uintArray[j * 4 + 3] = 255;
+  }
+  return uintArray;
+}
+
+const red = (c: number) => (c >> 16) & 255;
+const green = (c: number) => (c >> 8) & 255;
+const blue = (c: number) => c & 255;
+const flr = (f: number) => Math.floor(f);
 
 /*
 {

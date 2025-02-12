@@ -3,6 +3,7 @@
   import viteLogo from "/vite.svg";
   import Counter from "./lib/Counter.svelte";
   import Canvas from "./lib/Canvas.svelte";
+  import ValueGradient from "./lib/ValueGradient.svelte";
   import { Vector3 } from "three";
 
   let point: Vector3 = new Vector3(1, 2, 3);
@@ -11,9 +12,11 @@
 <div class="absolute w-full h-full">
   <Canvas bind:point />
 </div>
-<main class="absolute w-1/2">
+<main class="absolute w-64">
   <h1 class="bg-red-500 rounded-md p-1">{point.z}</h1>
 </main>
+  <ValueGradient/>
+
 
 <style>
   .logo {

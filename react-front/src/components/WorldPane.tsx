@@ -7,7 +7,7 @@ export default function WorldPane() {
   const [m, mSet] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
-    const renderer = create(400, 400);
+    const renderer = create(800, 800);
 
     if (containerRef === null) {
       throw "error no reference";

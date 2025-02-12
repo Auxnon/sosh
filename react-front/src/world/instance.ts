@@ -1,12 +1,19 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/Addons.js";
+import { Entity } from "./entity";
 
 // const PI = Math.PI;
 // const TAU = Math.PI * 2;
 
 const pointer = new THREE.Vector2();
 let cursor: THREE.Mesh;
-let player: THREE.Group;
+// let player: THREE.Group;
+const players: { [key: string]: Entity } = {};
+
+let person: THREE.Group;
+
+const root = new THREE.Group();
+// let player:
 
 export function create(
   width: number = 400,
@@ -30,8 +37,6 @@ export function create(
   // camera.position.z = 6;
   camera.position.y = -20;
   camera.position.z = 6;
-
-  const root = new THREE.Group();
 
   const cube = (c: number) => {
     const g = new THREE.BoxGeometry();
@@ -88,9 +93,7 @@ export function create(
 
   // guy.rotateX(TAU / 4);
   guy.up = new THREE.Vector3(0, 0, 1);
-  player = guy;
-
-  root.add(guy);
+  person = guy;
 
   const animate = () => {
     requestAnimationFrame(animate);
@@ -115,7 +118,7 @@ function processCursor(x: number, y: number, z: number): void {
   const p = cursor.position;
   if (p.x !== x || p.y !== y || p.z !== z) {
     cursor.position.set(x, y, z);
-    player.lookAt(x, y, z);
+    // player.lookAt(x, y, z);
   }
 }
 
@@ -126,7 +129,23 @@ export function moveCursor(x: number, y: number) {
 }
 
 /** we assume moveCursor was already called by the event listener for a click */
-export function click() {
-  player.position.copy(cursor.position);
-  player.position.x += 0.001;
+export function click(): THREE.Vector3 {
+  // player.position.copy(cursor.position);
+  // player.position.x += 0.001;
+  return cursor.position;
+}
+
+export function updateEntity(id: string, v: number[]) {
+  const p = players[id];
+  if (!p) return;
+
+  p.mesh.position.set(v[0], v[1], v[2]);
+}
+
+export function joinEntity(id: string, v: number[]) {
+  const p = person.clone();
+  p.position.set(v[0], v[1], v[2]);
+
+  players[id] =  new Entity(id, p);
+  root.add(p)
 }
