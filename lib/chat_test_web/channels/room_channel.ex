@@ -11,19 +11,21 @@ defmodule ChatTestWeb.RoomChannel do
 
   def join("room:lobby", param, socket) do
     IO.inspect(param)
-    %{"userId"=> user_id, "vec"=> vec} = param
+    %{"greet"=> greet, "vec"=> vec} = param
+    user_id=UUID.uuid4()
 
     IO.puts("join worked, #{user_id}")
     # IO.puts("join vec, #{vec}")
     IO.inspect(vec)
     socket = assign(socket, :user_id, user_id)
+    
 
     self() |> send( {:after_join, param})
     # broadcast!(socket, "joined", %{user_id: user_id, vec: vec})
 
     IO.puts("after join 1")
-    test=ChatTest.Universe.add(1,2)
-    test |> IO.puts
+    # test=ChatTest.Universe.add(1,2)
+    # test |> IO.puts
 
     {:ok,
      %{
@@ -35,6 +37,7 @@ defmodule ChatTestWeb.RoomChannel do
   def handle_info({:after_join, params}, socket) do
     IO.puts("after join 2( #{2} )")
     IO.inspect(params)
+    # push(socket, "handshake", %{user_id: socket.assigns.user_id})
     broadcast!(socket, "joined", params)
     {:noreply, socket}
   end
@@ -55,6 +58,7 @@ defmodule ChatTestWeb.RoomChannel do
   end
 
   def handle_in("move", %{"vec" => vec}, socket) do
+    # ChatTest.Universe.move_ent(universe, 
     broadcast!(socket, "move", %{vec: vec, user_id: socket.assigns.user_id})
     {:noreply, socket}
   end
