@@ -13,7 +13,8 @@ const players: { [key: string]: Entity } = {};
 let person: THREE.Group;
 
 const root = new THREE.Group();
-// let player:
+let playerId: string | undefined;
+let player: Entity | undefined;
 
 export function create(
   width: number = 400,
@@ -118,7 +119,7 @@ function processCursor(x: number, y: number, z: number): void {
   const p = cursor.position;
   if (p.x !== x || p.y !== y || p.z !== z) {
     cursor.position.set(x, y, z);
-    // player.lookAt(x, y, z);
+    player?.mesh.lookAt(x, y, z);
   }
 }
 
@@ -145,7 +146,14 @@ export function updateEntity(id: string, v: number[]) {
 export function joinEntity(id: string, v: number[]) {
   const p = person.clone();
   p.position.set(v[0], v[1], v[2]);
+  const e = new Entity(id, p);
+  players[id] = e;
+  if (id == playerId) player = e;
+  root.add(p);
+}
 
-  players[id] =  new Entity(id, p);
-  root.add(p)
+export function setPlayer(id: string) {
+  playerId = id;
+  const p = players[id];
+  if (p) player = p;
 }

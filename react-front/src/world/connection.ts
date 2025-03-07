@@ -1,25 +1,24 @@
 import { Channel, Socket } from "phoenix";
 import { Message, MessageCategory } from "../utils/types";
-import { joinEntity, updateEntity } from "./instance";
+import * as inst from "./instance";
 import { Vector3 } from "three";
+import { Pack } from "./protocol";
+import { errorOut } from "./error";
 
 const socket = new Socket("/socket", {});
 socket.connect();
 
 let channel: Channel | undefined = undefined;
 
-const MOVE = "move";
-const NEW_MESSAGE = "new_msg";
-const JOINED = "joined";
-
-const r=(a?:number)=>a!=null?(2*Math.random()-1)*a:Math.random()
+const r = (a?: number) =>
+  a != null ? (2 * Math.random() - 1) * a : Math.random();
 
 export function join(chat: Message[], setChat: React.Dispatch<Message[]>) {
   if (channel) return;
 
   channel = socket.channel("room:lobby", {
-    userId: "" + Math.random(),
-    vec: [r(5), r(5), 0]
+    greet: "" + Math.random(),
+    vec: [r(5), r(5), 0],
   });
 
   function m(user: string, value: string, category: MessageCategory): void {
@@ -45,6 +44,7 @@ export function join(chat: Message[], setChat: React.Dispatch<Message[]>) {
         .receive("ok", (resp) => {
           console.log("Joined successfully", resp);
           // dataChat(resp.connection_id);
+          inst.setPlayer(resp.user_id);
           system("joined");
         })
         .receive("error", (resp) => {
@@ -52,7 +52,7 @@ export function join(chat: Message[], setChat: React.Dispatch<Message[]>) {
           system("failed to join");
         });
 
-      channel.on(NEW_MESSAGE, (payload) => {
+      channel.on(Pack.NEW_MESSAGE, (payload) => {
         // const messageItem = document.createElement("li");
         // messageItem.innerText = payload.body;
         // messageRef.current?.appendChild(messageItem);
@@ -62,21 +62,24 @@ export function join(chat: Message[], setChat: React.Dispatch<Message[]>) {
       channel.on("refresh", (payload) => {
         const numbers = payload.numbers;
         console.log("Received new numbers:", numbers);
-        updateEntity("", numbers);
+        inst.updateEntity("", numbers);
         dataChat(numbers);
       });
 
-      channel.on(JOINED, (o) => {
-        joinEntity(o.userId, o.vec);
+      channel.on(Pack.JOINED, (o) => {
+        if(!o.userid) errorOut('no user id')
+        inst.joinEntity(o.user_id, o.vec);
       });
 
-      channel.on(MOVE, (payload) => updateEntity(payload.user_id, payload.vec));
+      channel.on(Pack.MOVE, (payload) =>
+        inst.updateEntity(payload.user_id, payload.vec),
+      );
     }
   }, 1000);
-}
+   }
 
 export function sendChat(str: string) {
-  channel?.push(NEW_MESSAGE, { body: str });
+  channel?.push(Pack.NEW_MESSAGE, { body: str });
 }
 
 export function testChat() {
@@ -84,5 +87,5 @@ export function testChat() {
 }
 
 export function move(vec: Vector3) {
-  channel?.push(MOVE, { vec: vec.toArray() });
+  channel?.push(Pack.MOVE, { vec: vec.toArray() });
 }

@@ -35,8 +35,8 @@ export default function Pane({
         className="rounded-md scroller m-2 overflow-scroll"
         style={{ height }}
       >
-        {chat.map((v) => (
-          <Bubble message={v}></Bubble>
+        {chat.map((v,i) => (
+          <Bubble key={i} message={v}></Bubble>
         ))}
       </div>
     </div>
