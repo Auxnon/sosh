@@ -15,6 +15,10 @@
     let clickStartTime: number;
     let hasMoved = false;
     let isDragging = false;
+    let plane: THREE.Mesh;
+    const PI = Math.PI;
+
+    let movePoints: THREE.Vector3[] = [];
 
     onMount(() => {
         if (!canvasElement) return;
@@ -32,7 +36,6 @@
         );
         camera.position.set(5, 5, 5);
 
-        // Renderer setup
         renderer = new THREE.WebGLRenderer({
             canvas: canvasElement,
             antialias: true,
@@ -41,75 +44,12 @@
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        // Controls
         controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
 
-        // Raycaster for click detection
         raycaster = new THREE.Raycaster();
         mouse = new THREE.Vector2();
-
-        // Mouse event listeners
-        const handleMouseDown = (event: MouseEvent) => {
-            clickStartTime = Date.now();
-            hasMoved = false;
-            isDragging = false;
-        };
-
-        const handleMouseMove = () => {
-            if (clickStartTime) {
-                hasMoved = true;
-                if (Date.now() - clickStartTime > 50) {
-                    isDragging = true;
-                }
-            }
-        };
-
-        const handleMouseUp = (event: MouseEvent) => {
-            const clickDuration = Date.now() - clickStartTime;
-
-            // Only trigger movement for quick clicks (< 1ms or < 50ms) without movement
-            if (clickDuration < 50 && !hasMoved && !isDragging) {
-                // Calculate mouse position
-                const rect = canvasElement.getBoundingClientRect();
-                mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-                mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-                // Update raycaster
-                raycaster.setFromCamera(mouse, camera);
-
-                // Check intersection with ground plane
-                const planeGeometry = new THREE.PlaneGeometry(20, 20);
-                const planeMaterial = new THREE.MeshBasicMaterial({
-                    visible: false,
-                });
-                const invisiblePlane = new THREE.Mesh(
-                    planeGeometry,
-                    planeMaterial,
-                );
-                invisiblePlane.rotation.x = -Math.PI / 2;
-                invisiblePlane.position.y = 0;
-
-                const intersects = raycaster.intersectObject(invisiblePlane);
-
-                if (intersects.length > 0) {
-                    const point = intersects[0].point;
-
-                    // Move player to intersection point
-                    playerGroup.position.x = point.x;
-                    playerGroup.position.z = point.z;
-                }
-            }
-
-            clickStartTime = 0;
-            hasMoved = false;
-            isDragging = false;
-        };
-
-        renderer.domElement.addEventListener("mousedown", handleMouseDown);
-        renderer.domElement.addEventListener("mousemove", handleMouseMove);
-        renderer.domElement.addEventListener("mouseup", handleMouseUp);
 
         // Lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -172,21 +112,97 @@
             color: 0x90ee90,
             side: THREE.DoubleSide,
         });
-        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-        plane.rotation.x = -Math.PI / 2;
+        plane = new THREE.Mesh(planeGeometry, planeMaterial);
+        plane.rotation.x = -PI / 2;
         plane.position.y = 0;
         plane.receiveShadow = true;
         scene.add(plane);
+
+        const handlePointerDown = (event: MouseEvent) => {
+            clickStartTime = Date.now();
+            hasMoved = false;
+            isDragging = false;
+        };
+
+        const handlePointerMove = () => {
+            if (clickStartTime) {
+                hasMoved = true;
+                if (Date.now() - clickStartTime > 50) {
+                    isDragging = true;
+                }
+            }
+        };
+
+        const handlePointerUp = (event: MouseEvent) => {
+            const clickDuration = Date.now() - clickStartTime;
+
+            // Only trigger movement for quick clicks (< 1ms or < 50ms) without movement
+            if (!hasMoved && !isDragging) {
+                console.log("hit");
+                // clickDuration < 150 &&
+
+                // Calculate mouse position
+                const rect = canvasElement.getBoundingClientRect();
+                mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+                raycaster.setFromCamera(mouse, camera);
+
+                // const planeGeometry = new THREE.PlaneGeometry(20, 20);
+                // const planeMaterial = new THREE.MeshBasicMaterial({
+                //     visible: false,
+                // });
+                // const invisiblePlane = new THREE.Mesh(
+                //     planeGeometry,
+                //     planeMaterial,
+                // );
+                // invisiblePlane.rotation.x = -Math.PI / 2;
+                // invisiblePlane.position.y = 0;
+
+                const intersects = raycaster.intersectObject(plane);
+
+                if (intersects.length > 0) {
+                    const point = intersects[0].point;
+
+                    movePoints.push(point);
+                }
+            }
+
+            clickStartTime = 0;
+            hasMoved = false;
+            isDragging = false;
+        };
+
+        renderer.domElement.addEventListener("pointerdown", handlePointerDown);
+        renderer.domElement.addEventListener("pointermove", handlePointerMove);
+        renderer.domElement.addEventListener("pointerup", handlePointerUp);
 
         // Animation loop
         const animate = () => {
             animationId = requestAnimationFrame(animate);
 
-            // Rotate player
-            playerGroup.rotation.y += 0.01;
+            move();
 
             controls.update();
             renderer.render(scene, camera);
+        };
+
+        const move = () => {
+            const current = movePoints[0];
+            if (current) {
+                const speed = 0.1;
+                const dx = current.x - playerGroup.position.x;
+                const dy = current.z - playerGroup.position.z;
+                const r = Math.sqrt(dx * dx + dy * dy);
+                playerGroup.rotation.y = Math.atan2(dy, -dx) - PI / 2;
+                if (r < speed * 2) {
+                    // @ts-expect-error
+                    playerGroup.position.copy(movePoints.shift());
+                } else {
+                    playerGroup.position.x += (speed * dx) / r;
+                    playerGroup.position.z += (speed * dy) / r;
+                }
+            }
         };
 
         animate();
@@ -206,9 +222,9 @@
             cancelAnimationFrame(animationId);
         }
         if (renderer) {
-            renderer.domElement.removeEventListener("mousedown", () => {});
-            renderer.domElement.removeEventListener("mousemove", () => {});
-            renderer.domElement.removeEventListener("mouseup", () => {});
+            renderer.domElement.removeEventListener("pointerdown", () => {});
+            renderer.domElement.removeEventListener("pointermove", () => {});
+            renderer.domElement.removeEventListener("pointerup", () => {});
             renderer.dispose();
         }
         window.removeEventListener("resize", () => {});
