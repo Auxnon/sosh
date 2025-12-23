@@ -2,14 +2,14 @@
     import { onMount, onDestroy } from "svelte";
     import * as THREE from "three";
     import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+    import {player, cameraRef} from "./World"
 
     let canvasElement: HTMLCanvasElement;
     let scene: THREE.Scene;
-    let camera: THREE.PerspectiveCamera;
+    // let camera: THREE.PerspectiveCamera;
     let renderer: THREE.WebGLRenderer;
     let controls: OrbitControls;
     let animationId: number;
-    let playerGroup: THREE.Group;
     let raycaster: THREE.Raycaster;
     let mouse: THREE.Vector2;
     let clickStartTime: number;
@@ -28,13 +28,18 @@
         scene.background = new THREE.Color(0x87ceeb);
 
         // Camera setup
-        camera = new THREE.PerspectiveCamera(
+        cameraRef.camera = new THREE.PerspectiveCamera(
             75,
             window.innerWidth / window.innerHeight,
             0.1,
             1000,
         );
-        camera.position.set(5, 5, 5);
+        cameraRef.camera.position.set(5, 5, 5);
+
+        // Emit scene and camera for ChatPane
+        // window.dispatchEvent(new CustomEvent('three-scene-ready', {
+        //     detail: { scene, camera: cameraRef.camera }
+        // }));
 
         renderer = new THREE.WebGLRenderer({
             canvas: canvasElement,
@@ -44,7 +49,7 @@
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        controls = new OrbitControls(camera, renderer.domElement);
+        controls = new OrbitControls(cameraRef.camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
 
@@ -68,8 +73,6 @@
         directionalLight.shadow.camera.bottom = -10;
         scene.add(directionalLight);
 
-        // Create player model
-        playerGroup = new THREE.Group();
 
         // Cone body
         const coneGeometry = new THREE.ConeGeometry(0.5, 1.5, 8);
@@ -78,7 +81,7 @@
         cone.position.y = 0.75;
         cone.castShadow = true;
         cone.receiveShadow = true;
-        playerGroup.add(cone);
+        player.add(cone);
 
         // Sphere head
         const headGeometry = new THREE.SphereGeometry(0.4, 16, 16);
@@ -87,7 +90,7 @@
         head.position.y = 1.8;
         head.castShadow = true;
         head.receiveShadow = true;
-        playerGroup.add(head);
+        player.add(head);
 
         // Left eye
         const eyeGeometry = new THREE.SphereGeometry(0.1, 8, 8);
@@ -95,16 +98,16 @@
         const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
         leftEye.position.set(-0.15, 1.85, 0.35);
         leftEye.castShadow = true;
-        playerGroup.add(leftEye);
+        player.add(leftEye);
 
         // Right eye
         const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
         rightEye.position.set(0.15, 1.85, 0.35);
         rightEye.castShadow = true;
-        playerGroup.add(rightEye);
+        player.add(rightEye);
 
-        playerGroup.position.set(0, 0, 0);
-        scene.add(playerGroup);
+        player.position.set(0, 0, 0);
+        scene.add(player);
 
         // Plane
         const planeGeometry = new THREE.PlaneGeometry(20, 20);
@@ -146,7 +149,7 @@
                 mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
                 mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-                raycaster.setFromCamera(mouse, camera);
+                raycaster.setFromCamera(mouse, cameraRef.camera);
 
                 // const planeGeometry = new THREE.PlaneGeometry(20, 20);
                 // const planeMaterial = new THREE.MeshBasicMaterial({
@@ -184,23 +187,23 @@
             move();
 
             controls.update();
-            renderer.render(scene, camera);
+            renderer.render(scene, cameraRef.camera);
         };
 
         const move = () => {
             const current = movePoints[0];
             if (current) {
                 const speed = 0.1;
-                const dx = current.x - playerGroup.position.x;
-                const dy = current.z - playerGroup.position.z;
+                const dx = current.x - player.position.x;
+                const dy = current.z - player.position.z;
                 const r = Math.sqrt(dx * dx + dy * dy);
-                playerGroup.rotation.y = Math.atan2(dy, -dx) - PI / 2;
+                player.rotation.y = Math.atan2(dy, -dx) - PI / 2;
                 if (r < speed * 2) {
                     // @ts-expect-error
-                    playerGroup.position.copy(movePoints.shift());
+                    player.position.copy(movePoints.shift());
                 } else {
-                    playerGroup.position.x += (speed * dx) / r;
-                    playerGroup.position.z += (speed * dy) / r;
+                    player.position.x += (speed * dx) / r;
+                    player.position.z += (speed * dy) / r;
                 }
             }
         };
@@ -209,8 +212,8 @@
 
         // Handle window resize
         const handleResize = () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
+            cameraRef.camera.aspect = window.innerWidth / window.innerHeight;
+            cameraRef.camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         };
 
