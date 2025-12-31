@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { nextFace } from './World';
+    import { nextFace, nextAnimation, animationState, ANIMATIONS } from './World';
 
     export let onSendMessage: (message: string) => void;
     let inputValue = '';
@@ -26,6 +26,12 @@
     function handleFaceChange() {
         nextFace();
     }
+
+    function handleAnimationChange() {
+        nextAnimation();
+    }
+
+    $: currentAnimationName = ANIMATIONS[animationState.currentAnimation] || 'idle';
 </script>
 
 <div class="chat-input-container" class:hidden={!isVisible}>
@@ -52,6 +58,13 @@
                 title="Change expression"
             >
                 😊
+            </button>
+            <button
+                on:click={handleAnimationChange}
+                class="animation-btn"
+                title="Change animation: {currentAnimationName}"
+            >
+                🏃
             </button>
             <button
                 on:click={handleSubmit}
@@ -171,6 +184,29 @@
     }
 
     .face-btn:active {
+        transform: scale(0.95);
+    }
+
+    .animation-btn {
+        width: 36px;
+        height: 36px;
+        background: #f0f0f0;
+        border: none;
+        border-radius: 18px;
+        cursor: pointer;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s, transform 0.1s;
+    }
+
+    .animation-btn:hover {
+        background: #e0e0e0;
+        transform: scale(1.1);
+    }
+
+    .animation-btn:active {
         transform: scale(0.95);
     }
 
