@@ -2,11 +2,11 @@
     import { onMount, onDestroy } from "svelte";
     import * as THREE from "three";
     import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-    import {player, cameraRef} from "./World"
+    import { player, cameraRef, faceState, TOTAL_FACES } from "./World";
+    import facesUrl from "../../assets/faces.png";
 
     let canvasElement: HTMLCanvasElement;
     let scene: THREE.Scene;
-    // let camera: THREE.PerspectiveCamera;
     let renderer: THREE.WebGLRenderer;
     let controls: OrbitControls;
     let animationId: number;
@@ -16,6 +16,8 @@
     let hasMoved = false;
     let isDragging = false;
     let plane: THREE.Mesh;
+    let facePlane: THREE.Mesh;
+    let faceMaterial: THREE.MeshBasicMaterial;
     const PI = Math.PI;
 
     let movePoints: THREE.Vector3[] = [];
@@ -48,6 +50,7 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        // renderer.setPixelRatio(0.2)
 
         controls = new OrbitControls(cameraRef.camera, renderer.domElement);
         controls.enableDamping = true;
@@ -73,9 +76,8 @@
         directionalLight.shadow.camera.bottom = -10;
         scene.add(directionalLight);
 
-
         // Cone body
-        const coneGeometry = new THREE.ConeGeometry(0.5, 1.5, 8);
+        const coneGeometry = new THREE.ConeGeometry(0.5, 1.5, 12);
         const coneMaterial = new THREE.MeshPhongMaterial({ color: 0x4169e1 });
         const cone = new THREE.Mesh(coneGeometry, coneMaterial);
         cone.position.y = 0.75;
@@ -92,22 +94,59 @@
         head.receiveShadow = true;
         player.add(head);
 
-        // Left eye
-        const eyeGeometry = new THREE.SphereGeometry(0.1, 8, 8);
-        const eyeMaterial = new THREE.MeshPhongMaterial({ color: 0x000000 });
-        const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
-        leftEye.position.set(-0.15, 1.85, 0.35);
-        leftEye.castShadow = true;
-        player.add(leftEye);
+        // // Left eye
+        // const eyeGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+        // const eyeMaterial = new THREE.MeshPhongMaterial({ color: 0x000000 });
+        // const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+        // leftEye.position.set(-0.15, 1.85, 0.35);
+        // leftEye.castShadow = true;
+        // player.add(leftEye);
+        //
+        // // Right eye
+        // const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+        // rightEye.position.set(0.15, 1.85, 0.35);
+        // rightEye.castShadow = true;
+        // player.add(rightEye);
 
-        // Right eye
-        const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
-        rightEye.position.set(0.15, 1.85, 0.35);
-        rightEye.castShadow = true;
-        player.add(rightEye);
+        // Face sprite (expression system)
+        const textureLoader = new THREE.TextureLoader();
+        const faceTexture = textureLoader.load(facesUrl);
+        faceTexture.repeat.set(1 / TOTAL_FACES, 1);
+        faceTexture.offset.set(0, 0);
+        faceTexture.colorSpace = THREE.SRGBColorSpace;
+        faceTexture.minFilter = THREE.NearestFilter;
+        faceTexture.magFilter = THREE.NearestFilter;
+
+        faceMaterial = new THREE.MeshBasicMaterial({
+            map: faceTexture,
+            transparent: true,
+            side: THREE.DoubleSide,
+            // alphaTest: 0.5
+        });
+        const planeGeo1 = new THREE.PlaneGeometry(1, 1);
+        facePlane = new THREE.Mesh(planeGeo1, faceMaterial);
+        facePlane.position.set(0, 1.8, 0.4);
+        facePlane.scale.set(0.6, 0.6, 1);
+        // facePlane.castShadow=true;
+        // facePlane.receiveShadow=false;
+        player.add(facePlane);
 
         player.position.set(0, 0, 0);
         scene.add(player);
+
+        const curve = new THREE.CatmullRomCurve3([
+            new THREE.Vector3(-1, 0, 1),
+            new THREE.Vector3(-0.5, 0.5, 0.5),
+            new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(0.5, -0.5, 0.5),
+            new THREE.Vector3(1, 0, 1),
+        ]);
+
+        // 2. Create the Tube (path, segments, radius, radialSegments, closed)
+        const geometry = new THREE.TubeGeometry(curve, 16, 0.1, 6, false);
+        const material = new THREE.MeshStandardMaterial({ color: 0xffd700 });
+        const noodle = new THREE.Mesh(geometry, material);
+        player.add(noodle);
 
         // Plane
         const planeGeometry = new THREE.PlaneGeometry(20, 20);
@@ -121,27 +160,27 @@
         plane.receiveShadow = true;
         scene.add(plane);
 
-        const handlePointerDown = (event: MouseEvent) => {
+        const handlePointerDown = (event: PointerEvent) => {
             clickStartTime = Date.now();
             hasMoved = false;
             isDragging = false;
+            event.pointerId;
         };
 
         const handlePointerMove = () => {
             if (clickStartTime) {
                 hasMoved = true;
-                if (Date.now() - clickStartTime > 50) {
+                if (Date.now() - clickStartTime > 100) {
                     isDragging = true;
                 }
             }
         };
 
-        const handlePointerUp = (event: MouseEvent) => {
+        const handlePointerUp = (event: PointerEvent) => {
             const clickDuration = Date.now() - clickStartTime;
 
             // Only trigger movement for quick clicks (< 1ms or < 50ms) without movement
-            if (!hasMoved && !isDragging) {
-                console.log("hit");
+            if (!isDragging) {
                 // clickDuration < 150 &&
 
                 // Calculate mouse position
@@ -150,17 +189,6 @@
                 mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
                 raycaster.setFromCamera(mouse, cameraRef.camera);
-
-                // const planeGeometry = new THREE.PlaneGeometry(20, 20);
-                // const planeMaterial = new THREE.MeshBasicMaterial({
-                //     visible: false,
-                // });
-                // const invisiblePlane = new THREE.Mesh(
-                //     planeGeometry,
-                //     planeMaterial,
-                // );
-                // invisiblePlane.rotation.x = -Math.PI / 2;
-                // invisiblePlane.position.y = 0;
 
                 const intersects = raycaster.intersectObject(plane);
 
@@ -185,6 +213,12 @@
             animationId = requestAnimationFrame(animate);
 
             move();
+
+            // Update face sprite texture offset based on current face
+            if (faceMaterial && faceMaterial.map) {
+                faceMaterial.map.offset.x = faceState.currentFace / TOTAL_FACES;
+                // faceMaterial.alphaMap.offset.x = faceMaterial.map.offset.x;
+            }
 
             controls.update();
             renderer.render(scene, cameraRef.camera);

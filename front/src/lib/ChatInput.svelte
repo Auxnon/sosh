@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { nextFace } from './World';
+
     export let onSendMessage: (message: string) => void;
     let inputValue = '';
     let isVisible = true;
@@ -20,6 +22,10 @@
     function toggleVisibility() {
         isVisible = !isVisible;
     }
+
+    function handleFaceChange() {
+        nextFace();
+    }
 </script>
 
 <div class="chat-input-container" class:hidden={!isVisible}>
@@ -40,7 +46,14 @@
                 placeholder="Type a message..."
                 class="chat-input"
             />
-            <button 
+            <button
+                on:click={handleFaceChange}
+                class="face-btn"
+                title="Change expression"
+            >
+                😊
+            </button>
+            <button
                 on:click={handleSubmit}
                 class="send-btn"
                 disabled={!inputValue.trim()}
@@ -136,6 +149,29 @@
     .send-btn:disabled {
         background: #cccccc;
         cursor: not-allowed;
+    }
+
+    .face-btn {
+        width: 36px;
+        height: 36px;
+        background: #f0f0f0;
+        border: none;
+        border-radius: 18px;
+        cursor: pointer;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s, transform 0.1s;
+    }
+
+    .face-btn:hover {
+        background: #e0e0e0;
+        transform: scale(1.1);
+    }
+
+    .face-btn:active {
+        transform: scale(0.95);
     }
 
     .hidden {
