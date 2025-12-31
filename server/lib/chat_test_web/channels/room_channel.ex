@@ -62,4 +62,14 @@ defmodule ChatTestWeb.RoomChannel do
     broadcast!(socket, "move", %{vec: vec, user_id: socket.assigns.user_id})
     {:noreply, socket}
   end
+
+  def handle_in("animation", %{"animation" => animation}, socket) do
+    broadcast!(socket, "animation", %{animation: animation, user_id: socket.assigns.user_id})
+    {:noreply, socket}
+  end
+
+  def handle_in("face", %{"face" => face}, socket) do
+    broadcast!(socket, "face", %{face: face, user_id: socket.assigns.user_id})
+    {:noreply, socket}
+  end
 end

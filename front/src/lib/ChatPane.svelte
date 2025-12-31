@@ -2,7 +2,8 @@
     import ChatInput from "./ChatInput.svelte";
     import { onMount, onDestroy } from "svelte";
     import * as THREE from "three";
-    import { player, cameraRef } from "./World";
+    import { player, cameraRef, otherPlayers } from "./World";
+    import { socketService } from "./socket";
 
     interface ChatMessage {
         id: string;
@@ -22,6 +23,31 @@
     let updateInterval: number;
 
     onMount(() => {
+        // Connect to socket
+        socketService.connect();
+        
+        // Listen for incoming messages
+        socketService.onMessage((message) => {
+            if (message.body) {
+                const newMessage: ChatMessage = {
+                    id: Date.now().toString() + Math.random(),
+                    text: message.body,
+                    position: new THREE.Vector3(0, 2.5, 0), // Will be updated with player position
+                    timestamp: Date.now(),
+                    isOwn: false,
+                    playerId: message.user_id,
+                };
+                
+                // Get other player position if available
+                const otherPlayer = otherPlayers.get(message.user_id);
+                if (otherPlayer) {
+                    newMessage.position = otherPlayer.group.position.clone().add(new THREE.Vector3(0, 2.5, 0));
+                }
+                
+                addMessageToPlayer(message.user_id, newMessage);
+            }
+        });
+
         // Update bubble positions frequently for smooth 3D tracking
         updateInterval = setInterval(() => {
             // Force reactivity to update bubble positions
@@ -33,6 +59,7 @@
         if (updateInterval) {
             clearInterval(updateInterval);
         }
+        socketService.disconnect();
     });
 
     function addMessageToPlayer(playerId: string, message: ChatMessage) {
@@ -64,27 +91,9 @@
         };
 
         addMessageToPlayer(ownPlayerId, newMessage);
-
-        // Simulate receiving a response from another player
-        setTimeout(
-            () => {
-                const otherPlayerId = `player-${Math.floor(Math.random() * 3) + 1}`;
-                const responseMessage: ChatMessage = {
-                    id: (Date.now() + 1).toString(),
-                    text: `Response to: ${text}`,
-                    position: new THREE.Vector3(
-                        (Math.random() - 0.5) * 10,
-                        2 + Math.random() * 3,
-                        (Math.random() - 0.5) * 10,
-                    ),
-                    timestamp: Date.now() + 1,
-                    isOwn: false,
-                    playerId: otherPlayerId,
-                };
-                addMessageToPlayer(otherPlayerId, responseMessage);
-            },
-            1000 + Math.random() * 2000,
-        );
+        
+        // Send message through socket
+        socketService.sendMessage(text);
     }
 
     function projectToScreen(position: THREE.Vector3): {

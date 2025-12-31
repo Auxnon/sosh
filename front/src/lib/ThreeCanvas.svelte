@@ -9,7 +9,10 @@
         faceState,
         TOTAL_FACES,
         animationState,
+        otherPlayers,
+        sendPlayerPosition,
     } from "./World";
+    import { socketService } from "./socket";
     import facesUrl from "../../assets/faces.png";
 
     let canvasElement: HTMLCanvasElement;
@@ -196,6 +199,43 @@
         player.position.set(0, 0, 0);
         scene.add(player);
 
+        // Setup socket event listeners for other players
+        socketService.onPlayerJoined((data) => {
+            createOtherPlayer(data.user_id, data.vec);
+        });
+
+        socketService.onPlayerMove((data) => {
+            const otherPlayer = otherPlayers.get(data.user_id);
+            if (otherPlayer) {
+                otherPlayer.group.position.set(data.vec[0], data.vec[1], data.vec[2]);
+            } else {
+                createOtherPlayer(data.user_id, data.vec);
+            }
+        });
+
+        socketService.onPlayerAnimation((data) => {
+            const otherPlayer = otherPlayers.get(data.user_id);
+            if (otherPlayer && otherPlayer.animationState.actions.length > 0) {
+                // Stop current animation
+                if (otherPlayer.animationState.actions[otherPlayer.animationState.currentAnimation]) {
+                    otherPlayer.animationState.actions[otherPlayer.animationState.currentAnimation].stop();
+                }
+                
+                // Start new animation
+                otherPlayer.animationState.currentAnimation = data.animation;
+                if (otherPlayer.animationState.actions[data.animation]) {
+                    otherPlayer.animationState.actions[data.animation].play();
+                }
+            }
+        });
+
+        socketService.onPlayerFace((data) => {
+            const otherPlayer = otherPlayers.get(data.user_id);
+            if (otherPlayer) {
+                otherPlayer.faceState.currentFace = data.face;
+            }
+        });
+
         // const curve = new THREE.CatmullRomCurve3([
         //     new THREE.Vector3(-1, 0, 1),
         //     new THREE.Vector3(-0.5, 0.5, 0.5),
@@ -275,10 +315,17 @@
 
             move();
 
-            // Update animation mixer
+            // Update animation mixer for main player
             if (animationState.mixer) {
                 animationState.mixer.update(0.016); // ~60fps
             }
+
+            // Update animation mixers for other players
+            otherPlayers.forEach((otherPlayer) => {
+                if (otherPlayer.animationState.mixer) {
+                    otherPlayer.animationState.mixer.update(0.016);
+                }
+            });
 
             // if (animationState.headBone && facePlane) {
             //     const headWorldPosition = new THREE.Vector3();
@@ -301,6 +348,42 @@
             renderer.render(scene, cameraRef.camera);
         };
 
+        const createOtherPlayer = (userId: string, position: [number, number, number]) => {
+            if (otherPlayers.has(userId)) return;
+
+            const otherPlayerGroup = new THREE.Group();
+            otherPlayerGroup.position.set(position[0], position[1], position[2]);
+
+            // Create simple representation for other players (can be enhanced later)
+            const coneGeometry = new THREE.ConeGeometry(0.5, 1.5, 12);
+            const coneMaterial = new THREE.MeshPhongMaterial({ color: 0xff6b6b });
+            const cone = new THREE.Mesh(coneGeometry, coneMaterial);
+            cone.position.y = 0.75;
+            cone.castShadow = true;
+            cone.receiveShadow = true;
+            otherPlayerGroup.add(cone);
+
+            const headGeometry = new THREE.SphereGeometry(0.4, 16, 16);
+            const headMaterial = new THREE.MeshPhongMaterial({ color: 0xffdbac });
+            const head = new THREE.Mesh(headGeometry, headMaterial);
+            head.position.y = 1.8;
+            head.castShadow = true;
+            head.receiveShadow = true;
+            otherPlayerGroup.add(head);
+
+            scene.add(otherPlayerGroup);
+
+            otherPlayers.set(userId, {
+                group: otherPlayerGroup,
+                animationState: {
+                    currentAnimation: 0,
+                    mixer: null,
+                    actions: []
+                },
+                faceState: { currentFace: 0 }
+            });
+        };
+
         const move = () => {
             const current = movePoints[0];
             if (current) {
@@ -312,9 +395,11 @@
                 if (r < speed * 2) {
                     // @ts-expect-error
                     player.position.copy(movePoints.shift());
+                    sendPlayerPosition(); // Send position update
                 } else {
                     player.position.x += (speed * dx) / r;
                     player.position.z += (speed * dy) / r;
+                    sendPlayerPosition(); // Send position update
                 }
             }
         };
