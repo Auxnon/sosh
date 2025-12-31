@@ -16,7 +16,7 @@
     // HashMap of player messages: playerId -> ChatMessage[]
     let playerMessages: Map<string, ChatMessage[]> = new Map();
     const MAX_MESSAGES_PER_PLAYER = 5;
-    const MESSAGE_STACK_OFFSET = 60; // pixels between stacked messages
+    const MESSAGE_STACK_OFFSET = 30; // pixels between stacked messages (halved)
     // let scene: THREE.Scene;
     // let camera: THREE.PerspectiveCamera;
     let updateInterval: number;
@@ -116,16 +116,44 @@
         y: number;
     } {
         const screenPos = projectToScreen(basePosition);
-        const offsetY = screenPos.y - (stackIndex * MESSAGE_STACK_OFFSET);
+        // Reverse order: oldest at top (higher stackIndex = higher up)
+        const offsetY = screenPos.y - ((stackIndex) * MESSAGE_STACK_OFFSET);
         return clampToScreen(screenPos.x, offsetY);
+    }
+
+    function getNameTagPosition(basePosition: THREE.Vector3, messagesLength: number): {
+        x: number;
+        y: number;
+        side: 'left' | 'right';
+    } {
+        const screenPos = projectToScreen(basePosition);
+        const isLeftSide = screenPos.x < window.innerWidth / 2;
+        const side = isLeftSide ? 'right' : 'left';
+        
+        // Position name tag at the middle of the message stack
+        const stackMiddleY = screenPos.y - ((messagesLength - 1) * MESSAGE_STACK_OFFSET / 2);
+        const nameTagX = isLeftSide ? screenPos.x + 140 : screenPos.x - 140;
+        
+        return clampToScreen(nameTagX, stackMiddleY, 100, 30);
     }
 </script>
 
 <div class="chat-pane">
     <!-- Floating chat bubbles grouped by player -->
     {#each Array.from(playerMessages.entries()) as [playerId, messages] (playerId)}
+        <!-- Name tag for each player -->
+        {@const nameTagPos = getNameTagPosition(messages[0].position, messages.length)}
+        <div
+            class="name-tag {nameTagPos.side}"
+            style="left: {nameTagPos.x}px; top: {nameTagPos.y}px;"
+        >
+            {playerId}
+        </div>
+        
+        <!-- Messages for this player (reversed order: oldest first) -->
         {#each messages as message, index (message.id)}
-            {@const stackedPos = getStackedPosition(message.position, index)}
+            {@const stackedPos = getStackedPosition(message.position, messages.length - 1 - index)}
+            {@const isNewest = index === messages.length - 1}
             <div
                 class="chat-bubble {message.isOwn ? 'own' : 'other'}"
                 style="left: {stackedPos.x}px; top: {stackedPos.y}px;"
@@ -133,7 +161,9 @@
                 <div class="bubble-content">
                     {message.text}
                 </div>
-                <div class="bubble-tail {message.isOwn ? 'right' : 'left'}"></div>
+                {#if isNewest}
+                    <div class="bubble-tail {message.isOwn ? 'right' : 'left'}"></div>
+                {/if}
             </div>
         {/each}
     {/each}
@@ -214,6 +244,29 @@
         left: 2px;
         /* border-width: 8px 8px 8px 0; */
         /* border-color: transparent #e4e6eb transparent transparent; */
+    }
+
+    .name-tag {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 500;
+        transform: translateY(-50%);
+        white-space: nowrap;
+        z-index: 2;
+        animation: fadeIn 0.3s ease-out;
+    }
+
+    .name-tag.left {
+        transform: translate(-100%, -50%);
+    }
+
+    .name-tag.right {
+        transform: translate(0%, -50%);
     }
 
     @keyframes fadeIn {
