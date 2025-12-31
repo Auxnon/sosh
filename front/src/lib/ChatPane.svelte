@@ -42,7 +42,7 @@
         const newMessage: ChatMessage = {
             id: Date.now().toString(),
             text,
-            position: player.position.clone().add({x: 0,y:2.5,z:0}),
+            position: player.position.clone().add({ x: 0, y: 2.5, z: 0 }),
             timestamp: Date.now(),
             isOwn: true,
         };
@@ -140,33 +140,45 @@
     .chat-bubble.own .bubble-content {
         background: #0084ff;
         color: white;
-        border-bottom-right-radius: 6px;
+        border-bottom-right-radius: 4px;
     }
 
     .chat-bubble.other .bubble-content {
         background: #e4e6eb;
         color: #050505;
-        border-bottom-left-radius: 6px;
+        border-bottom-left-radius: 4px;
     }
 
     .bubble-tail {
+        /* position: absolute; */
+        /* width: 0; */
+        /* height: 0; */
+        /* border-style: solid; */
+        /* bottom: 0; */
         position: absolute;
+        bottom: 0;
+        /* left: 50%; */
         width: 0;
         height: 0;
-        border-style: solid;
-        bottom: 0;
+        border: 10px solid transparent;
+        border-bottom: 0;
+        margin-left: 0px;
+        margin-bottom: -9px;
     }
 
     .bubble-tail.right {
-        right: -8px;
-        border-width: 8px 0 8px 8px;
-        border-color: transparent transparent transparent #0084ff;
+        right: 2px;
+        border-top-color: #0084ff;
+        /* bottom: -8px; */
+        /* border-width: 8px 8px 0 8px; */
+        /* border-color: transparent transparent transparent #0084ff; */
     }
 
     .bubble-tail.left {
-        left: -8px;
-        border-width: 8px 8px 8px 0;
-        border-color: transparent #e4e6eb transparent transparent;
+        border-top-color: #e4e6eb;
+        left: 2px;
+        /* border-width: 8px 8px 8px 0; */
+        /* border-color: transparent #e4e6eb transparent transparent; */
     }
 
     @keyframes fadeIn {
