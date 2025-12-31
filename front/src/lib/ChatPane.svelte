@@ -39,15 +39,15 @@
         if (!playerMessages.has(playerId)) {
             playerMessages.set(playerId, []);
         }
-        
+
         const messages = playerMessages.get(playerId)!;
         messages.push(message);
-        
+
         // Remove oldest messages if we exceed the limit
         if (messages.length > MAX_MESSAGES_PER_PLAYER) {
             messages.shift();
         }
-        
+
         // Trigger reactivity
         playerMessages = new Map(playerMessages);
     }
@@ -100,41 +100,59 @@
         return { x, y };
     }
 
-    function clampToScreen(x: number, y: number, bubbleWidth: number = 250, bubbleHeight: number = 50): {
+    function clampToScreen(
+        x: number,
+        y: number,
+        bubbleWidth: number = 250,
+        bubbleHeight: number = 50,
+    ): {
         x: number;
         y: number;
     } {
         const margin = 10;
-        const clampedX = Math.max(margin + bubbleWidth / 2, Math.min(window.innerWidth - margin - bubbleWidth / 2, x));
-        const clampedY = Math.max(margin + bubbleHeight / 2, Math.min(window.innerHeight - margin - bubbleHeight / 2, y));
-        
+        const clampedX = Math.max(
+            margin + bubbleWidth / 2,
+            Math.min(window.innerWidth - margin - bubbleWidth / 2, x),
+        );
+        const clampedY = Math.max(
+            margin + bubbleHeight / 2,
+            Math.min(window.innerHeight - margin - bubbleHeight / 2, y),
+        );
+
         return { x: clampedX, y: clampedY };
     }
 
-    function getStackedPosition(basePosition: THREE.Vector3, stackIndex: number): {
+    function getStackedPosition(
+        basePosition: THREE.Vector3,
+        stackIndex: number,
+    ): {
         x: number;
         y: number;
     } {
         const screenPos = projectToScreen(basePosition);
         // Reverse order: oldest at top (higher stackIndex = higher up)
-        const offsetY = screenPos.y - ((stackIndex) * MESSAGE_STACK_OFFSET);
+        const offsetY = screenPos.y - stackIndex * MESSAGE_STACK_OFFSET;
         return clampToScreen(screenPos.x, offsetY);
     }
 
-    function getNameTagPosition(basePosition: THREE.Vector3, messagesLength: number): {
+    function getNameTagPosition(
+        basePosition: THREE.Vector3,
+        messagesLength: number,
+    ): {
         x: number;
         y: number;
-        side: 'left' | 'right';
+        side: "left" | "right";
     } {
         const screenPos = projectToScreen(basePosition);
-        const isLeftSide = screenPos.x < window.innerWidth / 2;
-        const side = isLeftSide ? 'right' : 'left';
-        
+        const isLeftSide = screenPos.x > window.innerWidth / 2;
+        const side = isLeftSide ? "right" : "left";
+
         // Position name tag at the middle of the message stack
-        const stackMiddleY = screenPos.y - ((messagesLength - 1) * MESSAGE_STACK_OFFSET / 2);
-        const nameTagX = isLeftSide ? screenPos.x + 140 : screenPos.x - 140;
-        
-        return clampToScreen(nameTagX, stackMiddleY, 100, 30);
+        const stackMiddleY =
+            screenPos.y - ((messagesLength - 1) * MESSAGE_STACK_OFFSET) / 2;
+        const nameTagX = screenPos.x - (isLeftSide ? 1 : -1)*100;
+
+        return { ...clampToScreen(nameTagX, stackMiddleY, 100, 30), side}
     }
 </script>
 
@@ -142,17 +160,23 @@
     <!-- Floating chat bubbles grouped by player -->
     {#each Array.from(playerMessages.entries()) as [playerId, messages] (playerId)}
         <!-- Name tag for each player -->
-        {@const nameTagPos = getNameTagPosition(messages[0].position, messages.length)}
+        {@const nameTagPos = getNameTagPosition(
+            messages[0].position,
+            messages.length,
+        )}
         <div
             class="name-tag {nameTagPos.side}"
             style="left: {nameTagPos.x}px; top: {nameTagPos.y}px;"
         >
             {playerId}
         </div>
-        
+
         <!-- Messages for this player (reversed order: oldest first) -->
         {#each messages as message, index (message.id)}
-            {@const stackedPos = getStackedPosition(message.position, messages.length - 1 - index)}
+            {@const stackedPos = getStackedPosition(
+                message.position,
+                messages.length - 1 - index,
+            )}
             {@const isNewest = index === messages.length - 1}
             <div
                 class="chat-bubble {message.isOwn ? 'own' : 'other'}"
@@ -162,7 +186,9 @@
                     {message.text}
                 </div>
                 {#if isNewest}
-                    <div class="bubble-tail {message.isOwn ? 'right' : 'left'}"></div>
+                    <div
+                        class="bubble-tail {message.isOwn ? 'right' : 'left'}"
+                    ></div>
                 {/if}
             </div>
         {/each}
