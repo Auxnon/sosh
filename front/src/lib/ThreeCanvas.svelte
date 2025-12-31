@@ -3,7 +3,13 @@
     import * as THREE from "three";
     import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
     import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-    import { player, cameraRef, faceState, TOTAL_FACES, animationState } from "./World";
+    import {
+        player,
+        cameraRef,
+        faceState,
+        TOTAL_FACES,
+        animationState,
+    } from "./World";
     import facesUrl from "../../assets/faces.png";
 
     let canvasElement: HTMLCanvasElement;
@@ -50,6 +56,7 @@
         });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.shadowMap.enabled = true;
+        // renderer.shadowMap.type = THREE.PCFShadowMap
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         // renderer.setPixelRatio(0.2)
 
@@ -75,64 +82,9 @@
         directionalLight.shadow.camera.right = 10;
         directionalLight.shadow.camera.top = 10;
         directionalLight.shadow.camera.bottom = -10;
+        directionalLight.shadow.bias = -0.001;
         scene.add(directionalLight);
 
-        // Load GLB model
-        const loader = new GLTFLoader();
-        loader.load('/assets/player.glb', (gltf) => {
-            const model = gltf.scene;
-            
-            // Enable shadows for all meshes in the model
-            model.traverse((child) => {
-                if (child instanceof THREE.Mesh) {
-                    child.castShadow = true;
-                    child.receiveShadow = true;
-                }
-                // Find head bone for face attachment
-                if (child instanceof THREE.Bone && child.name.toLowerCase().includes('head')) {
-                    animationState.headBone = child;
-                }
-            });
-            
-            // Setup animations
-            if (gltf.animations && gltf.animations.length > 0) {
-                animationState.mixer = new THREE.AnimationMixer(model);
-                
-                gltf.animations.forEach((clip) => {
-                    const action = animationState.mixer!.clipAction(clip);
-                    action.setLoop(THREE.LoopRepeat, Infinity);
-                    animationState.actions.push(action);
-                });
-                
-                // Start with idle animation (first one)
-                if (animationState.actions.length > 0) {
-                    animationState.actions[0].play();
-                }
-            }
-            
-            player.add(model);
-        }, undefined, (error) => {
-            console.error('Error loading GLB model:', error);
-            
-            // Fallback: create simple geometry if model fails to load
-            const coneGeometry = new THREE.ConeGeometry(0.5, 1.5, 12);
-            const coneMaterial = new THREE.MeshPhongMaterial({ color: 0x4169e1 });
-            const cone = new THREE.Mesh(coneGeometry, coneMaterial);
-            cone.position.y = 0.75;
-            cone.castShadow = true;
-            cone.receiveShadow = true;
-            player.add(cone);
-            
-            const headGeometry = new THREE.SphereGeometry(0.4, 16, 16);
-            const headMaterial = new THREE.MeshPhongMaterial({ color: 0xffdbac });
-            const head = new THREE.Mesh(headGeometry, headMaterial);
-            head.position.y = 1.8;
-            head.castShadow = true;
-            head.receiveShadow = true;
-            player.add(head);
-        });
-
-        // Face sprite (expression system)
         const textureLoader = new THREE.TextureLoader();
         const faceTexture = textureLoader.load(facesUrl);
         faceTexture.repeat.set(1 / TOTAL_FACES, 1);
@@ -149,31 +101,113 @@
         });
         const planeGeo1 = new THREE.PlaneGeometry(1, 1);
         facePlane = new THREE.Mesh(planeGeo1, faceMaterial);
-        facePlane.position.set(0, 1.8, 0.4);
+        // facePlane.position.set(0, 1.8, 0.4);
+        facePlane.position.set(-.02, 1.6, 0.35);
         facePlane.scale.set(0.6, 0.6, 1);
-        // facePlane.castShadow=true;
-        // facePlane.receiveShadow=false;
-        
-        // We'll add the face plane after the model loads and we find the head bone
-        // For now, add it to the player group as fallback
-        player.add(facePlane);
+
+        // Load GLB model
+        const loader = new GLTFLoader();
+        loader.load(
+            "/assets/player.glb",
+            (gltf) => {
+                const model = gltf.scene;
+                let ref!: THREE.Bone;
+
+                model.traverse((child) => {
+                    if (child instanceof THREE.Mesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        const mat = new THREE.MeshPhongMaterial({
+                            vertexColors: true,
+                            side: THREE.FrontSide,
+                        });
+                        child.material = mat;
+                    }
+                    // Find head bone for face attachment
+                    if (
+                        child instanceof THREE.Bone &&
+                        child.name.toLowerCase().includes("head")
+                    ) {
+                        animationState.headBone = child;
+                        ref = child;
+                        // child.add(facePlane);
+                        // facePlane.material = new THREE.MeshBasicMaterial({
+                        //     // transparent: true,
+                        //     color: 0x4169e1,
+                        //     side: THREE.DoubleSide,
+                        //     // alphaTest: 0.5
+                        // });
+                        // child.attach(facePlane);
+                        // faceMaterial.needsUpdate=true
+                    }
+                });
+
+                // Setup animations
+                if (gltf.animations && gltf.animations.length > 0) {
+                    animationState.mixer = new THREE.AnimationMixer(model);
+
+                    gltf.animations.forEach((clip) => {
+                        const action = animationState.mixer!.clipAction(clip);
+                        action.setLoop(THREE.LoopRepeat, Infinity);
+                        animationState.actions.push(action);
+                    });
+
+                    // Start with idle animation (first one)
+                    if (animationState.actions.length > 0) {
+                        animationState.actions[0].play();
+                    }
+                }
+
+                ref.attach(facePlane);
+
+                player.add(model);
+            },
+            undefined,
+            (error) => {
+                console.error("Error loading GLB model:", error);
+
+                // Fallback: create simple geometry if model fails to load
+                const coneGeometry = new THREE.ConeGeometry(0.5, 1.5, 12);
+                const coneMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x4169e1,
+                });
+                const cone = new THREE.Mesh(coneGeometry, coneMaterial);
+                cone.position.y = 0.75;
+                cone.castShadow = true;
+                cone.receiveShadow = true;
+                player.add(cone);
+
+                const headGeometry = new THREE.SphereGeometry(0.4, 16, 16);
+                const headMaterial = new THREE.MeshPhongMaterial({
+                    color: 0xffdbac,
+                });
+                const head = new THREE.Mesh(headGeometry, headMaterial);
+                head.position.y = 1.8;
+                head.castShadow = true;
+                head.receiveShadow = true;
+                player.add(head);
+            },
+        );
+
+        // player.add(facePlane);
+        // setTimeout(()=>{
+        // ref.attach(facePlane);},200);
 
         player.position.set(0, 0, 0);
         scene.add(player);
 
-        const curve = new THREE.CatmullRomCurve3([
-            new THREE.Vector3(-1, 0, 1),
-            new THREE.Vector3(-0.5, 0.5, 0.5),
-            new THREE.Vector3(0, 0, 0),
-            new THREE.Vector3(0.5, -0.5, 0.5),
-            new THREE.Vector3(1, 0, 1),
-        ]);
-
-        // 2. Create the Tube (path, segments, radius, radialSegments, closed)
-        const geometry = new THREE.TubeGeometry(curve, 16, 0.1, 6, false);
-        const material = new THREE.MeshStandardMaterial({ color: 0xffd700 });
-        const noodle = new THREE.Mesh(geometry, material);
-        player.add(noodle);
+        // const curve = new THREE.CatmullRomCurve3([
+        //     new THREE.Vector3(-1, 0, 1),
+        //     new THREE.Vector3(-0.5, 0.5, 0.5),
+        //     new THREE.Vector3(0, 0, 0),
+        //     new THREE.Vector3(0.5, -0.5, 0.5),
+        //     new THREE.Vector3(1, 0, 1),
+        // ]);
+        //
+        // const geometry = new THREE.TubeGeometry(curve, 16, 0.1, 6, false);
+        // const material = new THREE.MeshStandardMaterial({ color: 0xffd700 });
+        // const noodle = new THREE.Mesh(geometry, material);
+        // player.add(noodle);
 
         // Plane
         const planeGeometry = new THREE.PlaneGeometry(20, 20);
@@ -246,16 +280,16 @@
                 animationState.mixer.update(0.016); // ~60fps
             }
 
-            // Update face position to follow head bone
-            if (animationState.headBone && facePlane) {
-                const headWorldPosition = new THREE.Vector3();
-                animationState.headBone.getWorldPosition(headWorldPosition);
-                
-                // Convert world position to local position relative to player
-                const localPosition = player.worldToLocal(headWorldPosition.clone());
-                facePlane.position.copy(localPosition);
-                facePlane.position.z += 0.4; // Offset forward from head
-            }
+            // if (animationState.headBone && facePlane) {
+            //     const headWorldPosition = new THREE.Vector3();
+            //     animationState.headBone.getWorldPosition(headWorldPosition);
+            //
+            //     const localPosition = player.worldToLocal(
+            //         headWorldPosition.clone(),
+            //     );
+            //     facePlane.position.copy(localPosition);
+            //     facePlane.position.z += 0.4;
+            // }
 
             // Update face sprite texture offset based on current face
             if (faceMaterial && faceMaterial.map) {
