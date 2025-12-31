@@ -10,25 +10,22 @@
         position: THREE.Vector3;
         timestamp: number;
         isOwn: boolean;
+        playerId: string;
     }
 
-    let messages: ChatMessage[] = [];
+    // HashMap of player messages: playerId -> ChatMessage[]
+    let playerMessages: Map<string, ChatMessage[]> = new Map();
+    const MAX_MESSAGES_PER_PLAYER = 5;
+    const MESSAGE_STACK_OFFSET = 60; // pixels between stacked messages
     // let scene: THREE.Scene;
     // let camera: THREE.PerspectiveCamera;
     let updateInterval: number;
 
     onMount(() => {
-        // Get Three.js scene and camera from the global window or emit event
-        // window.addEventListener('three-scene-ready', (event: Event) => {
-        //     const customEvent = event as CustomEvent;
-        //     scene = customEvent.detail.scene;
-        //     camera = customEvent.detail.camera;
-        // });
-
         // Update bubble positions frequently for smooth 3D tracking
         updateInterval = setInterval(() => {
             // Force reactivity to update bubble positions
-            messages = [...messages];
+            playerMessages = new Map(playerMessages);
         }, 50); // Update every 50ms for smooth movement
     });
 
@@ -38,20 +35,40 @@
         }
     });
 
+    function addMessageToPlayer(playerId: string, message: ChatMessage) {
+        if (!playerMessages.has(playerId)) {
+            playerMessages.set(playerId, []);
+        }
+        
+        const messages = playerMessages.get(playerId)!;
+        messages.push(message);
+        
+        // Remove oldest messages if we exceed the limit
+        if (messages.length > MAX_MESSAGES_PER_PLAYER) {
+            messages.shift();
+        }
+        
+        // Trigger reactivity
+        playerMessages = new Map(playerMessages);
+    }
+
     function handleSendMessage(text: string) {
+        const ownPlayerId = "player-own";
         const newMessage: ChatMessage = {
             id: Date.now().toString(),
             text,
             position: player.position.clone().add({ x: 0, y: 2.5, z: 0 }),
             timestamp: Date.now(),
             isOwn: true,
+            playerId: ownPlayerId,
         };
 
-        messages.push(newMessage);
+        addMessageToPlayer(ownPlayerId, newMessage);
 
-        // Simulate receiving a response
+        // Simulate receiving a response from another player
         setTimeout(
             () => {
+                const otherPlayerId = `player-${Math.floor(Math.random() * 3) + 1}`;
                 const responseMessage: ChatMessage = {
                     id: (Date.now() + 1).toString(),
                     text: `Response to: ${text}`,
@@ -62,8 +79,9 @@
                     ),
                     timestamp: Date.now() + 1,
                     isOwn: false,
+                    playerId: otherPlayerId,
                 };
-                messages = [...messages, responseMessage];
+                addMessageToPlayer(otherPlayerId, responseMessage);
             },
             1000 + Math.random() * 2000,
         );
@@ -73,11 +91,6 @@
         x: number;
         y: number;
     } {
-        // if (!scene || !camera) {
-        //     console.log("not ready", scene)
-        //     return { x: 50, y: 50 }; // Default position if scene not ready
-        // }
-
         const vector = position.clone();
         vector.project(cameraRef.camera);
 
@@ -86,21 +99,43 @@
 
         return { x, y };
     }
+
+    function clampToScreen(x: number, y: number, bubbleWidth: number = 250, bubbleHeight: number = 50): {
+        x: number;
+        y: number;
+    } {
+        const margin = 10;
+        const clampedX = Math.max(margin + bubbleWidth / 2, Math.min(window.innerWidth - margin - bubbleWidth / 2, x));
+        const clampedY = Math.max(margin + bubbleHeight / 2, Math.min(window.innerHeight - margin - bubbleHeight / 2, y));
+        
+        return { x: clampedX, y: clampedY };
+    }
+
+    function getStackedPosition(basePosition: THREE.Vector3, stackIndex: number): {
+        x: number;
+        y: number;
+    } {
+        const screenPos = projectToScreen(basePosition);
+        const offsetY = screenPos.y - (stackIndex * MESSAGE_STACK_OFFSET);
+        return clampToScreen(screenPos.x, offsetY);
+    }
 </script>
 
 <div class="chat-pane">
-    <!-- Floating chat bubbles -->
-    {#each messages as message (message.id)}
-        {@const screenPos = projectToScreen(message.position)}
-        <div
-            class="chat-bubble {message.isOwn ? 'own' : 'other'}"
-            style="left: {screenPos.x}px; top: {screenPos.y}px;"
-        >
-            <div class="bubble-content">
-                {message.text}
+    <!-- Floating chat bubbles grouped by player -->
+    {#each Array.from(playerMessages.entries()) as [playerId, messages] (playerId)}
+        {#each messages as message, index (message.id)}
+            {@const stackedPos = getStackedPosition(message.position, index)}
+            <div
+                class="chat-bubble {message.isOwn ? 'own' : 'other'}"
+                style="left: {stackedPos.x}px; top: {stackedPos.y}px;"
+            >
+                <div class="bubble-content">
+                    {message.text}
+                </div>
+                <div class="bubble-tail {message.isOwn ? 'right' : 'left'}"></div>
             </div>
-            <div class="bubble-tail {message.isOwn ? 'right' : 'left'}"></div>
-        </div>
+        {/each}
     {/each}
 
     <!-- Chat input -->
