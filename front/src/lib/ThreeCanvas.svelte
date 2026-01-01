@@ -13,7 +13,9 @@
         sendPlayerPosition,
     } from "./World";
     import { socketService } from "./socket";
-    import facesUrl from "../../assets/faces.png";
+    import facesUrl from "/faces.png"
+
+    import playerModel from "/player.glb?url";
 
     let canvasElement: HTMLCanvasElement;
     let scene: THREE.Scene;
@@ -105,13 +107,13 @@
         const planeGeo1 = new THREE.PlaneGeometry(1, 1);
         facePlane = new THREE.Mesh(planeGeo1, faceMaterial);
         // facePlane.position.set(0, 1.8, 0.4);
-        facePlane.position.set(-.02, 1.6, 0.35);
+        facePlane.position.set(-0.02, 1.6, 0.35);
         facePlane.scale.set(0.6, 0.6, 1);
 
         // Load GLB model
         const loader = new GLTFLoader();
         loader.load(
-            "/assets/player.glb",
+            playerModel,
             (gltf) => {
                 const model = gltf.scene;
                 let ref!: THREE.Bone;
@@ -207,7 +209,11 @@
         socketService.onPlayerMove((data) => {
             const otherPlayer = otherPlayers.get(data.user_id);
             if (otherPlayer) {
-                otherPlayer.group.position.set(data.vec[0], data.vec[1], data.vec[2]);
+                otherPlayer.group.position.set(
+                    data.vec[0],
+                    data.vec[1],
+                    data.vec[2],
+                );
             } else {
                 createOtherPlayer(data.user_id, data.vec);
             }
@@ -217,10 +223,16 @@
             const otherPlayer = otherPlayers.get(data.user_id);
             if (otherPlayer && otherPlayer.animationState.actions.length > 0) {
                 // Stop current animation
-                if (otherPlayer.animationState.actions[otherPlayer.animationState.currentAnimation]) {
-                    otherPlayer.animationState.actions[otherPlayer.animationState.currentAnimation].stop();
+                if (
+                    otherPlayer.animationState.actions[
+                        otherPlayer.animationState.currentAnimation
+                    ]
+                ) {
+                    otherPlayer.animationState.actions[
+                        otherPlayer.animationState.currentAnimation
+                    ].stop();
                 }
-                
+
                 // Start new animation
                 otherPlayer.animationState.currentAnimation = data.animation;
                 if (otherPlayer.animationState.actions[data.animation]) {
@@ -348,15 +360,24 @@
             renderer.render(scene, cameraRef.camera);
         };
 
-        const createOtherPlayer = (userId: string, position: [number, number, number]) => {
+        const createOtherPlayer = (
+            userId: string,
+            position: [number, number, number],
+        ) => {
             if (otherPlayers.has(userId)) return;
 
             const otherPlayerGroup = new THREE.Group();
-            otherPlayerGroup.position.set(position[0], position[1], position[2]);
+            otherPlayerGroup.position.set(
+                position[0],
+                position[1],
+                position[2],
+            );
 
             // Create simple representation for other players (can be enhanced later)
             const coneGeometry = new THREE.ConeGeometry(0.5, 1.5, 12);
-            const coneMaterial = new THREE.MeshPhongMaterial({ color: 0xff6b6b });
+            const coneMaterial = new THREE.MeshPhongMaterial({
+                color: 0xff6b6b,
+            });
             const cone = new THREE.Mesh(coneGeometry, coneMaterial);
             cone.position.y = 0.75;
             cone.castShadow = true;
@@ -364,7 +385,9 @@
             otherPlayerGroup.add(cone);
 
             const headGeometry = new THREE.SphereGeometry(0.4, 16, 16);
-            const headMaterial = new THREE.MeshPhongMaterial({ color: 0xffdbac });
+            const headMaterial = new THREE.MeshPhongMaterial({
+                color: 0xffdbac,
+            });
             const head = new THREE.Mesh(headGeometry, headMaterial);
             head.position.y = 1.8;
             head.castShadow = true;
@@ -378,9 +401,9 @@
                 animationState: {
                     currentAnimation: 0,
                     mixer: null,
-                    actions: []
+                    actions: [],
                 },
-                faceState: { currentFace: 0 }
+                faceState: { currentFace: 0 },
             });
         };
 
