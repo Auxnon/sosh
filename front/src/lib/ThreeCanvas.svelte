@@ -15,7 +15,7 @@
     import { socketService } from "./socket";
     import facesUrl from "/faces.png"
 
-    import playerModel from "/player.glb?url";
+    const playerModel = "/player.glb";
 
     let canvasElement: HTMLCanvasElement;
     let scene: THREE.Scene;
