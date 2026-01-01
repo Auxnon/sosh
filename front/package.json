@@ -1,11 +1,12 @@
 {
-  "name": "sv2-front",
+  "name": "Sosh",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
+    "watch": "vite build --watch --minify false --emptyOutDir false --clearScreen false --mode development",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json"
   },
@@ -13,6 +14,8 @@
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@tsconfig/svelte": "^5.0.6",
     "@types/node": "^24.10.1",
+    "@types/phoenix": "^1.6.7",
+    "@types/three": "^0.182.0",
     "svelte": "^5.43.8",
     "svelte-check": "^4.3.4",
     "typescript": "~5.9.3",
@@ -23,7 +26,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
-    "@types/three": "^0.182.0",
+    "phoenix": "^1.8.3",
     "tailwindcss": "^4.1.18",
     "three": "^0.182.0"
   }
