@@ -33,13 +33,13 @@ config :chat_test, ChatTestWeb.Endpoint,
 # at the `config/runtime.exs`.
 config :chat_test, ChatTest.Mailer, adapter: Swoosh.Adapters.Local
 
-
 config :mime, :types, %{
   "application/javascript" => ["js"],
   "text/javascript" => ["js"],
-  "text/html" => ["js"]
+  "text/html" => ["js"],
+  "models/gltf+json" => ["gltf"],
+  "models/gltf-binary" => ["glb"]
 }
-
 
 # # Configure esbuild (the version is required)
 # config :esbuild,
