@@ -13,9 +13,9 @@
         sendPlayerPosition,
     } from "./World";
     import { socketService } from "./socket";
-    import facesUrl from "/faces.png"
+    import facesUrl from "/assets/faces.png"
 
-    const playerModel = "/player.glb";
+    const playerModel = "/models/player.glb";
 
     let canvasElement: HTMLCanvasElement;
     let scene: THREE.Scene;

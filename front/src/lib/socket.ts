@@ -14,6 +14,15 @@ interface SocketMessage {
     face?: number;
 }
 
+export enum Pack {
+    MOVE = 'move',
+    NEW_MESSAGE = 'new_msg',
+    JOINED = 'joined',
+    LOOK = 'look',
+    ANIMATION = 'animation',
+    EXPRESSION = 'face',
+}
+
 class SocketService {
     private socket: Socket | null = null;
     private channel: any = null;
@@ -25,24 +34,24 @@ class SocketService {
         onPlayerAnimation: ((data: { user_id: string; animation: number }) => void)[];
         onPlayerFace: ((data: { user_id: string; face: number }) => void)[];
     } = {
-        onMessage: [],
-        onPlayerMove: [],
-        onPlayerJoined: [],
-        onPlayerAnimation: [],
-        onPlayerFace: []
-    };
+            onMessage: [],
+            onPlayerMove: [],
+            onPlayerJoined: [],
+            onPlayerAnimation: [],
+            onPlayerFace: []
+        };
 
     connect() {
         if (this.socket) return;
 
-        this.socket = new Socket("ws://localhost:4000/socket", {
+        this.socket = new Socket("/socket", { // ws://localhost:4000/socket
             params: { token: "user_token" }
         });
 
         this.socket.connect();
 
         this.channel = this.socket.channel("room:lobby", {
-            greet: "hello from svelte",
+            greet: `Hello it's ${Date.now()}`,
             vec: [0, 0, 0]
         });
 
@@ -55,27 +64,27 @@ class SocketService {
             });
 
         // Listen for messages
-        this.channel.on("new_msg", (payload: SocketMessage) => {
+        this.channel.on(Pack.NEW_MESSAGE, (payload: SocketMessage) => {
             this.callbacks.onMessage.forEach(cb => cb(payload));
         });
 
         // Listen for player movements
-        this.channel.on("move", (payload: { user_id: string; vec: [number, number, number] }) => {
+        this.channel.on(Pack.MOVE, (payload: { user_id: string; vec: [number, number, number] }) => {
             this.callbacks.onPlayerMove.forEach(cb => cb(payload));
         });
 
         // Listen for new players joining
-        this.channel.on("joined", (payload: { user_id: string; vec: [number, number, number] }) => {
+        this.channel.on(Pack.JOINED, (payload: { user_id: string; vec: [number, number, number] }) => {
             this.callbacks.onPlayerJoined.forEach(cb => cb(payload));
         });
 
         // Listen for animation changes
-        this.channel.on("animation", (payload: { user_id: string; animation: number }) => {
+        this.channel.on(Pack.ANIMATION, (payload: { user_id: string; animation: number }) => {
             this.callbacks.onPlayerAnimation.forEach(cb => cb(payload));
         });
 
         // Listen for face changes
-        this.channel.on("face", (payload: { user_id: string; face: number }) => {
+        this.channel.on(Pack.EXPRESSION, (payload: { user_id: string; face: number }) => {
             this.callbacks.onPlayerFace.forEach(cb => cb(payload));
         });
     }
@@ -93,25 +102,25 @@ class SocketService {
 
     sendMessage(body: string) {
         if (this.channel) {
-            this.channel.push("new_msg", { body });
+            this.channel.push(Pack.NEW_MESSAGE, { body });
         }
     }
 
     sendMove(vec: [number, number, number]) {
         if (this.channel) {
-            this.channel.push("move", { vec });
+            this.channel.push(Pack.MOVE, { vec });
         }
     }
 
     sendAnimation(animation: number) {
         if (this.channel) {
-            this.channel.push("animation", { animation });
+            this.channel.push(Pack.ANIMATION, { animation });
         }
     }
 
     sendFace(face: number) {
         if (this.channel) {
-            this.channel.push("face", { face });
+            this.channel.push(Pack.EXPRESSION, { face });
         }
     }
 
