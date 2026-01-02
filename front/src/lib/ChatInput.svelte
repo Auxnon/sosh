@@ -1,19 +1,19 @@
 <script lang="ts">
-    import { nextFace, nextAnimation, animationState, ANIMATIONS } from './World';
+    import { nextFace, nextAnimation, player } from "./globals";
 
     export let onSendMessage: (message: string) => void;
-    let inputValue = '';
+    let inputValue = "";
     let isVisible = true;
 
     function handleSubmit() {
         if (inputValue.trim()) {
             onSendMessage(inputValue.trim());
-            inputValue = '';
+            inputValue = "";
         }
     }
 
     function handleKeydown(event: KeyboardEvent) {
-        if (event.key === 'Enter' && !event.shiftKey) {
+        if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault();
             handleSubmit();
         }
@@ -31,19 +31,19 @@
         nextAnimation();
     }
 
-    $: currentAnimationName = ANIMATIONS[animationState.currentAnimation] || 'idle';
+    $: currentAnimationName = player?.ref?.getAnimationName() || "";
 </script>
 
 <div class="chat-input-container" class:hidden={!isVisible}>
     <div class="chat-input-wrapper">
-        <button 
-            class="toggle-btn" 
+        <button
+            class="toggle-btn"
             on:click={toggleVisibility}
             title="Toggle chat input"
         >
-            {isVisible ? '−' : '+'}
+            {isVisible ? "−" : "+"}
         </button>
-        
+
         <div class="input-group">
             <input
                 type="text"
@@ -175,7 +175,9 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        transition: background 0.2s, transform 0.1s;
+        transition:
+            background 0.2s,
+            transform 0.1s;
     }
 
     .face-btn:hover {
@@ -198,7 +200,9 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        transition: background 0.2s, transform 0.1s;
+        transition:
+            background 0.2s,
+            transform 0.1s;
     }
 
     .animation-btn:hover {

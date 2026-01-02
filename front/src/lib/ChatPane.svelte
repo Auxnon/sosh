@@ -2,7 +2,7 @@
     import ChatInput from "./ChatInput.svelte";
     import { onMount, onDestroy } from "svelte";
     import * as THREE from "three";
-    import { player, cameraRef, otherPlayers } from "./World";
+    import { player, cameraRef, players } from "./globals";
     import { socketService } from "./socket";
 
     interface ChatMessage {
@@ -39,9 +39,9 @@
                 };
                 
                 // Get other player position if available
-                const otherPlayer = otherPlayers.get(message.user_id);
+                const otherPlayer = players.get(message.user_id);
                 if (otherPlayer) {
-                    newMessage.position = otherPlayer.group.position.clone().add(new THREE.Vector3(0, 2.5, 0));
+                    newMessage.position = otherPlayer.object.position.clone().add(new THREE.Vector3(0, 2.5, 0));
                 }
                 
                 addMessageToPlayer(message.user_id, newMessage);
