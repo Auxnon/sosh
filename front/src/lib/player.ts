@@ -47,9 +47,9 @@ export default class Player {
         this.object = obj;
 
         this.face = facePlane.clone(true);
+        this.face.position.set(-0.02, 1.6, 0.35);
+        this.face.scale.set(0.6, 0.6, 1);
         head?.attach(this.face);
-        // this.object.add(this.face)
-        // this.object.rotateY(Math.PI / 2)
         this.animationState = {
             currentAnimation: 0,
             mixer,
@@ -119,7 +119,6 @@ export default class Player {
         this.waypoints.push(point);
     }
     runAnim(rate: number) {
-        return 
         this.animationState.mixer?.update(rate);
     }
 
