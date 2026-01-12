@@ -5,6 +5,7 @@ defmodule ChatTestWeb.UserSocket do
   # Existing real-time channel
   channel("room:*", ChatTestWeb.RoomChannel)
   # New action channel
+  channel("actions:*", ChatTestWeb.ActionChannel)
 
   # Socket params are passed from the client and can
   # be used to verify and authenticate a user.
