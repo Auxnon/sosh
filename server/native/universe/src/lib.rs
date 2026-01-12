@@ -277,4 +277,4 @@ fn block_type_to_string(block_type: &BlockType) -> &'static str {
     }
 }
 
-rustler::init!("Elixir.ChatTest.Universe", load = load);
+rustler::init!("Elixir.Sosh.Universe", load = load);

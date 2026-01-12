@@ -7,22 +7,22 @@
 # General application configuration
 import Config
 
-config :chat_test,
+config :sosh,
   generators: [timestamp_type: :utc_datetime]
 
 # Configures the endpoint
-config :chat_test, ChatTestWeb.Endpoint,
+config :sosh, SoshWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
   render_errors: [
-    formats: [html: ChatTestWeb.ErrorHTML, json: ChatTestWeb.ErrorJSON],
+    formats: [html: SoshWeb.ErrorHTML, json: SoshWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: ChatTest.PubSub,
+  pubsub_server: Sosh.PubSub,
   live_view: [signing_salt: "+xaKzW/t"]
 
 # secret_key_base: "your_secret_key_here",
-# render_errors: [view: ChatTestWeb.ErrorView, accepts: ~w(html json)],
+# render_errors: [view: SoshWeb.ErrorView, accepts: ~w(html json)],
 
 # Configures the mailer
 #
@@ -31,7 +31,7 @@ config :chat_test, ChatTestWeb.Endpoint,
 #
 # For production it's recommended to configure a different adapter
 # at the `config/runtime.exs`.
-config :chat_test, ChatTest.Mailer, adapter: Swoosh.Adapters.Local
+config :sosh, Sosh.Mailer, adapter: Swoosh.Adapters.Local
 
 config :mime, :types, %{
   "application/javascript" => ["js"],
@@ -44,7 +44,7 @@ config :mime, :types, %{
 # # Configure esbuild (the version is required)
 # config :esbuild,
 #   version: "0.17.11",
-#   chat_test: [
+#   sosh: [
 #     args:
 #       ~w(js/app.js --bundle --target=es2017 --outdir=../priv/static/assets --external:/fonts/* --external:/images/*),
 #     cd: Path.expand("../assets", __DIR__),
@@ -54,7 +54,7 @@ config :mime, :types, %{
 # # Configure tailwind (the version is required)
 # config :tailwind,
 #   version: "3.4.3",
-#   chat_test: [
+#   sosh: [
 #     args: ~w(
 #       --config=tailwind.config.js
 #       --input=css/app.css

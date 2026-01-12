@@ -1,4 +1,4 @@
-defmodule ChatTestWeb.ChannelCase do
+defmodule SoshWeb.ChannelCase do
   @moduledoc """
   This module defines test case to be used by
   channel tests.
@@ -13,21 +13,21 @@ defmodule ChatTestWeb.ChannelCase do
   using do
     quote do
       # The default endpoint for testing
-      @endpoint ChatTestWeb.Endpoint
+      @endpoint SoshWeb.Endpoint
 
-      use ChatTestWeb, :verified_routes
+      use SoshWeb, :verified_routes
 
       # Import conveniences for testing with channels
       import Phoenix.ChannelTest
       import Phoenix.Socket
-      import ChatTestWeb.ChannelCase
+      import SoshWeb.ChannelCase
       require Phoenix.ChannelTest
     end
   end
 
   # Setup hooks for channel tests
   setup _tags do
-    :ok = Application.ensure_started(:chat_test)
-    {:ok, socket: Phoenix.ChannelTest.connect(ChatTestWeb.UserSocket, %{}, %{})}
+    :ok = Application.ensure_started(:sosh)
+    {:ok, socket: Phoenix.ChannelTest.connect(SoshWeb.UserSocket, %{}, %{})}
   end
 end

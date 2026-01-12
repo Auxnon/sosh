@@ -2,13 +2,13 @@ import Config
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
-config :chat_test, ChatTestWeb.Endpoint,
+config :sosh, SoshWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "gW1rP6sPV3yvuqdLv/14cvQ9/DLxV8yP09VloyRLJTCCl/ae7GQwCUIUABT9YbFZ",
   server: false
 
 # In test we don't send emails
-config :chat_test, ChatTest.Mailer, adapter: Swoosh.Adapters.Test
+config :sosh, Sosh.Mailer, adapter: Swoosh.Adapters.Test
 
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false

@@ -1,9 +1,9 @@
-defmodule ChatTest.MixProject do
+defmodule Sosh.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :chat_test,
+      app: :sosh,
       version: "0.1.0",
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -18,7 +18,7 @@ defmodule ChatTest.MixProject do
   # Type `mix help compile.app` for more information.
   def application do
     [
-      mod: {ChatTest.Application, []},
+      mod: {Sosh.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end
@@ -70,10 +70,10 @@ defmodule ChatTest.MixProject do
     [
       setup: ["deps.get", "assets.setup", "assets.build"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["tailwind chat_test", "esbuild chat_test"],
+      "assets.build": ["tailwind sosh", "esbuild sosh"],
       "assets.deploy": [
-        # "tailwind chat_test --minify",
-        # "esbuild chat_test --minify",
+        # "tailwind sosh --minify",
+        # "esbuild sosh --minify",
         "phx.digest"
       ]
     ]
