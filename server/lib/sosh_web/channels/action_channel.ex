@@ -2,6 +2,8 @@ defmodule SoshWeb.ActionChannel do
   use Phoenix.Channel
   require Logger
 
+  alias Sosh.{Lobby, World}
+
   def join("actions:lobby", _params, socket) do
     if socket.assigns[:user_id] do
       {:ok, socket}
@@ -10,105 +12,47 @@ defmodule SoshWeb.ActionChannel do
     end
   end
 
-  def handle_in("dig_action", %{"position" => pos, "face" => face}, socket) do
-    action_id = UUID.uuid4()
-    user_id = socket.assigns.user_id
+  # World edits and chunk fetches. Positions are integer block coordinates
+  # (Z-up, a block at z spans [z, z+1]); see Sosh.World.
 
-    with {:ok, validated_pos} <- validate_position(pos),
-         {:ok, validated_face} <- validate_face(face) do
-      case perform_dig_action(user_id, validated_pos, validated_face) do
-        {:ok, result} ->
-          push(socket, "action_complete", %{
-            action_id: to_string(action_id),
-            status: "success",
-            action_type: "dig",
-            position: validated_pos,
-            face: validated_face,
-            result: result
-          })
+  @reach 7
+  @max_chunks_per_request 48
 
-          broadcast!(socket, "terrain_changed", %{
-            user_id: to_string(user_id),
-            action: "dig",
-            position: validated_pos,
-            face: validated_face,
-            result: result,
-            timestamp: System.system_time(:millisecond)
-          })
+  def handle_in("get_chunks", %{"keys" => keys}, socket) when is_list(keys) do
+    chunks =
+      keys
+      |> Enum.take(@max_chunks_per_request)
+      |> Enum.flat_map(fn
+        [cx, cy, cz] when is_integer(cx) and is_integer(cy) and is_integer(cz) ->
+          [%{key: [cx, cy, cz], rle: World.rle(World.chunk({cx, cy, cz}))}]
 
-          {:noreply, socket}
+        _ ->
+          []
+      end)
 
-        {:error, reason} ->
-          push(socket, "action_failed", %{
-            action_id: to_string(action_id),
-            status: "error",
-            action_type: "dig",
-            reason: reason
-          })
+    {:reply, {:ok, %{chunks: chunks}}, socket}
+  end
 
-          {:noreply, socket}
-      end
+  def handle_in("dig_action", %{"position" => pos}, socket) do
+    with {:ok, [x, y, z]} <- validate_block_position(pos),
+         :ok <- within_reach(socket, x, y, z),
+         {:ok, current} <- diggable(World.block(x, y, z)),
+         {:ok, _} <- World.put_block(x, y, z, 0) do
+      changed(socket, [x, y, z], "air", current)
     else
-      {:error, reason} ->
-        push(socket, "action_failed", %{
-          action_id: to_string(action_id),
-          status: "error",
-          action_type: "dig",
-          reason: "validation_failed: #{reason}"
-        })
-
-        {:noreply, socket}
+      {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
     end
   end
 
   def handle_in("place_action", %{"position" => pos, "block_type" => block_type}, socket) do
-    action_id = UUID.uuid4()
-    user_id = socket.assigns.user_id
-
-    with {:ok, validated_pos} <- validate_position(pos),
-         {:ok, validated_block_type} <- validate_block_type(block_type) do
-      case perform_place_action(user_id, validated_pos, validated_block_type) do
-        {:ok, result} ->
-          push(socket, "action_complete", %{
-            action_id: to_string(action_id),
-            status: "success",
-            action_type: "place",
-            position: validated_pos,
-            block_type: validated_block_type,
-            result: result
-          })
-
-          broadcast!(socket, "terrain_changed", %{
-            user_id: to_string(user_id),
-            action: "place",
-            position: validated_pos,
-            block_type: validated_block_type,
-            result: result,
-            timestamp: System.system_time(:millisecond)
-          })
-
-          {:noreply, socket}
-
-        {:error, reason} ->
-          push(socket, "action_failed", %{
-            action_id: to_string(action_id),
-            status: "error",
-            action_type: "place",
-            reason: reason
-          })
-
-          {:noreply, socket}
-      end
+    with {:ok, [x, y, z]} <- validate_block_position(pos),
+         {:ok, id} <- validate_block_type(block_type),
+         :ok <- within_reach(socket, x, y, z),
+         :ok <- free(World.block(x, y, z)),
+         {:ok, _} <- World.put_block(x, y, z, id) do
+      changed(socket, [x, y, z], block_type, nil)
     else
-      {:error, reason} ->
-        push(socket, "action_failed", %{
-          action_id: to_string(action_id),
-          status: "error",
-          action_type: "place",
-          reason: "validation_failed: #{reason}"
-        })
-
-        {:noreply, socket}
+      {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
     end
   end
 
@@ -223,13 +167,11 @@ defmodule SoshWeb.ActionChannel do
 
   defp validate_position(_), do: {:error, "invalid_position_format"}
 
-  defp validate_face(face) when face in ["top", "bottom", "north", "south", "east", "west"],
-    do: {:ok, face}
-
-  defp validate_face(_), do: {:error, "invalid_face"}
-
-  defp validate_block_type(block_type) when block_type in ["stone", "dirt", "grass", "wood"],
-    do: {:ok, block_type}
+  defp validate_block_type(block_type) when is_binary(block_type) do
+    if block_type in World.placeable(),
+      do: {:ok, World.block_ids()[block_type]},
+      else: {:error, "invalid_block_type"}
+  end
 
   defp validate_block_type(_), do: {:error, "invalid_block_type"}
 
@@ -240,29 +182,6 @@ defmodule SoshWeb.ActionChannel do
     do: {:ok, item_id}
 
   defp validate_item_id(_), do: {:error, "invalid_item_id"}
-
-  defp perform_dig_action(user_id, position, face) do
-    Logger.info("DIG action: User #{user_id} at #{inspect(position)} face #{face}")
-
-    # For now, basic implementation - will integrate with Rust NIF later
-    {:ok,
-     %{
-       block_removed: "dirt",
-       items_dropped: [%{item_id: "dirt_block", quantity: 1}],
-       new_block_state: "air"
-     }}
-  end
-
-  defp perform_place_action(user_id, position, block_type) do
-    Logger.info("PLACE action: User #{user_id} at #{inspect(position)} type #{block_type}")
-
-    # Basic implementation - will integrate with Rust NIF later
-    {:ok,
-     %{
-       block_placed: block_type,
-       position: position
-     }}
-  end
 
   defp perform_drop_action(user_id, item_id, quantity, position) do
     Logger.info(
@@ -287,4 +206,43 @@ defmodule SoshWeb.ActionChannel do
        item_picked_up: item_id
      }}
   end
+
+  defp changed(socket, pos, block_type, _previous) do
+    broadcast!(socket, "block_changed", %{
+      user_id: to_string(socket.assigns.user_id),
+      position: pos,
+      block: World.block_ids()[block_type],
+      block_type: block_type
+    })
+
+    {:reply, {:ok, %{position: pos, block_type: block_type}}, socket}
+  end
+
+  defp validate_block_position([x, y, z] = pos)
+       when is_integer(x) and is_integer(y) and is_integer(z),
+       do: {:ok, pos}
+
+  defp validate_block_position(_), do: {:error, "invalid_position_format"}
+
+  # Measured from the player's last reported position (Sosh.Lobby).
+  defp within_reach(socket, x, y, z) do
+    case Enum.find(Lobby.list(), &(&1.user_id == socket.assigns.user_id)) do
+      %{vec: [px, py, pz]} ->
+        dx = x + 0.5 - px
+        dy = y + 0.5 - py
+        dz = z + 0.5 - pz
+        if dx * dx + dy * dy + dz * dz <= @reach * @reach, do: :ok, else: {:error, "out_of_reach"}
+
+      nil ->
+        {:error, "not_in_world"}
+    end
+  end
+
+  defp diggable(0), do: {:error, "nothing_there"}
+  defp diggable(6), do: {:error, "cannot_dig_water"}
+  defp diggable(id), do: {:ok, id}
+
+  # Placing into air or water; anything else is occupied.
+  defp free(id) when id in [0, 6], do: :ok
+  defp free(_), do: {:error, "occupied"}
 end

@@ -8,7 +8,11 @@
 import Config
 
 config :sosh,
+  ecto_repos: [Sosh.Repo],
   generators: [timestamp_type: :utc_datetime]
+
+# How often dirty world chunks are written to Postgres; nil disables autosave.
+config :sosh, Sosh.World, autosave_ms: 30_000
 
 # Configures the endpoint
 config :sosh, SoshWeb.Endpoint,

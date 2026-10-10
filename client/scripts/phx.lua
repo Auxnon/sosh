@@ -14,6 +14,7 @@
 --   lobby.on_join = function(reply) ... end
 --   phx:connect()
 --   phx:push(lobby, "new_msg", { body = "hi" })
+--   phx:push(actions, "get_chunks", payload, function(status, response) ... end)
 
 Phx = {}
 Phx.__index = Phx
@@ -33,6 +34,8 @@ function Phx.new(url)
 	p.error = nil
 	p.channels = {}
 	p.topics = {}
+	-- reply callbacks by ref, for pushes that asked for one
+	p.replies = {}
 	p.beat = 0
 	p.retry_in = 0
 	p.retries = 0
@@ -94,6 +97,8 @@ function Phx:retry()
 	for i = 1, #self.topics do
 		self.channels[self.topics[i]].joined = false
 	end
+	-- replies to a dead socket never come
+	self.replies = {}
 	self.retries = self.retries + 1
 	local idx = self.retries
 	if idx > #PHX_BACKOFF then
@@ -111,13 +116,17 @@ function Phx:join(ch)
 end
 
 -- Returns false if the channel isn't joined (the push is dropped).
-function Phx:push(ch, event, payload)
+-- `on_reply(status, response)` is called with the server's reply, if given.
+function Phx:push(ch, event, payload, on_reply)
 	if self.sock == nil or not ch.joined then
 		return false
 	end
 	-- hoisted: a call inside a table constructor miscompiles in silt
 	local ref = self:next_ref()
 	local frame = { ch.join_ref, ref, ch.topic, event, payload }
+	if on_reply ~= nil then
+		self.replies[ref] = on_reply
+	end
 	self.sock:send(frame)
 	return true
 end
@@ -175,6 +184,12 @@ function Phx:dispatch(msg)
 	end
 
 	if event == "phx_reply" then
+		local cb = self.replies[msg[2]]
+		if cb ~= nil then
+			self.replies[msg[2]] = nil
+			cb(payload.status, payload.response)
+			return
+		end
 		if msg[2] == ch.join_ref then
 			if payload.status == "ok" then
 				ch.joined = true

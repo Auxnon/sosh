@@ -10,8 +10,10 @@ defmodule Sosh.Application do
     children = [
       SoshWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:sosh, :dns_cluster_query) || :ignore},
+      Sosh.Repo,
       {Phoenix.PubSub, name: Sosh.PubSub},
       Sosh.Lobby,
+      Sosh.World,
       # Start the Finch HTTP client for sending emails
       {Finch, name: Sosh.Finch},
       # Start a worker by calling: Sosh.Worker.start_link(arg)

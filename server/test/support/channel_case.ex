@@ -30,10 +30,19 @@ defmodule SoshWeb.ChannelCase do
     end
   end
 
+  def setup_sandbox(tags) do
+    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(Sosh.Repo, shared: not tags[:async])
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+  end
+
   # Setup hooks for channel tests
-  setup _tags do
+  setup tags do
     :ok = Application.ensure_started(:sosh)
-    {:ok, socket} = Phoenix.ChannelTest.connect(SoshWeb.UserSocket, %{}, %{})
+    # Sosh.World and Sosh.Lobby are app-wide processes, so the sandbox is shared
+    # and channel tests must not be async.
+    SoshWeb.ChannelCase.setup_sandbox(tags)
+    Sosh.World.reset()
+    {:ok, socket} = Phoenix.ChannelTest.connect(SoshWeb.UserSocket, %{})
     {:ok, socket: socket}
   end
 end

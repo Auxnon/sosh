@@ -10,6 +10,7 @@ defmodule SoshWeb.RoomChannel do
     * `move` `%{user_id, vec}` - walk target
     * `face` `%{user_id, face}`, `animation` `%{user_id, animation}`
     * `new_msg` `%{user_id, name, body}` - chat, echoed to the sender too
+    * `emote` `%{user_id, emote}` - one of wave, dance, jump, cheer
 
   where a player is `%{user_id, name, vec, face, animation}`.
   """
@@ -21,9 +22,10 @@ defmodule SoshWeb.RoomChannel do
   @max_body 280
   @max_coord 100
   @max_index 63
+  @emotes ~w(wave dance jump cheer)
 
   def join("room:lobby", params, socket) do
-    user_id = UUID.uuid4()
+    user_id = socket.assigns.user_id
 
     player = %{
       user_id: user_id,
@@ -35,7 +37,7 @@ defmodule SoshWeb.RoomChannel do
 
     Lobby.put(user_id, player)
     send(self(), {:after_join, player})
-    socket = assign(socket, user_id: user_id, name: player.name)
+    socket = assign(socket, :name, player.name)
 
     {:ok, %{connection_id: socket.assigns.connection_id, user_id: user_id}, socket}
   end
@@ -89,6 +91,11 @@ defmodule SoshWeb.RoomChannel do
       user_id: socket.assigns.user_id
     })
 
+    {:noreply, socket}
+  end
+
+  def handle_in("emote", %{"emote" => emote}, socket) when emote in @emotes do
+    broadcast_from!(socket, "emote", %{emote: emote, user_id: socket.assigns.user_id})
     {:noreply, socket}
   end
 

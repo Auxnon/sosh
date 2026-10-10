@@ -9,8 +9,14 @@ defmodule SoshWeb.UserSocket do
 
   # Socket params are passed from the client and can
   # be used to verify and authenticate a user.
+  # One user id per connection, shared by every channel on it (the room for
+  # presence and chat, actions for world edits).
   def connect(_params, socket, _connect_info) do
-    socket = assign(socket, :connection_id, UUID.uuid4())
+    socket =
+      socket
+      |> assign(:connection_id, UUID.uuid4())
+      |> assign(:user_id, UUID.uuid4())
+
     {:ok, socket}
   end
 

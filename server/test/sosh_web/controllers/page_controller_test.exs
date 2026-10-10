@@ -3,6 +3,7 @@ defmodule SoshWeb.PageControllerTest do
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "Peace of mind from prototype to production"
+    # the Petrichor64 web build (client/README.md)
+    assert html_response(conn, 200) =~ "Petrichor64.js"
   end
 end

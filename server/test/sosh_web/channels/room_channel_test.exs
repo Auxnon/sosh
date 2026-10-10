@@ -27,7 +27,7 @@ defmodule SoshWeb.RoomChannelTest do
 
   test "a newcomer's snapshot includes players already present", %{socket: socket} do
     {first, _} = join_as(socket, "first")
-    {:ok, other} = connect(SoshWeb.UserSocket, %{}, %{})
+    {:ok, other} = connect(SoshWeb.UserSocket, %{})
     {second, _} = join_as(other, "second")
 
     ids = [first.user_id, second.user_id] |> Enum.sort()
@@ -85,6 +85,22 @@ defmodule SoshWeb.RoomChannelTest do
     assert_reply ref, :ok
     assert_broadcast "left", %{user_id: ^id}
     assert Lobby.list() == []
+  end
+
+  test "emotes reach others; unknown ones are ignored", %{socket: socket} do
+    {reply, socket} = join_as(socket, "dancer")
+    id = reply.user_id
+
+    push(socket, "emote", %{"emote" => "dance"})
+    assert_broadcast "emote", %{emote: "dance", user_id: ^id}
+
+    push(socket, "emote", %{"emote" => "moonwalk"})
+    refute_broadcast "emote", _
+  end
+
+  test "the room uses the socket's user id", %{socket: socket} do
+    {reply, _} = join_as(socket, "same")
+    assert reply.user_id == socket.assigns.user_id
   end
 
   test "other rooms are refused", %{socket: socket} do

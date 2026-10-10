@@ -171,6 +171,23 @@ def main():
     tile_texture((196, 178, 140, 255), (176, 158, 120, 255), 3).save(ASSETS / "path.png")
     tile_texture((120, 124, 136, 255), (100, 104, 116, 255), 11).save(ASSETS / "stone.png")
     tile_texture((86, 140, 196, 255), (110, 160, 210, 255), 5).save(ASSETS / "water.png")
+    tile_texture((134, 96, 66, 255), (112, 78, 52, 255), 13).save(ASSETS / "dirt.png")
+    wood = tile_texture((168, 120, 72, 255), (146, 102, 60, 255), 17)
+    for y in (0, 5, 10, 15):
+        for x in range(16):
+            wood.putpixel((x, y), (120, 84, 48, 255))
+    wood.save(ASSETS / "wood.png")
+
+    # Block cursor: an outline cube a touch larger than a block, so it shows
+    # around the hovered block. Spans a block placed at (x, y, z): x/y centred,
+    # z from the base (the world's tile convention, see scripts/blocks.lua).
+    edge = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    for i in range(16):
+        for t in (0, 15):
+            edge.putpixel((i, t), (255, 236, 160, 255))
+            edge.putpixel((t, i), (255, 236, 160, 255))
+    pos, uvs, idx = frustum(0.52, 0.52, 0.52, 0.52, -0.02, 1.02, whole)
+    write_glb(ASSETS / "cursor.glb", pos, uvs, idx, png_bytes(edge))
 
     # Cart icon (game root, required by `pack`): the smiling head on dusk blue.
     icon = Image.new("RGBA", (64, 64), (70, 110, 170, 255))

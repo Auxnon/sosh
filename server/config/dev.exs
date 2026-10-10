@@ -1,5 +1,17 @@
 import Config
 
+# Postgres for world storage. Port 5442 keeps clear of other local databases;
+# `podman run -d --name sosh-pg -p 5442:5432 -e POSTGRES_PASSWORD=postgres postgres:17`
+config :sosh, Sosh.Repo,
+  username: "postgres",
+  password: "postgres",
+  hostname: "localhost",
+  port: String.to_integer(System.get_env("DB_PORT", "5442")),
+  database: "sosh_dev",
+  stacktrace: true,
+  show_sensitive_data_on_connection_error: true,
+  pool_size: 10
+
 # For development, we disable any cache and enable
 # debugging and code reloading.
 #

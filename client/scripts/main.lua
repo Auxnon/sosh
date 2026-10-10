@@ -41,6 +41,13 @@ function main()
 	APP.last_sent_x = 0
 	APP.last_sent_y = 0
 	APP.drag = false
+	-- "walk", "dig" or "build"
+	APP.tool = "walk"
+	APP.block_i = 1
+	APP.cursor = nil
+	APP.target = nil
+	APP.fetch_tick = 0
+	Blocks.init()
 
 	-- something to look at behind the connect screen
 	CAM.az = 0.6
@@ -75,7 +82,7 @@ function draw() end
 function connect_screen()
 	-- slow orbit of the empty plaza
 	CAM.az = CAM.az + 0.0015
-	place_camera(0, 0)
+	place_camera(0, 0, GROUND_Z)
 
 	local w = 260
 	local h = 150
@@ -153,6 +160,9 @@ function start_session()
 	params.animation = 0
 	LOBBY = PHX:channel("room:lobby", params)
 	bind_lobby(LOBBY)
+	local none = {}
+	ACTIONS = PHX:channel("actions:lobby", none)
+	bind_actions(ACTIONS)
 	PHX:connect()
 
 	APP.spawn_x = sx
@@ -169,7 +179,7 @@ function bind_lobby(ch)
 	ch.on_join = function(reply)
 		APP.my_id = reply.user_id
 		if APP.me == nil then
-			APP.me = Avatar.new(reply.user_id, APP.my_name, APP.spawn_x, APP.spawn_y, 0, 0)
+			APP.me = Avatar.new(reply.user_id, APP.my_name, APP.spawn_x, APP.spawn_y, GROUND_Z, 0, 0)
 		else
 			-- rejoined after a drop: new id, same body (LOBBY.params has
 			-- kept up with position/face/pose, so others see us as we were)
@@ -236,6 +246,12 @@ function bind_lobby(ch)
 			av:set_anim(p.animation)
 		end
 	end
+	ch.on["emote"] = function(p)
+		local av = APP.players[p.user_id]
+		if av ~= nil then
+			av:play_emote(p.emote)
+		end
+	end
 	ch.on["new_msg"] = function(p)
 		local av = nil
 		local name = p.name or "?"
@@ -256,19 +272,60 @@ function bind_lobby(ch)
 	end
 end
 
+-- World edits and chunk streaming (SoshWeb.ActionChannel).
+function bind_actions(ch)
+	ch.on_join = function(reply)
+		-- (re)joined: anything we hold may be stale, so fetch it all again
+		Blocks.have = {}
+		Blocks.wanted = {}
+		APP.fetch_tick = 0
+	end
+	ch.on["block_changed"] = function(p)
+		local pos = p.position
+		Blocks.set(pos[1], pos[2], pos[3], p.block)
+	end
+end
+
+-- Ask for any chunks around (x, y) we don't have yet.
+function request_chunks(x, y)
+	local keys = Blocks.missing_around(x, y)
+	if #keys == 0 then
+		return
+	end
+	Blocks.mark_wanted(keys)
+	local payload = {}
+	payload.keys = keys
+	local sent = PHX:push(ACTIONS, "get_chunks", payload, function(status, response)
+		if status == "ok" then
+			local list = response.chunks
+			for i = 1, #list do
+				local c = list[i]
+				Blocks.apply_chunk(c.key, c.rle)
+			end
+		end
+		-- whatever didn't come back can be asked for again
+		Blocks.wanted = {}
+	end)
+	if not sent then
+		Blocks.wanted = {}
+	end
+end
+
 function upsert_player(p, snap)
 	if p.user_id == APP.my_id then
 		return
 	end
 	local x = 0
 	local y = 0
+	local z = GROUND_Z
 	if p.vec ~= nil then
 		x = p.vec[1]
 		y = p.vec[2]
+		z = p.vec[3]
 	end
 	local av = APP.players[p.user_id]
 	if av == nil then
-		av = Avatar.new(p.user_id, p.name or "guest", x, y, p.face or 0, p.animation or 0)
+		av = Avatar.new(p.user_id, p.name or "guest", x, y, z, p.face or 0, p.animation or 0)
 		APP.players[p.user_id] = av
 		table.insert(APP.order, p.user_id)
 	else
@@ -310,7 +367,11 @@ end
 function send_move(x, y)
 	APP.last_sent_x = x
 	APP.last_sent_y = y
-	local vec = { x, y, GROUND_Z }
+	local z = GROUND_Z
+	if APP.me ~= nil then
+		z = APP.me.z
+	end
+	local vec = { x, y, z }
 	local payload = {}
 	payload.vec = vec
 	-- a reconnect rejoins with these params
@@ -323,6 +384,19 @@ end
 
 function world_frame()
 	PHX:update()
+
+	-- keep the chunks around us loaded, a few times a second
+	APP.fetch_tick = APP.fetch_tick - 1
+	if ACTIONS.joined and APP.fetch_tick <= 0 then
+		APP.fetch_tick = 20
+		local cx = 0
+		local cy = 0
+		if APP.me ~= nil then
+			cx = APP.me.x
+			cy = APP.me.y
+		end
+		request_chunks(cx, cy)
+	end
 
 	local me = APP.me
 	if me ~= nil then
@@ -347,23 +421,45 @@ function world_frame()
 	end
 
 	if me ~= nil then
-		place_camera(me.x, me.y)
+		place_camera(me.x, me.y, me.z)
 	else
 		CAM.az = CAM.az + 0.0015
-		place_camera(0, 0)
+		place_camera(0, 0, GROUND_Z)
 	end
 
 	draw_hud()
 end
 
 -- WASD / arrows walk relative to the camera; Q/E turn it; F/G cycle face and
--- pose; Enter opens chat. Returns true if the avatar was steered.
+-- pose; 1/2/3 pick walk/dig/build; Z/X pick the block; 5-8 emote; Enter
+-- opens chat. Returns true if the avatar was steered.
 function world_keys(me)
 	if key("enter", true) then
 		APP.typing = true
 		APP.draft.text = ""
 		cin() -- swallow anything typed this frame
 		return false
+	end
+	if key("1", true) then
+		APP.tool = "walk"
+	end
+	if key("2", true) then
+		APP.tool = "dig"
+	end
+	if key("3", true) then
+		APP.tool = "build"
+	end
+	if key("z", true) then
+		APP.block_i = (APP.block_i - 2) % #PLACEABLE + 1
+	end
+	if key("x", true) then
+		APP.block_i = APP.block_i % #PLACEABLE + 1
+	end
+	for i = 1, #EMOTES do
+		local k = tostring(i + 4)
+		if key(k, true) then
+			do_emote(EMOTES[i])
+		end
 	end
 	if key("f", true) then
 		change_face(1)
@@ -405,14 +501,15 @@ function world_keys(me)
 	local l = sqrt(dx * dx + dy * dy)
 	local tx = me.x + dx / l * 0.9
 	local ty = me.y + dy / l * 0.9
-	if world_walkable(tx, ty) then
+	if Blocks.walkable(tx, ty, me.z) then
 		me:walk_to(tx, ty)
 		return true
 	end
 	return false
 end
 
--- Left click on the ground walks there; right-drag orbits; scroll zooms.
+-- The block under the pointer drives all three tools: walk to it, dig it, or
+-- build on the face it was hit through. Right-drag orbits; scroll zooms.
 function world_pointer(me)
 	local m = UI.mouse
 	if m.m2 then
@@ -422,27 +519,91 @@ function world_pointer(me)
 	if m.scroll ~= 0 then
 		CAM.dist = U.clamp(CAM.dist - m.scroll * 1.5, 4, 22)
 	end
+
+	local hit = nil
 	-- Buttons are drawn after this runs, so hit-test the HUD region directly.
-	if UI.clicked and not hud_hit(UI.mx, UI.my) then
-		local vz = m.vz
-		if vz < -0.01 then
-			local t = (GROUND_Z - CAM.z) / vz
-			local gx = CAM.x + m.vx * t
-			local gy = CAM.y + m.vy * t
-			if not world_walkable(gx, gy) then
-				local p = world_clamp(gx, gy)
-				gx = p[1]
-				gy = p[2]
-			end
-			if world_walkable(gx, gy) then
-				if me.anim == 1 then
-					change_anim(1)
-				end
-				me:walk_to(gx, gy)
-				send_move(gx, gy)
-			end
+	local over_hud = hud_hit(UI.mx, UI.my)
+	if not over_hud then
+		hit = Blocks.raycast(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, 48)
+	end
+
+	-- the cell a tool would act on
+	local cell = nil
+	if hit ~= nil then
+		if APP.tool == "dig" then
+			cell = hit.hit
+		elseif APP.tool == "build" then
+			cell = hit.before
 		end
 	end
+	if cell ~= nil and not in_reach(me, cell) then
+		cell = nil
+	end
+	APP.target = cell
+	show_cursor(cell)
+
+	if not UI.clicked or over_hud or hit == nil then
+		return
+	end
+	if APP.tool == "walk" then
+		local h = hit.hit
+		if Blocks.walkable(h[1], h[2], h[3] + 1) then
+			if me.anim == 1 then
+				change_anim(1)
+			end
+			me:walk_to(h[1], h[2])
+			send_move(h[1], h[2])
+		end
+	elseif cell ~= nil then
+		edit_block(cell)
+	end
+end
+
+function in_reach(me, cell)
+	local dx = cell[1] - me.x
+	local dy = cell[2] - me.y
+	local dz = cell[3] + 0.5 - me.z
+	return dx * dx + dy * dy + dz * dz <= REACH * REACH
+end
+
+-- The outline cube around the targeted cell, parked far away when there is
+-- none (only transforms sync on the web, so it's moved, never re-made).
+function show_cursor(cell)
+	if APP.cursor == nil then
+		APP.cursor = make("cursor", 0, 0, -1000, 1)
+	end
+	local c = APP.cursor
+	if cell == nil then
+		c.z = -1000
+	else
+		c.x = cell[1]
+		c.y = cell[2]
+		c.z = cell[3]
+	end
+end
+
+function edit_block(cell)
+	local pos = { cell[1], cell[2], cell[3] }
+	local payload = {}
+	payload.position = pos
+	local event = "dig_action"
+	if APP.tool == "build" then
+		event = "place_action"
+		payload.block_type = PLACEABLE[APP.block_i]
+	end
+	PHX:push(ACTIONS, event, payload, function(status, response)
+		if status ~= "ok" and response ~= nil and response.reason ~= nil then
+			add_chat(nil, "can't: " .. tostring(response.reason), C_BAD)
+		end
+	end)
+end
+
+function do_emote(name)
+	local me = APP.me
+	me:play_emote(name)
+	local payload = {}
+	payload.emote = name
+	PHX:push(LOBBY, "emote", payload)
 end
 
 function chat_typing()
@@ -480,12 +641,12 @@ function change_anim(d)
 	PHX:push(LOBBY, "animation", payload)
 end
 
-function place_camera(x, y)
+function place_camera(x, y, z)
 	local cl = cos(CAM.alt)
 	local fx = cos(CAM.az) * cl
 	local fy = sin(CAM.az) * cl
 	local fz = sin(CAM.alt)
-	local focus_z = GROUND_Z + 1.1
+	local focus_z = z + 1.1
 	CAM.x = x - fx * CAM.dist
 	CAM.y = y - fy * CAM.dist
 	CAM.z = focus_z - fz * CAM.dist
@@ -504,13 +665,21 @@ function hud_buttons_x()
 	return gui.w - HUD_BTN_W - PAD * 2
 end
 
+-- Rows of the right-hand button column, bottom up.
+HUD_ROWS = 7
+
 function hud_hit(x, y)
 	-- status strip, button column, chat box
 	if y < LH + PAD * 2 then
 		return true
 	end
 	local bx = hud_buttons_x()
-	if x >= bx and y >= gui.h - (HUD_BTN_H + PAD) * 3 - PAD then
+	if x >= bx and y >= gui.h - (HUD_BTN_H + PAD) * HUD_ROWS - PAD then
+		return true
+	end
+	-- the tool bar along the bottom middle
+	local tb = toolbar_rect()
+	if x >= tb[1] and x < tb[1] + tb[3] and y >= tb[2] then
 		return true
 	end
 	if APP.typing and y >= gui.h - LH - PAD * 4 then
@@ -554,13 +723,67 @@ function draw_hud()
 	draw_buttons()
 end
 
+TOOLS = { "walk", "dig", "build" }
+TOOL_W = 52
+
+function toolbar_rect()
+	local w = TOOL_W * #TOOLS + PAD * (#TOOLS - 1)
+	if APP.tool == "build" then
+		w = w + PAD * 2 + TOOL_W * #PLACEABLE + PAD * (#PLACEABLE - 1)
+	end
+	local x = flr((gui.w - w) / 2)
+	local y = gui.h - HUD_BTN_H - PAD * 6 - LH
+	local r = { x, y, w, HUD_BTN_H }
+	return r
+end
+
+-- Tools (1/2/3) and, while building, the block to place (Z/X).
+function draw_toolbar()
+	local r = toolbar_rect()
+	local x = r[1]
+	local y = r[2]
+	for i = 1, #TOOLS do
+		local name = TOOLS[i]
+		local label = tostring(i) .. " " .. name
+		if APP.tool == name then
+			gui:rrect(x - 1, y - 1, TOOL_W + 2, HUD_BTN_H + 2, 3, C_ACCENT)
+		end
+		if UI.button(label, x, y, TOOL_W, HUD_BTN_H) then
+			APP.tool = name
+		end
+		x = x + TOOL_W + PAD
+	end
+	if APP.tool ~= "build" then
+		return
+	end
+	x = x + PAD * 2
+	for i = 1, #PLACEABLE do
+		if APP.block_i == i then
+			gui:rrect(x - 1, y - 1, TOOL_W + 2, HUD_BTN_H + 2, 3, C_OK)
+		end
+		local name = PLACEABLE[i]
+		if UI.button(name, x, y, TOOL_W, HUD_BTN_H) then
+			APP.block_i = i
+		end
+		x = x + TOOL_W + PAD
+	end
+end
+
 function draw_buttons()
 	local me = APP.me
 	if me == nil then
 		return
 	end
+	draw_toolbar()
 	local x = hud_buttons_x()
-	local y = gui.h - (HUD_BTN_H + PAD) * 3
+	local y = gui.h - (HUD_BTN_H + PAD) * HUD_ROWS
+	for i = 1, #EMOTES do
+		local label = tostring(i + 4) .. " " .. EMOTES[i]
+		if UI.button(label, x, y, HUD_BTN_W, HUD_BTN_H) then
+			do_emote(EMOTES[i])
+		end
+		y = y + HUD_BTN_H + PAD
+	end
 	local face_label = "face " .. tostring(me.face + 1) .. "/" .. tostring(FACE_COUNT)
 	if UI.button(face_label, x, y, HUD_BTN_W, HUD_BTN_H) then
 		change_face(1)
@@ -637,6 +860,6 @@ function draw_chat()
 		end
 		UI.text(shown, PAD * 2, y + PAD + 1, C_TEXT)
 	elseif APP.me ~= nil then
-		UI.text("enter: chat   wasd/click: walk   f: face   g: pose   q/e/right-drag: look", PAD * 2, gui.h - LH - PAD, "FFFFFF70")
+		UI.text("enter: chat  wasd: walk  1-3: tool  z/x: block  f: face  g: pose  5-8: emote  q/e: look", PAD * 2, gui.h - LH - PAD, "FFFFFF70")
 	end
 end
