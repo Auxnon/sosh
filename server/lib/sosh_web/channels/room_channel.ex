@@ -1,75 +1,123 @@
 defmodule SoshWeb.RoomChannel do
+  @moduledoc """
+  The plaza. Clients (the Petrichor64 client in `client/`) join `room:lobby`
+  with their name, position, face and pose.
+
+  Server -> client events:
+    * `snapshot` `%{players: [player]}` - pushed to a newcomer, everyone present
+    * `joined` player - someone arrived
+    * `left` `%{user_id}` - someone's channel closed
+    * `move` `%{user_id, vec}` - walk target
+    * `face` `%{user_id, face}`, `animation` `%{user_id, animation}`
+    * `new_msg` `%{user_id, name, body}` - chat, echoed to the sender too
+
+  where a player is `%{user_id, name, vec, face, animation}`.
+  """
   use Phoenix.Channel
 
-  # def join("room:lobby", _message, socket) do
-  #   {:ok, socket}
-  # end
+  alias Sosh.Lobby
 
-  defp generate() do
-    Enum.map(1..3, fn _x -> :rand.uniform() * 20 - 10 end)
-  end
+  @max_name 16
+  @max_body 280
+  @max_coord 100
+  @max_index 63
 
-  def join("room:lobby", param, socket) do
-    IO.inspect(param)
-    %{"greet"=> greet, "vec"=> vec} = param
-    user_id=UUID.uuid4()
+  def join("room:lobby", params, socket) do
+    user_id = UUID.uuid4()
 
-    IO.puts("join worked, #{user_id}")
-    # IO.puts("join vec, #{vec}")
-    IO.inspect(vec)
-    socket = assign(socket, :user_id, user_id)
-    
+    player = %{
+      user_id: user_id,
+      name: clean_name(params["name"]),
+      vec: clean_vec(params["vec"]),
+      face: clean_index(params["face"]),
+      animation: clean_index(params["animation"])
+    }
 
-    self() |> send( {:after_join, Map.put(param , :user_id,user_id) })
-    # broadcast!(socket, "joined", %{user_id: user_id, vec: vec})
+    Lobby.put(user_id, player)
+    send(self(), {:after_join, player})
+    socket = assign(socket, user_id: user_id, name: player.name)
 
-    IO.puts("after join 1")
-    # test=Sosh.Universe.add(1,2)
-    # test |> IO.puts
-
-    {:ok,
-     %{
-       connection_id: socket.assigns.connection_id,
-       user_id: socket.assigns.user_id
-     }, socket}
-  end
-
-  def handle_info({:after_join, params}, socket) do
-    IO.puts("after join 2( #{2} )")
-    IO.inspect(params)
-    # push(socket, "handshake", %{user_id: socket.assigns.user_id})
-    broadcast!(socket, "joined", params)
-    {:noreply, socket}
+    {:ok, %{connection_id: socket.assigns.connection_id, user_id: user_id}, socket}
   end
 
   def join("room:" <> _private_room_id, _params, _socket) do
     {:error, %{reason: "unauthorized"}}
   end
 
-  # Add a method to generate new numbers on demand
-  def handle_in("get_update", _payload, socket) do
-    push(socket, "refresh", %{numbers: generate()})
+  def handle_info({:after_join, player}, socket) do
+    push(socket, "snapshot", %{players: Lobby.list()})
+    broadcast_from!(socket, "joined", player)
     {:noreply, socket}
   end
 
-  def handle_in("new_msg", %{"body" => body}, socket) do
-    broadcast!(socket, "new_msg", %{body: body, user_id: socket.assigns.user_id})
-    {:noreply, socket}
+  def handle_in("new_msg", %{"body" => body}, socket) when is_binary(body) do
+    case body |> String.trim() |> String.slice(0, @max_body) do
+      "" ->
+        {:noreply, socket}
+
+      body ->
+        broadcast!(socket, "new_msg", %{
+          body: body,
+          user_id: socket.assigns.user_id,
+          name: socket.assigns.name
+        })
+
+        {:noreply, socket}
+    end
   end
 
   def handle_in("move", %{"vec" => vec}, socket) do
-    # Sosh.Universe.move_ent(universe, 
-    broadcast!(socket, "move", %{vec: vec, user_id: socket.assigns.user_id})
-    {:noreply, socket}
-  end
-
-  def handle_in("animation", %{"animation" => animation}, socket) do
-    broadcast!(socket, "animation", %{animation: animation, user_id: socket.assigns.user_id})
+    vec = clean_vec(vec)
+    Lobby.update(socket.assigns.user_id, %{vec: vec})
+    broadcast_from!(socket, "move", %{vec: vec, user_id: socket.assigns.user_id})
     {:noreply, socket}
   end
 
   def handle_in("face", %{"face" => face}, socket) do
-    broadcast!(socket, "face", %{face: face, user_id: socket.assigns.user_id})
+    face = clean_index(face)
+    Lobby.update(socket.assigns.user_id, %{face: face})
+    broadcast_from!(socket, "face", %{face: face, user_id: socket.assigns.user_id})
     {:noreply, socket}
   end
+
+  def handle_in("animation", %{"animation" => animation}, socket) do
+    animation = clean_index(animation)
+    Lobby.update(socket.assigns.user_id, %{animation: animation})
+
+    broadcast_from!(socket, "animation", %{
+      animation: animation,
+      user_id: socket.assigns.user_id
+    })
+
+    {:noreply, socket}
+  end
+
+  def handle_in(_event, _payload, socket), do: {:noreply, socket}
+
+  def terminate(_reason, socket) do
+    if user_id = socket.assigns[:user_id] do
+      Lobby.delete(user_id)
+      SoshWeb.Endpoint.broadcast_from(self(), socket.topic, "left", %{user_id: user_id})
+    end
+
+    :ok
+  end
+
+  defp clean_name(name) when is_binary(name) do
+    case name |> String.trim() |> String.slice(0, @max_name) do
+      "" -> "guest"
+      name -> name
+    end
+  end
+
+  defp clean_name(_), do: "guest"
+
+  defp clean_vec([x, y, z]) when is_number(x) and is_number(y) and is_number(z) do
+    Enum.map([x, y, z], &(&1 |> max(-@max_coord) |> min(@max_coord)))
+  end
+
+  defp clean_vec(_), do: [0, 0, 0]
+
+  defp clean_index(i) when is_integer(i) and i >= 0 and i <= @max_index, do: i
+  defp clean_index(_), do: 0
 end

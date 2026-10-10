@@ -1,0 +1,94 @@
+defmodule SoshWeb.RoomChannelTest do
+  # Not async: Sosh.Lobby is one shared registry.
+  use SoshWeb.ChannelCase
+
+  alias Sosh.Lobby
+
+  setup do
+    Enum.each(Lobby.list(), &Lobby.delete(&1.user_id))
+    :ok
+  end
+
+  defp join_as(socket, name, extra \\ %{}) do
+    params = Map.merge(%{"name" => name, "vec" => [1.5, -2, 0]}, extra)
+    {:ok, reply, socket} = subscribe_and_join(socket, SoshWeb.RoomChannel, "room:lobby", params)
+    {reply, socket}
+  end
+
+  test "join assigns an id, registers the player and announces them", %{socket: socket} do
+    {reply, socket} = join_as(socket, "  ada  ", %{"face" => 3})
+    id = reply.user_id
+
+    assert socket.assigns.user_id == id
+    assert_push "snapshot", %{players: players}
+    assert [%{user_id: ^id, name: "ada", vec: [1.5, -2, 0], face: 3, animation: 0}] = players
+    assert_broadcast "joined", %{user_id: ^id, name: "ada"}
+  end
+
+  test "a newcomer's snapshot includes players already present", %{socket: socket} do
+    {first, _} = join_as(socket, "first")
+    {:ok, other} = connect(SoshWeb.UserSocket, %{}, %{})
+    {second, _} = join_as(other, "second")
+
+    ids = [first.user_id, second.user_id] |> Enum.sort()
+    assert_push "snapshot", %{players: [_]}
+    assert_push "snapshot", %{players: players}
+    assert players |> Enum.map(& &1.user_id) |> Enum.sort() == ids
+  end
+
+  test "join params are sanitised", %{socket: socket} do
+    {:ok, _, _} =
+      subscribe_and_join(socket, SoshWeb.RoomChannel, "room:lobby", %{
+        "name" => String.duplicate("x", 40),
+        "vec" => [1, "two", 3],
+        "face" => 999
+      })
+
+    assert [%{name: name, vec: [0, 0, 0], face: 0}] = Lobby.list()
+    assert String.length(name) == 16
+  end
+
+  test "move, face and animation update the lobby and reach others", %{socket: socket} do
+    {reply, socket} = join_as(socket, "mover")
+    id = reply.user_id
+
+    push(socket, "move", %{"vec" => [500, 2, 0]})
+    push(socket, "face", %{"face" => 5})
+    push(socket, "animation", %{"animation" => 2})
+    # pushes are processed in order; a sync message waits for all three
+    :sys.get_state(socket.channel_pid)
+
+    assert [%{user_id: ^id, vec: [100, 2, 0], face: 5, animation: 2}] = Lobby.list()
+  end
+
+  test "chat is trimmed, capped and echoed with the sender's name", %{socket: socket} do
+    {reply, socket} = join_as(socket, "talker")
+    id = reply.user_id
+
+    push(socket, "new_msg", %{"body" => "  hello  "})
+    assert_broadcast "new_msg", %{body: "hello", user_id: ^id, name: "talker"}
+
+    push(socket, "new_msg", %{"body" => String.duplicate("a", 400)})
+    assert_broadcast "new_msg", %{body: body}
+    assert String.length(body) == 280
+
+    push(socket, "new_msg", %{"body" => "   "})
+    refute_broadcast "new_msg", _
+  end
+
+  test "leaving removes the player and tells the room", %{socket: socket} do
+    {reply, socket} = join_as(socket, "leaver")
+    id = reply.user_id
+
+    Process.unlink(socket.channel_pid)
+    ref = leave(socket)
+    assert_reply ref, :ok
+    assert_broadcast "left", %{user_id: ^id}
+    assert Lobby.list() == []
+  end
+
+  test "other rooms are refused", %{socket: socket} do
+    assert {:error, %{reason: "unauthorized"}} =
+             subscribe_and_join(socket, SoshWeb.RoomChannel, "room:secret", %{})
+  end
+end

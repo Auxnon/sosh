@@ -10,6 +10,11 @@ defmodule SoshWeb.ChannelCase do
 
   use ExUnit.CaseTemplate
 
+  # `connect/3` is a macro that reads @endpoint from the calling module, so the
+  # setup below needs both here, not just inside `using`.
+  require Phoenix.ChannelTest
+  @endpoint SoshWeb.Endpoint
+
   using do
     quote do
       # The default endpoint for testing
@@ -28,6 +33,7 @@ defmodule SoshWeb.ChannelCase do
   # Setup hooks for channel tests
   setup _tags do
     :ok = Application.ensure_started(:sosh)
-    {:ok, socket: Phoenix.ChannelTest.connect(SoshWeb.UserSocket, %{}, %{})}
+    {:ok, socket} = Phoenix.ChannelTest.connect(SoshWeb.UserSocket, %{}, %{})
+    {:ok, socket: socket}
   end
 end

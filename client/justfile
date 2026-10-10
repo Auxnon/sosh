@@ -1,0 +1,48 @@
+# sosh client recipes (https://github.com/casey/just). Run `just` to list.
+#
+# The client is a Petrichor64 game: scripts/ + assets/ here, run by the engine
+# on desktop, or packed into game.game.png and served by Phoenix to the web
+# build of the engine. Networking needs an engine built with the `ws` feature
+# (the web build always has it).
+
+# Petrichor64 checkout to build the engine from.
+p64 := env_var_or_default("P64", home_directory() / "projects/petrichor64")
+# Engine binary for desktop runs and packing; must be built with `ws`.
+chor := env_var_or_default("CHOR", p64 / "target/release/petrichor64")
+static := justfile_directory() / "../server/priv/static"
+
+default:
+    @just --list
+
+# Regenerate models and textures in assets/ (needs Pillow).
+assets:
+    python3 tools/gen_assets.py
+
+# Build the desktop engine with websocket support.
+engine:
+    cd {{p64}} && cargo build --release --features ws
+
+# Run the client as a desktop app (start the server first: `just serve`).
+desktop:
+    {{chor}} {{justfile_directory()}}
+
+# Pack the game into the bundle the web build loads from /game.game.png.
+pack:
+    mkdir -p {{static}}
+    {{chor}} pack {{justfile_directory()}} {{static}}/game.game.png
+
+# Build the engine for the browser and install it into Phoenix's priv/static.
+web-engine:
+    cd {{p64}} && wasm-pack build synth --release --target web --out-dir ../web/synth \
+        -- --no-default-features --features worklet
+    cd {{p64}} && trunk build --release
+    mkdir -p {{static}}
+    cp {{p64}}/web/dist/* {{static}}/
+    @echo "web engine installed to {{static}}"
+
+# Everything the web client needs: engine + packed game.
+web: web-engine pack
+
+# Start the Phoenix server on :4000 (serves the web client too).
+serve:
+    cd {{justfile_directory()}}/../server && mix phx.server

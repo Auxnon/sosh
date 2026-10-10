@@ -11,6 +11,7 @@ defmodule Sosh.Application do
       SoshWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:sosh, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Sosh.PubSub},
+      Sosh.Lobby,
       # Start the Finch HTTP client for sending emails
       {Finch, name: Sosh.Finch},
       # Start a worker by calling: Sosh.Worker.start_link(arg)
