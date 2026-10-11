@@ -1,0 +1,7 @@
+# Dev image for running the server without a local Elixir: Elixir + Rust
+# (for the Rustler NIF). Used by `just serve` in client/.
+FROM docker.io/library/elixir:1.18
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+ && mix local.hex --force && mix local.rebar --force
+ENV PATH=/root/.cargo/bin:$PATH
+WORKDIR /app

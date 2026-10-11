@@ -23,7 +23,7 @@ Needs a Petrichor64 engine with the **`ws`** feature, which provides
 ```sh
 just engine        # desktop engine with websockets (once)
 just db            # Postgres for the world, on :5442
-just serve         # Phoenix on :4000, in another terminal
+just serve         # Phoenix on :4000, in another terminal (container if no local mix)
 just desktop       # run the client window; join with server ws://localhost:4000
 ```
 
