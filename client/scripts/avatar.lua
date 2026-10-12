@@ -6,17 +6,24 @@
 -- every other property is set right after make(), and changing the face
 -- swaps the head entity rather than retexturing it.
 --
--- Avatars walk toward a target point over the block terrain (blocks.lua):
--- one block is a step, two is a wall, and they fall off edges. Local input
--- and the network both just set the target. Poses and emotes are procedural
+-- Avatars move over the block terrain (blocks.lua): one block is a step, two
+-- is a wall, and they fall off edges. Either they walk to a point (a click,
+-- `walk_to`) or they're driven at a velocity (the keys, `drive`), sliding
+-- along walls. Remote avatars follow the owner's `move` messages
+-- (`follow`): the same motion, carried on between messages, and any drift
+-- from where the owner says they are eased away over a few frames. Poses and emotes are procedural
 -- placeholders until the rigged player model is in.
 
 Avatar = {}
 Avatar.__index = Avatar
 
-AV_SPEED = 0.07 -- tiles per frame
-AV_TURN = 0.18 -- fraction of the remaining turn taken per frame
-AV_GRAVITY = 0.02
+-- Movement runs on real time (U.dt), not frames, so a slow machine walks
+-- as fast as a quick one and the velocities on the wire mean what they say.
+AV_SPEED = 4.2 -- tiles a second
+AV_TURN = 11 -- rate the remaining turn is taken at, per second
+AV_GRAVITY = 72 -- tiles a second, per second
+AV_CORRECT = 9 -- rate the drift from the owner's position is fixed at, per second
+AV_SNAP = 4 -- tiles adrift before jumping there instead
 AV_BODY_H = 0.85
 AV_SHOULDER = 0.27
 FACE_COUNT = 8
@@ -35,8 +42,14 @@ function Avatar.new(id, name, x, y, z, face, anim)
 	a.y = y
 	a.z = z
 	a.vz = 0
-	a.tx = x
-	a.ty = y
+	a.tx = nil -- walking to (tx, ty) when set
+	a.ty = nil
+	a.dvx = 0 -- else driven at this, tiles a second
+	a.dvy = 0
+	a.vx = 0 -- how fast it actually moved last frame, tiles a second
+	a.vy = 0
+	a.ex = 0 -- drift still to correct
+	a.ey = 0
 	a.heading = 0
 	a.face = face % FACE_COUNT
 	a.anim = anim % #ANIMS
@@ -104,6 +117,44 @@ end
 function Avatar:walk_to(x, y)
 	self.tx = x
 	self.ty = y
+	self.dvx = 0
+	self.dvy = 0
+end
+
+-- Move at (vx, vy) tiles a second until told otherwise.
+function Avatar:drive(vx, vy)
+	self.tx = nil
+	self.ty = nil
+	self.dvx = vx
+	self.dvy = vy
+end
+
+function Avatar:stop()
+	self:drive(0, 0)
+end
+
+function Avatar:driven()
+	return self.tx == nil and (self.dvx ~= 0 or self.dvy ~= 0)
+end
+
+-- A remote player's `move`: they're at `at`, moving at `v` tiles a second,
+-- and stopping at `to` if it isn't nil.
+function Avatar:follow(at, v, to)
+	local ex = at[1] - self.x
+	local ey = at[2] - self.y
+	if ex * ex + ey * ey > AV_SNAP * AV_SNAP then
+		self:teleport(at[1], at[2], at[3])
+	else
+		self.ex = ex
+		self.ey = ey
+	end
+	if to ~= nil then
+		self:walk_to(to[1], to[2])
+	elseif v ~= nil then
+		self:drive(v[1], v[2])
+	else
+		self:stop()
+	end
 end
 
 function Avatar:teleport(x, y, z)
@@ -111,8 +162,9 @@ function Avatar:teleport(x, y, z)
 	self.y = y
 	self.z = z
 	self.vz = 0
-	self.tx = x
-	self.ty = y
+	self.ex = 0
+	self.ey = 0
+	self:stop()
 end
 
 function Avatar:moving()
@@ -130,30 +182,81 @@ function Avatar:say(text)
 	end
 end
 
-function Avatar:update()
+-- Move by (wx, wy) if the way is clear. Driven avatars slide along a wall
+-- on whichever axis is free; one walking to a point just stops there.
+-- Returns true if it moved.
+function Avatar:step(wx, wy, dt)
+	local nx = self.x + wx
+	local ny = self.y + wy
+	if not Blocks.walkable(nx, ny, self.z) then
+		if self.tx ~= nil then
+			return false
+		end
+		if wx ~= 0 and Blocks.walkable(nx, self.y, self.z) then
+			ny = self.y
+		elseif wy ~= 0 and Blocks.walkable(self.x, ny, self.z) then
+			nx = self.x
+		else
+			return false
+		end
+	end
+	local want = U.atan2(ny - self.y, nx - self.x)
+	self.heading = self.heading + U.angle_diff(self.heading, want) * U.rate(AV_TURN, dt)
+	self.x = nx
+	self.y = ny
+	return true
+end
+
+function Avatar:update(dt)
 	self.t = self.t + 1
 
-	local dx = self.tx - self.x
-	local dy = self.ty - self.y
-	local dist = sqrt(dx * dx + dy * dy)
-	local stepping = false
-	if dist > 0.02 and self.anim ~= 1 then
-		local step = AV_SPEED
-		if step > dist then
-			step = dist
-		end
-		local nx = self.x + dx / dist * step
-		local ny = self.y + dy / dist * step
-		if Blocks.walkable(nx, ny, self.z) then
-			self.x = nx
-			self.y = ny
-			local want = U.atan2(dy, dx)
-			self.heading = self.heading + U.angle_diff(self.heading, want) * AV_TURN
-			stepping = true
+	local px = self.x
+	local py = self.y
+	local wx = self.dvx * dt
+	local wy = self.dvy * dt
+	if self.tx ~= nil then
+		local dx = self.tx - self.x
+		local dy = self.ty - self.y
+		local dist = sqrt(dx * dx + dy * dy)
+		if dist > 0.02 then
+			local step = AV_SPEED * dt
+			if step > dist then
+				step = dist
+			end
+			wx = dx / dist * step
+			wy = dy / dist * step
 		else
-			-- blocked: give up on this target
-			self.tx = self.x
-			self.ty = self.y
+			self.tx = nil
+			self.ty = nil
+			wx = 0
+			wy = 0
+		end
+	end
+	local stepping = false
+	if (wx ~= 0 or wy ~= 0) and self.anim ~= 1 then
+		stepping = self:step(wx, wy, dt)
+		if not stepping then
+			-- walled in: give up and stand
+			self:stop()
+		end
+	end
+	if dt > 0 then
+		self.vx = (self.x - px) / dt
+		self.vy = (self.y - py) / dt
+	end
+
+	-- ease off any drift from where the owner says we are
+	if self.ex ~= 0 or self.ey ~= 0 then
+		local k = U.rate(AV_CORRECT, dt)
+		local cx = self.ex * k
+		local cy = self.ey * k
+		self.x = self.x + cx
+		self.y = self.y + cy
+		self.ex = self.ex - cx
+		self.ey = self.ey - cy
+		if math.abs(self.ex) + math.abs(self.ey) < 0.001 then
+			self.ex = 0
+			self.ey = 0
 		end
 	end
 	if stepping then
@@ -169,8 +272,8 @@ function Avatar:update()
 			self.z = g
 			self.vz = 0
 		else
-			self.vz = self.vz - AV_GRAVITY
-			self.z = self.z + self.vz
+			self.vz = self.vz - AV_GRAVITY * dt
+			self.z = self.z + self.vz * dt
 			if self.z < g then
 				self.z = g
 				self.vz = 0

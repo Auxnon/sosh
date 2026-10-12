@@ -20,9 +20,9 @@ defmodule SoshWeb.RoomChannelTest do
     id = reply.user_id
 
     assert socket.assigns.user_id == id
-    assert_push "snapshot", %{players: players}
+    assert_push("snapshot", %{players: players})
     assert [%{user_id: ^id, name: "ada", vec: [1.5, -2, 0], face: 3, animation: 0}] = players
-    assert_broadcast "joined", %{user_id: ^id, name: "ada"}
+    assert_broadcast("joined", %{user_id: ^id, name: "ada"})
   end
 
   test "a newcomer's snapshot includes players already present", %{socket: socket} do
@@ -31,8 +31,8 @@ defmodule SoshWeb.RoomChannelTest do
     {second, _} = join_as(other, "second")
 
     ids = [first.user_id, second.user_id] |> Enum.sort()
-    assert_push "snapshot", %{players: [_]}
-    assert_push "snapshot", %{players: players}
+    assert_push("snapshot", %{players: [_]})
+    assert_push("snapshot", %{players: players})
     assert players |> Enum.map(& &1.user_id) |> Enum.sort() == ids
   end
 
@@ -44,7 +44,7 @@ defmodule SoshWeb.RoomChannelTest do
         "face" => 999
       })
 
-    assert [%{name: name, vec: [0, 0, 0], face: 0}] = Lobby.list()
+    assert [%{name: name, at: [0, 0, 0], face: 0}] = Lobby.list()
     assert String.length(name) == 16
   end
 
@@ -52,13 +52,38 @@ defmodule SoshWeb.RoomChannelTest do
     {reply, socket} = join_as(socket, "mover")
     id = reply.user_id
 
-    push(socket, "move", %{"vec" => [500, 2, 0]})
+    push(socket, "move", %{"at" => [500, 2, 0], "v" => [30, 0], "to" => [9, 2]})
     push(socket, "face", %{"face" => 5})
     push(socket, "animation", %{"animation" => 2})
     # pushes are processed in order; a sync message waits for all three
     :sys.get_state(socket.channel_pid)
 
-    assert [%{user_id: ^id, vec: [100, 2, 0], face: 5, animation: 2}] = Lobby.list()
+    # clamped to the plaza, and to running speed
+    assert [%{user_id: ^id, at: [100, 2, 0], v: [6.0, +0.0], to: [9, 2]} = me] = Lobby.list()
+    assert %{face: 5, animation: 2} = me
+  end
+
+  test "move is broadcast to others; garbage velocity means standing still", %{socket: socket} do
+    {reply, socket} = join_as(socket, "mover")
+    id = reply.user_id
+
+    push(socket, "move", %{"at" => [1, 2, 0], "v" => [1.5, -2]})
+    assert_broadcast("move", %{user_id: ^id, at: [1, 2, 0], v: [1.5, -2], to: nil})
+
+    push(socket, "move", %{"at" => [1, 2, 0], "v" => "fast", "to" => [1]})
+    assert_broadcast("move", %{v: [0, 0], to: nil})
+  end
+
+  test "positions are predicted from the last report" do
+    p = %{at: [0, 0, 1], v: [2, 0], to: nil, t: 1_000}
+    assert Lobby.position(p, 1_000) == [0.0, 0.0, 1]
+    assert Lobby.position(p, 1_500) == [1.0, 0.0, 1]
+    # no further than the horizon without a fresh report
+    assert Lobby.position(p, 9_000) == [3.0, 0.0, 1]
+    # and no further than the destination
+    assert Lobby.position(%{p | to: [0.5, 0]}, 2_000) == [0.5, 0, 1]
+    # standing still
+    assert Lobby.position(%{at: [3, 4, 0]}, 5_000) == [3, 4, 0]
   end
 
   test "chat is trimmed, capped and echoed with the sender's name", %{socket: socket} do
@@ -66,14 +91,14 @@ defmodule SoshWeb.RoomChannelTest do
     id = reply.user_id
 
     push(socket, "new_msg", %{"body" => "  hello  "})
-    assert_broadcast "new_msg", %{body: "hello", user_id: ^id, name: "talker"}
+    assert_broadcast("new_msg", %{body: "hello", user_id: ^id, name: "talker"})
 
     push(socket, "new_msg", %{"body" => String.duplicate("a", 400)})
-    assert_broadcast "new_msg", %{body: body}
+    assert_broadcast("new_msg", %{body: body})
     assert String.length(body) == 280
 
     push(socket, "new_msg", %{"body" => "   "})
-    refute_broadcast "new_msg", _
+    refute_broadcast("new_msg", _)
   end
 
   test "leaving removes the player and tells the room", %{socket: socket} do
@@ -82,8 +107,8 @@ defmodule SoshWeb.RoomChannelTest do
 
     Process.unlink(socket.channel_pid)
     ref = leave(socket)
-    assert_reply ref, :ok
-    assert_broadcast "left", %{user_id: ^id}
+    assert_reply(ref, :ok)
+    assert_broadcast("left", %{user_id: ^id})
     assert Lobby.list() == []
   end
 
@@ -92,10 +117,10 @@ defmodule SoshWeb.RoomChannelTest do
     id = reply.user_id
 
     push(socket, "emote", %{"emote" => "dance"})
-    assert_broadcast "emote", %{emote: "dance", user_id: ^id}
+    assert_broadcast("emote", %{emote: "dance", user_id: ^id})
 
     push(socket, "emote", %{"emote" => "moonwalk"})
-    refute_broadcast "emote", _
+    refute_broadcast("emote", _)
   end
 
   test "the room uses the socket's user id", %{socket: socket} do

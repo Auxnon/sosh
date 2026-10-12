@@ -73,14 +73,25 @@ joins two channels:
   `Sosh.World`. The join reply carries every crop and cow;
   `plant_action`/`harvest_action` farm, and `crop`, `cows` and `moo`
   broadcast the simulation (`Sosh.Sim`, which runs the Rust universe NIF
-  ten times a second). `move` carries `at`, where the player actually
-  stands, which is what pushes cows.
+  ten times a second).
+
+Movement is sent as motion, not a stream of positions. `move` carries where
+the player stands (`at`), their velocity in tiles a second (`v`) and, when
+walking to a clicked point, the destination (`to`). It goes out only when
+that motion changes (start, stop, a turn of about 14°, a new destination,
+a wall), plus once a second while moving to correct drift. Other clients
+carry each avatar along its last motion and ease out any error. The server
+predicts the same way (`Sosh.Lobby.position/2`) to push cows and check
+reach. Walking is about 6 messages a second at worst, and nothing while
+standing still.
 
 The world lives in Postgres (`chunks` table, one 4 KB row per chunk). Chunks
 nobody has edited are generated, not stored. Edits autosave every 30s and on
 shutdown, and `Sosh.World.save()` saves on demand, for example from
-`iex -S mix phx.server`. Heartbeats and reconnect backoff
-count frames, because there's no wall clock in the web build.
+`iex -S mix phx.server`. Movement runs on the engine's `now()` clock, so it's
+the same speed at any frame rate (an engine without `now()` falls back to
+counting frames). Heartbeats, reconnect backoff and other timers count
+frames.
 
 ## Engine constraints worth knowing
 
@@ -94,5 +105,7 @@ count frames, because there's no wall clock in the web build.
 - **silt miscompile:** a table constructor containing a local, assigned to a
   field or index inside a loop, miscompiles. The scripts always build it into
   a `local` first (petrichor64 `SILT-BUGS.md` #5).
+- **`now()`:** the engine's clock (seconds since start) is new on
+  petrichor64-ws `feat/skinning`; silt's own `clock()` panics on the web.
 - **Load order:** script load order isn't guaranteed, so top level only
   defines things and everything runs from `main()`.

@@ -14,6 +14,12 @@ CHAT_MAX = 280
 CHAT_LOG_MAX = 50
 CHAT_SHOWN = 8
 CHAT_FADE = 600 -- frames a line stays fully visible in the log
+-- `move` goes out when our velocity changes by this much (tiles a second;
+-- walking is 4.2, so about a 14 degree turn), at most every MOVE_MIN_GAP
+-- seconds, and every MOVE_HEARTBEAT seconds while moving to correct drift
+MOVE_TOLERANCE = 1
+MOVE_MIN_GAP = 0.07
+MOVE_HEARTBEAT = 1
 
 -- camera: orbits the local avatar
 CAM = { x = 0, y = 0, z = 0, az = 0, alt = -0.55, dist = 9 }
@@ -37,9 +43,11 @@ function main()
 	APP.chat = {}
 	APP.typing = false
 	APP.draft = UI.field("", CHAT_MAX)
-	APP.move_tick = 0
-	APP.last_sent_x = 0
-	APP.last_sent_y = 0
+	-- the motion we last told everyone about (send_move), and when
+	APP.sent_at = 0
+	APP.sent_vx = 0
+	APP.sent_vy = 0
+	APP.sent_to = nil
 	APP.drag = false
 	-- "walk", "dig", "build" or "plant"
 	APP.tool = "walk"
@@ -68,6 +76,7 @@ function detect_web()
 end
 
 function loop()
+	U.tick()
 	UI.begin()
 	if APP.screen == "connect" then
 		connect_screen()
@@ -236,8 +245,8 @@ function bind_lobby(ch)
 	end
 	ch.on["move"] = function(p)
 		local av = APP.players[p.user_id]
-		if av ~= nil and p.vec ~= nil then
-			av:walk_to(p.vec[1], p.vec[2])
+		if av ~= nil and p.at ~= nil then
+			av:follow(p.at, p.v, p.to)
 		end
 	end
 	ch.on["face"] = function(p)
@@ -350,11 +359,12 @@ function upsert_player(p, snap)
 		APP.players[p.user_id] = av
 		table.insert(APP.order, p.user_id)
 	else
-		if snap then
-			av:walk_to(x, y)
-		end
 		av:set_face(p.face or 0)
 		av:set_anim(p.animation or 0)
+	end
+	-- `vec` is where the server reckons they are now; carry on from there
+	if snap and p.vec ~= nil then
+		av:follow(p.vec, p.v, p.to)
 	end
 end
 
@@ -385,24 +395,51 @@ function add_chat(name, body, col)
 	end
 end
 
-function send_move(x, y)
-	APP.last_sent_x = x
-	APP.last_sent_y = y
-	local z = GROUND_Z
-	if APP.me ~= nil then
-		z = APP.me.z
-	end
-	local vec = { x, y, z }
+-- Tell everyone how we're moving: where we are, our velocity in tiles a
+-- second and where we're walking to, if anywhere. Everyone (the server too)
+-- carries us along that until the next one, so this only goes out when the
+-- motion changes, plus a heartbeat to correct drift (see world_frame).
+function send_move()
+	local me = APP.me
+	local vx = U.round(me.vx, 1000)
+	local vy = U.round(me.vy, 1000)
+	APP.sent_at = U.clock
+	APP.sent_vx = vx
+	APP.sent_vy = vy
+	APP.sent_to = nil
+	local ax = U.round(me.x, 1000)
+	local ay = U.round(me.y, 1000)
+	local az = U.round(me.z, 1000)
+	local at = { ax, ay, az }
+	local v = { vx, vy }
 	local payload = {}
-	payload.vec = vec
-	-- where we actually are, so the server can let us push cows
-	if APP.me ~= nil then
-		local at = { APP.me.x, APP.me.y, APP.me.z }
-		payload.at = at
+	payload.at = at
+	payload.v = v
+	if me.tx ~= nil then
+		local to = { me.tx, me.ty }
+		payload.to = to
+		APP.sent_to = to
 	end
 	-- a reconnect rejoins with these params
-	LOBBY.params.vec = vec
+	LOBBY.params.vec = at
 	PHX:push(LOBBY, "move", payload)
+end
+
+-- Whether our motion has drifted from what we last sent: a start, a stop,
+-- a turn, a new destination, or a wall in the way.
+function motion_changed(me)
+	local to = APP.sent_to
+	if me.tx ~= nil then
+		-- walking to a point: everyone walks us there, so only a new point
+		-- is news (giving up on it clears tx, and that is news below)
+		return to == nil or to[1] ~= me.tx or to[2] ~= me.ty
+	end
+	if to ~= nil then
+		return true
+	end
+	local dvx = me.vx - APP.sent_vx
+	local dvy = me.vy - APP.sent_vy
+	return dvx * dvx + dvy * dvy > MOVE_TOLERANCE * MOVE_TOLERANCE
 end
 
 -- ---------------------------------------------------------------------------
@@ -426,27 +463,29 @@ function world_frame()
 
 	local me = APP.me
 	if me ~= nil then
-		local acted = false
 		if APP.typing then
 			chat_typing()
+			if me:driven() then
+				me:stop() -- the keys are for typing now
+			end
 		else
-			acted = world_keys(me)
+			world_keys(me)
 		end
 		world_pointer(me)
-		me:update()
-		-- while walking, keep remote copies following and the server
-		-- knowing where we are
-		APP.move_tick = APP.move_tick + 1
-		local moving = acted or me:moving()
-		if (moving and APP.move_tick >= 6) or (APP.was_moving and not moving) then
-			APP.move_tick = 0
-			send_move(me.tx, me.ty)
+		me:update(U.dt)
+		if LOBBY.joined then
+			local since = U.clock - APP.sent_at
+			local moving = me.vx ~= 0 or me.vy ~= 0
+			if motion_changed(me) and since >= MOVE_MIN_GAP then
+				send_move()
+			elseif moving and since >= MOVE_HEARTBEAT then
+				send_move()
+			end
 		end
-		APP.was_moving = moving
 	end
 
 	for i = 1, #APP.order do
-		APP.players[APP.order[i]]:update()
+		APP.players[APP.order[i]]:update(U.dt)
 	end
 	Herd.update(me)
 
@@ -462,13 +501,13 @@ end
 
 -- WASD / arrows walk relative to the camera; Q/E turn it; F/G cycle face and
 -- pose; 1-4 pick walk/dig/build/plant; Z/X pick the block; 5-8 emote; Enter
--- opens chat. Returns true if the avatar was steered.
+-- opens chat.
 function world_keys(me)
 	if key("enter", true) then
 		APP.typing = true
 		APP.draft.text = ""
 		cin() -- swallow anything typed this frame
-		return false
+		return
 	end
 	if key("1", true) then
 		APP.tool = "walk"
@@ -522,7 +561,10 @@ function world_keys(me)
 		side = side - 1
 	end
 	if fwd == 0 and side == 0 then
-		return false
+		if me:driven() then
+			me:stop()
+		end
+		return
 	end
 	if me.anim == 1 then
 		change_anim(1) -- stand up to walk
@@ -532,13 +574,7 @@ function world_keys(me)
 	local dx = fx * fwd - fy * side
 	local dy = fy * fwd + fx * side
 	local l = sqrt(dx * dx + dy * dy)
-	local tx = me.x + dx / l * 0.9
-	local ty = me.y + dy / l * 0.9
-	if Blocks.walkable(tx, ty, me.z) then
-		me:walk_to(tx, ty)
-		return true
-	end
-	return false
+	me:drive(dx / l * AV_SPEED, dy / l * AV_SPEED)
 end
 
 -- The block under the pointer drives all three tools: walk to it, dig it, or
@@ -587,7 +623,6 @@ function world_pointer(me)
 				change_anim(1)
 			end
 			me:walk_to(h[1], h[2])
-			send_move(h[1], h[2])
 		end
 	elseif APP.tool == "plant" then
 		if cell ~= nil then

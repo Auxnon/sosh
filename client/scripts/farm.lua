@@ -14,7 +14,7 @@ Herd = {}
 
 CROP_STAGES = 4
 CROP_RIPE = 3
-COW_EASE = 0.25 -- fraction of the way to the server position per frame
+COW_EASE = 15 -- rate a cow closes on its server position, per second
 COW_PUSH = 0.9 -- cow radius + player radius, as on the server
 MOO_FRAMES = 90
 
@@ -117,11 +117,12 @@ function Herd.moo(ids)
 end
 
 function Herd.update(me)
+	local k = U.rate(COW_EASE, U.dt)
 	for id, c in pairs(Herd.cows) do
-		c.x = U.lerp(c.x, c.sx, COW_EASE)
-		c.y = U.lerp(c.y, c.sy, COW_EASE)
-		c.z = U.lerp(c.z, c.sz, COW_EASE)
-		c.h = c.h + U.angle_diff(c.h, c.sh) * COW_EASE
+		c.x = U.lerp(c.x, c.sx, k)
+		c.y = U.lerp(c.y, c.sy, k)
+		c.z = U.lerp(c.z, c.sz, k)
+		c.h = c.h + U.angle_diff(c.h, c.sh) * k
 		if me ~= nil then
 			Herd.shove(c, me)
 		end

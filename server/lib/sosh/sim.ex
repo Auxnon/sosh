@@ -4,8 +4,8 @@ defmodule Sosh.Sim do
   grow on wall-clock time and cows that wander the plaza and get pushed by
   players.
 
-  Every `tick_ms` it advances the universe with the players' positions from
-  `Sosh.Lobby` and broadcasts what changed on `actions:lobby`:
+  Every `tick_ms` it advances the universe with the players' positions as
+  `Sosh.Lobby` predicts them and broadcasts what changed on `actions:lobby`:
 
     * `cows` `%{cows: [[id, x, y, z, heading]]}` - cows that moved
     * `moo` `%{ids: [id]}` - cows that were just shoved
@@ -123,7 +123,7 @@ defmodule Sosh.Sim do
 
       stage ->
         Universe.remove_crop(state.universe, pos)
-        Repo.delete_all(from c in Crop, where: c.x == ^x and c.y == ^y and c.z == ^z)
+        Repo.delete_all(from(c in Crop, where: c.x == ^x and c.y == ^y and c.z == ^z))
         broadcast("crop", crop_json(pos, nil))
         {:reply, {:ok, stage}, state}
     end
@@ -171,9 +171,11 @@ defmodule Sosh.Sim do
   end
 
   defp step(state, now) do
+    t = Lobby.now()
+
     players =
       for p <- Lobby.list(),
-          [x, y, z] <- [Map.get(p, :at) || p.vec],
+          [x, y, z] = Lobby.position(p, t),
           do: {x * 1.0, y * 1.0, z * 1.0}
 
     {cows, moos, crops} = Universe.tick(state.universe, now, players)

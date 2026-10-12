@@ -263,10 +263,11 @@ defmodule SoshWeb.ActionChannel do
 
   defp validate_block_position(_), do: {:error, "invalid_position_format"}
 
-  # Measured from the player's last reported position (Sosh.Lobby).
+  # Measured from where Sosh.Lobby predicts the player is.
   defp within_reach(socket, x, y, z) do
     case Enum.find(Lobby.list(), &(&1.user_id == socket.assigns.user_id)) do
-      %{vec: [px, py, pz]} ->
+      %{} = player ->
+        [px, py, pz] = Lobby.position(player, Lobby.now())
         dx = x + 0.5 - px
         dy = y + 0.5 - py
         dz = z + 0.5 - pz

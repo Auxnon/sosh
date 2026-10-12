@@ -6,8 +6,9 @@
 --    A function/method call inside a constructor miscompiles too: hoist it.
 --  * script load order isn't guaranteed: top level only defines things;
 --    nothing runs until main().
---  * no os/clock on the web build (clock() panics there): time is counted in
---    frames, at roughly FPS frames a second.
+--  * no os/clock on the web build (clock() panics there): the engine's now()
+--    is the clock (U.tick), and older engines without it count frames, at
+--    roughly FPS frames a second. Movement uses it; timers still count frames.
 
 U = {}
 
@@ -21,6 +22,34 @@ function U.clamp(v, lo, hi)
 		return hi
 	end
 	return v
+end
+
+-- Advance the clock once a frame: U.dt is the seconds since the last frame,
+-- capped so a stall (a hidden tab, a hitch) doesn't teleport anyone.
+function U.tick()
+	local t = 0
+	if now ~= nil then
+		t = now()
+	else
+		U.frames = (U.frames or 0) + 1
+		t = U.frames / FPS
+	end
+	if U.clock == nil then
+		U.dt = 1 / FPS
+	else
+		U.dt = U.clamp(t - U.clock, 0, 0.1)
+	end
+	U.clock = t
+end
+
+-- How much of the way to close in one frame, approaching at `rate` a second.
+function U.rate(rate, dt)
+	return U.clamp(rate * dt, 0, 1)
+end
+
+-- To the nearest 1/per: keeps numbers short on the wire.
+function U.round(v, per)
+	return flr(v * per + 0.5) / per
 end
 
 function U.lerp(a, b, t)
