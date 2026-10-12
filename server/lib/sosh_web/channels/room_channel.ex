@@ -7,7 +7,9 @@ defmodule SoshWeb.RoomChannel do
     * `snapshot` `%{players: [player]}` - pushed to a newcomer, everyone present
     * `joined` player - someone arrived
     * `left` `%{user_id}` - someone's channel closed
-    * `move` `%{user_id, vec}` - walk target
+    * `move` `%{user_id, vec}` - walk target. Clients may add `at`, where
+      they actually stand; the server keeps it (Sosh.Lobby) so players push
+      cows (Sosh.Sim), and doesn't forward it.
     * `face` `%{user_id, face}`, `animation` `%{user_id, animation}`
     * `new_msg` `%{user_id, name, body}` - chat, echoed to the sender too
     * `emote` `%{user_id, emote}` - one of wave, dance, jump, cheer
@@ -27,15 +29,17 @@ defmodule SoshWeb.RoomChannel do
   def join("room:lobby", params, socket) do
     user_id = socket.assigns.user_id
 
+    vec = clean_vec(params["vec"])
+
     player = %{
       user_id: user_id,
       name: clean_name(params["name"]),
-      vec: clean_vec(params["vec"]),
+      vec: vec,
       face: clean_index(params["face"]),
       animation: clean_index(params["animation"])
     }
 
-    Lobby.put(user_id, player)
+    Lobby.put(user_id, Map.put(player, :at, vec))
     send(self(), {:after_join, player})
     socket = assign(socket, :name, player.name)
 
@@ -68,9 +72,10 @@ defmodule SoshWeb.RoomChannel do
     end
   end
 
-  def handle_in("move", %{"vec" => vec}, socket) do
+  def handle_in("move", %{"vec" => vec} = payload, socket) do
     vec = clean_vec(vec)
-    Lobby.update(socket.assigns.user_id, %{vec: vec})
+    at = if payload["at"], do: clean_vec(payload["at"]), else: vec
+    Lobby.update(socket.assigns.user_id, %{vec: vec, at: at})
     broadcast_from!(socket, "move", %{vec: vec, user_id: socket.assigns.user_id})
     {:noreply, socket}
   end

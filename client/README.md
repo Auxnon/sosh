@@ -7,7 +7,7 @@ behave identically.
 
 ```
 client/
-  scripts/   Lua (silt): main, phx, avatar, world, ui, util
+  scripts/   Lua (silt): main, phx, avatar, world, blocks, farm, ui, util
   assets/    generated models (.glb) and tile textures
   tools/     gen_assets.py — regenerates assets/ from front/public/assets/faces.png
   icon.png   cart icon (required by `pack`)
@@ -40,8 +40,9 @@ at `~/projects/petrichor64`.
 
 ## Controls
 
-- **1 / 2 / 3**: tool. **Walk** clicks a block to walk onto it, **dig** removes
-  the outlined block, **build** places a block on the outlined face. The
+- **1–4**: tool. **Walk** clicks a block to walk onto it, **dig** removes
+  the outlined block, **build** places a block on the outlined face, and
+  **plant** plants carrots on grass or dirt, or picks them once ripe. The
   toolbar at the bottom does the same.
 - **Z / X**: block to build with (grass, dirt, stone, wood, path)
 - **WASD / arrows**: walk. One block is a step up, two is a wall.
@@ -51,8 +52,12 @@ at `~/projects/petrichor64`.
 - **F**: next face. **G**: cycle pose (idle, sit, carry).
 - **Q/E, right-drag**: orbit the camera. **Scroll**: zoom.
 
-Digging and building reach about 7 blocks. The server enforces this and
-refuses anything farther.
+Digging, building and planting reach about 7 blocks. The server enforces
+this and refuses anything farther.
+
+Carrots grow on the server's clock, a stage a minute until ripe at three
+(orange tops), whether or not anyone is online. Cows wander the plaza; walk
+into one to push it.
 
 ## Protocol
 
@@ -65,7 +70,11 @@ joins two channels:
 - **`actions:lobby`**: the block world. `get_chunks` returns 16×16×16
   chunks run-length encoded, `dig_action`/`place_action` edit, and
   `block_changed` broadcasts each edit. See `SoshWeb.ActionChannel` and
-  `Sosh.World`.
+  `Sosh.World`. The join reply carries every crop and cow;
+  `plant_action`/`harvest_action` farm, and `crop`, `cows` and `moo`
+  broadcast the simulation (`Sosh.Sim`, which runs the Rust universe NIF
+  ten times a second). `move` carries `at`, where the player actually
+  stands, which is what pushes cows.
 
 The world lives in Postgres (`chunks` table, one 4 KB row per chunk). Chunks
 nobody has edited are generated, not stored. Edits autosave every 30s and on

@@ -2,10 +2,11 @@ defmodule SoshWeb.ActionChannelTest do
   # Shares Sosh.World and Sosh.Lobby with every other test: not async.
   use SoshWeb.ChannelCase
 
-  alias Sosh.{Lobby, World}
+  alias Sosh.{Lobby, Sim, World}
 
   setup %{socket: socket} do
     Enum.each(Lobby.list(), &Lobby.delete(&1.user_id))
+    :ok = Sim.reset(cows: 0)
     # Standing at the plaza centre: a user in the room is what gives reach.
     {:ok, _, _} =
       subscribe_and_join(socket, SoshWeb.RoomChannel, "room:lobby", %{
@@ -76,5 +77,82 @@ defmodule SoshWeb.ActionChannelTest do
     World.reset()
     assert World.block(0, 1, 0) == World.block_ids()["stone"]
     assert Sosh.Repo.aggregate(Sosh.Chunk, :count) == 1
+  end
+
+  describe "farming" do
+    test "plant tills grass, grows on the clock and harvests when ripe", %{actions: actions} do
+      ref = push(actions, "plant_action", %{"position" => [2, 3, 0]})
+      assert_reply ref, :ok, %{position: [2, 3, 0]}
+      assert_broadcast "crop", %{position: [2, 3, 0], stage: 0}
+      assert_broadcast "block_changed", %{position: [2, 3, -1], block_type: "dirt"}
+      assert World.block(2, 3, -1) == World.block_ids()["dirt"]
+      assert Sosh.Repo.aggregate(Sosh.Crop, :count) == 1
+
+      ref = push(actions, "harvest_action", %{"position" => [2, 3, 0]})
+      assert_reply ref, :error, %{reason: "not_ripe"}
+
+      # stage_ms is 1s in test: three stages later it's ripe
+      :ok = Sim.tick(System.os_time(:millisecond) + 3_500)
+      assert_broadcast "crop", %{position: [2, 3, 0], stage: 3}
+
+      ref = push(actions, "harvest_action", %{"position" => [2, 3, 0]})
+      assert_reply ref, :ok, %{item: "carrot"}
+      assert_broadcast "crop", %{position: [2, 3, 0], stage: nil}
+      assert Sosh.Repo.aggregate(Sosh.Crop, :count) == 0
+
+      ref = push(actions, "harvest_action", %{"position" => [2, 3, 0]})
+      assert_reply ref, :error, %{reason: "nothing_growing"}
+    end
+
+    test "planting needs soil and an empty cell", %{actions: actions} do
+      ref = push(actions, "plant_action", %{"position" => [2, 2, 0]})
+      assert_reply ref, :ok, _
+      ref = push(actions, "plant_action", %{"position" => [2, 2, 0]})
+      assert_reply ref, :error, %{reason: "occupied"}
+      # nothing to grow in: the cell above is air over the crop
+      ref = push(actions, "plant_action", %{"position" => [2, 2, 1]})
+      assert_reply ref, :error, %{reason: "needs_soil"}
+      # a block can't go where a crop grows
+      ref = push(actions, "place_action", %{"position" => [2, 2, 0], "block_type" => "wood"})
+      assert_reply ref, :error, %{reason: "occupied"}
+    end
+
+    test "digging the soil uproots the crop", %{actions: actions} do
+      ref = push(actions, "plant_action", %{"position" => [3, 2, 0]})
+      assert_reply ref, :ok, _
+      ref = push(actions, "dig_action", %{"position" => [3, 2, -1]})
+      assert_reply ref, :ok, _
+      assert_broadcast "crop", %{position: [3, 2, 0], stage: nil}
+      assert Sim.crop({3, 2, 0}) == nil
+    end
+
+    test "crops come back from Postgres, grown by the time passed" do
+      Sosh.Repo.insert!(%Sosh.Crop{x: 4, y: 4, z: 0, planted_ms: 0})
+      :ok = Sim.reset(cows: 0)
+      assert Sim.crop({4, 4, 0}) == Sim.ripe()
+    end
+  end
+
+  describe "cows" do
+    test "join replies with cows and crops; a player pushes a cow", %{socket: socket} do
+      :ok = Sim.reset(cows: 1)
+      {:ok, reply, _} = subscribe_and_join(socket, SoshWeb.ActionChannel, "actions:lobby")
+      assert %{crops: [], cows: [[id, x, y, _z, _h]]} = reply
+
+      # stand just west of it: the cow is shoved east and moos
+      now = System.os_time(:millisecond)
+      :ok = Sim.tick(now)
+      [user | _] = Lobby.list()
+      Lobby.update(user.user_id, %{at: [x - 0.3, y, 0]})
+      :ok = Sim.tick(now + 100)
+      assert_broadcast "moo", %{ids: [^id]}
+      # (subscribed twice, setup's join and this one, and the first tick
+      # announces the cow where it stood: look past those)
+      assert_receive %Phoenix.Socket.Broadcast{
+                       event: "cows",
+                       payload: %{cows: [[^id, x2, _, _, _]]}
+                     }
+                     when x2 > x + 0.4
+    end
   end
 end

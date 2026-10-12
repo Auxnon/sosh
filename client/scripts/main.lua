@@ -41,13 +41,15 @@ function main()
 	APP.last_sent_x = 0
 	APP.last_sent_y = 0
 	APP.drag = false
-	-- "walk", "dig" or "build"
+	-- "walk", "dig", "build" or "plant"
 	APP.tool = "walk"
 	APP.block_i = 1
 	APP.cursor = nil
 	APP.target = nil
 	APP.fetch_tick = 0
 	Blocks.init()
+	Farm.init()
+	Herd.init()
 
 	-- something to look at behind the connect screen
 	CAM.az = 0.6
@@ -283,10 +285,25 @@ function bind_actions(ch)
 		Blocks.have = {}
 		Blocks.wanted = {}
 		APP.fetch_tick = 0
+		-- the reply is Sosh.Sim's snapshot: every crop and cow
+		Farm.sync(reply.crops or {})
+		Herd.sync(reply.cows or {})
 	end
 	ch.on["block_changed"] = function(p)
 		local pos = p.position
 		Blocks.set(pos[1], pos[2], pos[3], p.block)
+	end
+	ch.on["crop"] = function(p)
+		Farm.set(p.position, p.stage)
+	end
+	ch.on["cows"] = function(p)
+		local rows = p.cows
+		for i = 1, #rows do
+			Herd.put(rows[i])
+		end
+	end
+	ch.on["moo"] = function(p)
+		Herd.moo(p.ids)
 	end
 end
 
@@ -378,6 +395,11 @@ function send_move(x, y)
 	local vec = { x, y, z }
 	local payload = {}
 	payload.vec = vec
+	-- where we actually are, so the server can let us push cows
+	if APP.me ~= nil then
+		local at = { APP.me.x, APP.me.y, APP.me.z }
+		payload.at = at
+	end
 	-- a reconnect rejoins with these params
 	LOBBY.params.vec = vec
 	PHX:push(LOBBY, "move", payload)
@@ -412,17 +434,21 @@ function world_frame()
 		end
 		world_pointer(me)
 		me:update()
-		-- while walking by keys, keep remote copies following
+		-- while walking, keep remote copies following and the server
+		-- knowing where we are
 		APP.move_tick = APP.move_tick + 1
-		if acted and APP.move_tick >= 6 then
+		local moving = acted or me:moving()
+		if (moving and APP.move_tick >= 6) or (APP.was_moving and not moving) then
 			APP.move_tick = 0
 			send_move(me.tx, me.ty)
 		end
+		APP.was_moving = moving
 	end
 
 	for i = 1, #APP.order do
 		APP.players[APP.order[i]]:update()
 	end
+	Herd.update(me)
 
 	if me ~= nil then
 		place_camera(me.x, me.y, me.z)
@@ -435,7 +461,7 @@ function world_frame()
 end
 
 -- WASD / arrows walk relative to the camera; Q/E turn it; F/G cycle face and
--- pose; 1/2/3 pick walk/dig/build; Z/X pick the block; 5-8 emote; Enter
+-- pose; 1-4 pick walk/dig/build/plant; Z/X pick the block; 5-8 emote; Enter
 -- opens chat. Returns true if the avatar was steered.
 function world_keys(me)
 	if key("enter", true) then
@@ -452,6 +478,9 @@ function world_keys(me)
 	end
 	if key("3", true) then
 		APP.tool = "build"
+	end
+	if key("4", true) then
+		APP.tool = "plant"
 	end
 	if key("z", true) then
 		APP.block_i = (APP.block_i - 2) % #PLACEABLE + 1
@@ -538,6 +567,8 @@ function world_pointer(me)
 			cell = hit.hit
 		elseif APP.tool == "build" then
 			cell = hit.before
+		elseif APP.tool == "plant" then
+			cell = plant_cell(hit)
 		end
 	end
 	if cell ~= nil and not in_reach(me, cell) then
@@ -558,8 +589,56 @@ function world_pointer(me)
 			me:walk_to(h[1], h[2])
 			send_move(h[1], h[2])
 		end
+	elseif APP.tool == "plant" then
+		if cell ~= nil then
+			farm_action(cell)
+		end
 	elseif cell ~= nil then
 		edit_block(cell)
+	end
+end
+
+-- The plant tool works on the cell above the soil under the pointer: harvest
+-- what grows there, or plant in it.
+function plant_cell(hit)
+	local h = hit.hit
+	local x = h[1]
+	local y = h[2]
+	local z = h[3] + 1
+	if Farm.get(x, y, z) == nil then
+		if hit.id ~= 1 and hit.id ~= 2 then
+			return nil -- grass or dirt only
+		end
+		if Blocks.get(x, y, z) ~= 0 then
+			return nil
+		end
+	end
+	local cell = { x, y, z }
+	return cell
+end
+
+function farm_action(cell)
+	local crop = Farm.get(cell[1], cell[2], cell[3])
+	local pos = { cell[1], cell[2], cell[3] }
+	local payload = {}
+	payload.position = pos
+	if crop == nil then
+		PHX:push(ACTIONS, "plant_action", payload, function(status, response)
+			if status ~= "ok" and response ~= nil and response.reason ~= nil then
+				add_chat(nil, "can't plant: " .. tostring(response.reason), C_BAD)
+			end
+		end)
+	elseif crop.stage < CROP_RIPE then
+		add_chat(nil, "not ripe yet", C_DIM)
+	else
+		PHX:push(ACTIONS, "harvest_action", payload, function(status, response)
+			if status == "ok" then
+				Farm.carrots = Farm.carrots + 1
+				add_chat(nil, "+1 carrot", C_OK)
+			elseif response ~= nil and response.reason ~= nil then
+				add_chat(nil, "can't harvest: " .. tostring(response.reason), C_BAD)
+			end
+		end)
 	end
 end
 
@@ -665,8 +744,8 @@ end
 HUD_BTN_W = 72
 HUD_BTN_H = 18
 HUD_ROWS = 7 -- right-hand column: 4 emotes, face, pose, chat
-HINT = "enter: chat  wasd: walk  1-3: tool  z/x: block  f: face  g: pose  5-8: emote  q/e: look"
-TOOLS = { "walk", "dig", "build" }
+HINT = "enter: chat  wasd: walk  1-4: tool  z/x: block  f: face  g: pose  5-8: emote  q/e: look"
+TOOLS = { "walk", "dig", "build", "plant" }
 TOOL_W = 60
 
 -- Where everything on the HUD goes this frame. The gui can be as small as
@@ -741,7 +820,8 @@ end
 
 function draw_hud()
 	local L = hud_layout()
-	-- avatars' overlays first so panels sit on top of them
+	-- world overlays first so panels sit on top of them
+	Herd.overlay()
 	for i = 1, #APP.order do
 		UI.avatar_overlay(APP.players[APP.order[i]], false)
 	end
@@ -770,6 +850,17 @@ function draw_hud()
 	local here = tostring(online) .. " here"
 	local hx = gui.w - UI.text_w(here) - PAD * 2
 	UI.text(here, hx, PAD + 1, C_DIM)
+	if Farm.carrots > 0 then
+		local carrots = tostring(Farm.carrots) .. " carrot"
+		if Farm.carrots > 1 then
+			carrots = carrots .. "s"
+		end
+		local cx = hx - UI.text_w(carrots) - PAD * 3
+		-- only where it clears the status
+		if cx > PAD * 2 + 6 * CH + UI.text_w(label) + PAD * 2 then
+			UI.text(carrots, cx, PAD + 1, "EE842A")
+		end
+	end
 
 	draw_chat(L)
 	if APP.me ~= nil then
@@ -781,7 +872,7 @@ function draw_hud()
 	end
 end
 
--- Tools (1/2/3) and, while building, the block to place (Z/X).
+-- Tools (1-4) and, while building, the block to place (Z/X).
 function draw_toolbar(L)
 	local x = L.tb_x
 	local y = L.tb_y

@@ -128,6 +128,116 @@ def frustum(bx, by, tx, ty, z0, z1, face_uv):
     return pos, uv, idx
 
 
+def box(cx, cy, hx, hy, z0, z1, face_uv, top=None):
+    """frustum() moved to (cx, cy); `top` gives a tapered top's half-extents."""
+    tx, ty = top if top else (hx, hy)
+    pos, uv, idx = frustum(hx, hy, tx, ty, z0, z1, face_uv)
+    return [(x + cx, y + cy, z) for x, y, z in pos], uv, idx
+
+
+def merge(*parts):
+    """Several (pos, uv, idx) meshes as one."""
+    pos, uv, idx = [], [], []
+    for p, u, i in parts:
+        n = len(pos)
+        pos += p
+        uv += u
+        idx += [n + k for k in i]
+    return pos, uv, idx
+
+
+def rect(x0, y0, x1, y1, w, h):
+    """Pixel rect of a w x h atlas as a face_uv for every face."""
+    r = (x0 / w, y0 / h, x1 / w, y1 / h)
+    return lambda n: r
+
+
+COW_WHITE = (240, 236, 228, 255)
+COW_SPOT = (48, 42, 44, 255)
+COW_PINK = (232, 164, 164, 255)
+COW_HOOF = (70, 60, 56, 255)
+
+
+def cow_texture():
+    """32x16 atlas: spotted hide (0-15), snout pink (16-23, top), hoof
+    (24-31, top), and the face (16-31, bottom)."""
+    im = Image.new("RGBA", (32, 16), COW_WHITE)
+    x = 29
+    for _ in range(5):
+        x = (x * 1103515245 + 12345) & 0x7FFFFFFF
+        sx, sy = x % 13, (x >> 8) % 13
+        for dx in range(4):
+            for dy in range(3 + (x >> 16) % 2):
+                if (dx, dy) not in ((0, 0), (3, 0)):
+                    im.putpixel(((sx + dx) % 16, (sy + dy) % 16), COW_SPOT)
+    for px in range(16, 24):
+        for py in range(8):
+            im.putpixel((px, py), COW_PINK)
+    for px in range(24, 32):
+        for py in range(8):
+            im.putpixel((px, py), COW_HOOF)
+    # face: eyes up top, a pink muzzle along the bottom with nostrils
+    for px in (18, 19, 28, 29):
+        im.putpixel((px, 10), COW_SPOT)
+        im.putpixel((px, 11), COW_SPOT)
+    for px in range(17, 31):
+        for py in (13, 14, 15):
+            im.putpixel((px, py), COW_PINK)
+    im.putpixel((20, 14), (150, 90, 90, 255))
+    im.putpixel((27, 14), (150, 90, 90, 255))
+    return im
+
+
+def cow_mesh():
+    """Faces +X, feet at z = 0, about a block long."""
+    W, H = 32, 16
+    hide = rect(0, 0, 16, 16, W, H)
+    hoof = rect(24, 0, 32, 8, W, H)
+    pink = rect(16, 0, 24, 8, W, H)
+    face = rect(16, 8, 32, 16, W, H)
+    head_uv = lambda n: face(n) if n == "front" else hide(n)
+    parts = [box(-0.05, 0.0, 0.5, 0.27, 0.45, 0.95, hide)]
+    for lx in (-0.38, 0.3):
+        for ly in (-0.16, 0.16):
+            parts.append(box(lx, ly, 0.08, 0.08, 0.0, 0.47, hoof))
+    parts.append(box(0.6, 0.0, 0.17, 0.19, 0.68, 1.08, head_uv))
+    for ey in (-0.25, 0.25):
+        parts.append(box(0.56, ey, 0.04, 0.07, 0.98, 1.04, pink))
+    parts.append(box(-0.58, 0.0, 0.03, 0.03, 0.5, 0.88, hoof))  # tail
+    return merge(*parts)
+
+
+def crop_texture():
+    """16x8: leafy green (0-7), carrot orange (8-15)."""
+    im = Image.new("RGBA", (16, 8), (86, 170, 72, 255))
+    for px in range(8):
+        for py in range(8):
+            if (px * 3 + py * 5) % 7 == 0:
+                im.putpixel((px, py), (60, 138, 56, 255))
+    for px in range(8, 16):
+        for py in range(8):
+            im.putpixel((px, py), (238, 132, 42, 255) if py % 3 else (214, 110, 32, 255))
+    return im
+
+
+def carrot_mesh(stage):
+    """A 2x2 patch in one block cell, growing taller by stage; ripe (3)
+    shows the orange tops."""
+    leaf = rect(0, 0, 8, 8, 16, 8)
+    orange = rect(8, 0, 16, 8, 16, 8)
+    leaf_w = (0.04, 0.06, 0.08, 0.09)[stage]
+    leaf_h = (0.1, 0.22, 0.36, 0.42)[stage]
+    parts = []
+    for ox in (-0.2, 0.2):
+        for oy in (-0.2, 0.2):
+            base = 0.0
+            if stage == 3:
+                parts.append(box(ox, oy, 0.08, 0.08, 0.0, 0.12, orange, top=(0.07, 0.07)))
+                base = 0.12
+            parts.append(box(ox, oy, leaf_w * 0.5, leaf_w * 0.5, base, base + leaf_h, leaf, top=(leaf_w, leaf_w)))
+    return merge(*parts)
+
+
 def solid(rgb, size=8):
     return Image.new("RGBA", (size, size), rgb)
 
@@ -189,6 +299,12 @@ def main():
     pos, uvs, idx = frustum(0.52, 0.52, 0.52, 0.52, -0.02, 1.02, whole)
     write_glb(ASSETS / "cursor.glb", pos, uvs, idx, png_bytes(edge))
 
+    pos, uvs, idx = cow_mesh()
+    write_glb(ASSETS / "cow.glb", pos, uvs, idx, png_bytes(cow_texture()))
+    for stage in range(4):
+        pos, uvs, idx = carrot_mesh(stage)
+        write_glb(ASSETS / f"carrot{stage}.glb", pos, uvs, idx, png_bytes(crop_texture()))
+
     # Cart icon (game root, required by `pack`): the smiling head on dusk blue.
     icon = Image.new("RGBA", (64, 64), (70, 110, 170, 255))
     head = Image.new("RGBA", (48, 48), HEAD_RGB)
@@ -196,7 +312,7 @@ def main():
     icon.alpha_composite(head, (8, 8))
     icon.save(ROOT / "icon.png")
 
-    print(f"wrote {count} heads, body, arm and ground tiles to {ASSETS}")
+    print(f"wrote {count} heads, body, arm, cow, carrots and ground tiles to {ASSETS}")
 
 
 if __name__ == "__main__":

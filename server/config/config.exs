@@ -14,6 +14,10 @@ config :sosh,
 # How often dirty world chunks are written to Postgres; nil disables autosave.
 config :sosh, Sosh.World, autosave_ms: 30_000
 
+# The crop and cow simulation: ticks per wall-clock interval, how long each
+# crop growth stage takes (three stages to ripe), and how many cows roam.
+config :sosh, Sosh.Sim, tick_ms: 100, stage_ms: 60_000, cows: 5
+
 # Configures the endpoint
 config :sosh, SoshWeb.Endpoint,
   url: [host: "localhost"],

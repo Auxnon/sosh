@@ -14,6 +14,7 @@ defmodule Sosh.Application do
       {Phoenix.PubSub, name: Sosh.PubSub},
       Sosh.Lobby,
       Sosh.World,
+      Sosh.Sim,
       # Start the Finch HTTP client for sending emails
       {Finch, name: Sosh.Finch},
       # Start a worker by calling: Sosh.Worker.start_link(arg)

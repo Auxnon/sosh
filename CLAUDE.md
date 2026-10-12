@@ -79,14 +79,15 @@ npm run preview
 ### Backend Structure
 - `lib/chat_test/`: Core domain logic
   - `universe.ex`: Elixir interface to Rust NIF functions
+  - `sim.ex`: runs the crop/cow simulation; `world.ex`: block chunks in Postgres
   - `application.ex`: OTP application supervisor tree
 - `lib/chat_test_web/`: Web layer
   - `channels/room_channel.ex`: WebSocket channel for real-time communication
   - `router.ex`: Phoenix routes (catch-all serves frontend)
   - `endpoint.ex`: Phoenix endpoint configuration
 - `native/universe/`: Rust NIF implementation
-  - `src/lib.rs`: NIF function exports and Universe state management
-  - `src/entity.rs`: Entity data structures
+  - `src/lib.rs`: NIF function exports
+  - `src/sim.rs`: the crop and cow simulation
 
 ### Frontend Structure
 - `src/App.svelte`: Root component, composes ThreeCanvas and ChatPane
@@ -111,11 +112,10 @@ npm run preview
 - Each user gets a UUID assigned on join (`socket.assigns.user_id`)
 
 ### Rust NIF Interface
-- `bigbang()`: Creates new Universe wrapped in ResourceArc with RwLock
-- `new_ent(universe)`: Creates entity, returns UUID as binary
-- `move_ent(universe, id, pos)`: Updates entity position
-- `get_state(universe)`: Returns all entity states as Elixir terms
-- All functions use RwLock for thread-safe concurrent access
+- `server/native/universe/src/sim.rs`: carrots that grow on wall-clock time and cows that wander and get pushed; `lib.rs` wraps it as NIFs (`Sosh.Universe`)
+- `Sosh.Sim` (GenServer) owns the universe, ticks it every 100ms with player positions from `Sosh.Lobby`, persists crops (`crops` table) and broadcasts `cows`/`moo`/`crop` on `actions:lobby`
+- The universe walks on a mirror of `Sosh.World`'s plaza chunks; `ActionChannel` keeps it current via `Sosh.Sim.block_changed/2`
+- Rust tests: `cargo test` in `server/native/universe/`. Editing Rust while `mix phx.server` runs reloads the NIF and can take the app down; restart it
 
 ### Svelte 5 Patterns
 - Uses modern runes API ($state, $derived, etc.)

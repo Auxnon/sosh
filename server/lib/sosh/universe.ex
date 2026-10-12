@@ -1,10 +1,21 @@
 defmodule Sosh.Universe do
+  @moduledoc """
+  NIFs over the Rust simulation in `native/universe`: crops that grow on
+  wall-clock time and cows that wander and get pushed. `Sosh.Sim` owns the
+  universe and is the only caller.
+
+  Positions are `{x, y, z}` tuples in block coordinates (see `Sosh.World`).
+  """
   use Rustler, otp_app: :sosh, crate: "universe"
 
-  # When your NIF is loaded, it will override this function.
-  def add(_a, _b), do: :erlang.nif_error(:nif_not_loaded)
-  def bigbang(), do: :erlang.nif_error(:nif_not_loaded)
-  def new_ent(_universe ), do: :erlang.nif_error(:nif_not_loaded)
-  def move_ent(_universe, _id, _pos), do: :erlang.nif_error(:nif_not_loaded)
-  def get_state(_universe), do: :erlang.nif_error(:nif_not_loaded)
+  def bigbang(_stage_ms, _seed), do: :erlang.nif_error(:nif_not_loaded)
+  def load_chunk(_universe, _key, _blocks), do: :erlang.nif_error(:nif_not_loaded)
+  def set_block(_universe, _pos, _id), do: :erlang.nif_error(:nif_not_loaded)
+  def plant(_universe, _pos, _planted_ms, _now_ms), do: :erlang.nif_error(:nif_not_loaded)
+  def crop(_universe, _pos), do: :erlang.nif_error(:nif_not_loaded)
+  def remove_crop(_universe, _pos), do: :erlang.nif_error(:nif_not_loaded)
+  def crops(_universe), do: :erlang.nif_error(:nif_not_loaded)
+  def spawn_cow(_universe, _x, _y), do: :erlang.nif_error(:nif_not_loaded)
+  def cows(_universe), do: :erlang.nif_error(:nif_not_loaded)
+  def tick(_universe, _now_ms, _players), do: :erlang.nif_error(:nif_not_loaded)
 end

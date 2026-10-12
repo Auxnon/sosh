@@ -124,7 +124,7 @@ end
 function Blocks.ground(x, y, z)
 	local cx = Blocks.cell(x)
 	local cy = Blocks.cell(y)
-	local bz = flr(z + 1.01)
+	local bz = flr(z + 0.01)
 	local stop = bz - 24
 	while bz >= stop do
 		local id = Blocks.get(cx, cy, bz)

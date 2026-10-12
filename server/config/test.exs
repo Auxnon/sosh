@@ -13,6 +13,9 @@ config :sosh, Sosh.Repo,
 # Tests save explicitly.
 config :sosh, Sosh.World, autosave_ms: nil
 
+# Tests tick by hand (Sosh.Sim.tick/1) and load the world in Sosh.Sim.reset/1.
+config :sosh, Sosh.Sim, tick_ms: nil, stage_ms: 1_000, cows: 0, autoload: false
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :sosh, SoshWeb.Endpoint,

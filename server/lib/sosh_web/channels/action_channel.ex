@@ -2,11 +2,13 @@ defmodule SoshWeb.ActionChannel do
   use Phoenix.Channel
   require Logger
 
-  alias Sosh.{Lobby, World}
+  alias Sosh.{Lobby, Sim, World}
 
+  # Joining replies with the living world (Sosh.Sim.snapshot/0): every cow
+  # and crop. Updates then arrive as `cows`, `moo` and `crop` broadcasts.
   def join("actions:lobby", _params, socket) do
     if socket.assigns[:user_id] do
-      {:ok, socket}
+      {:ok, Sim.snapshot(), socket}
     else
       {:error, %{reason: "not_authenticated"}}
     end
@@ -17,6 +19,8 @@ defmodule SoshWeb.ActionChannel do
 
   @reach 7
   @max_chunks_per_request 48
+  @grass 1
+  @dirt 2
 
   def handle_in("get_chunks", %{"keys" => keys}, socket) when is_list(keys) do
     chunks =
@@ -38,6 +42,8 @@ defmodule SoshWeb.ActionChannel do
          :ok <- within_reach(socket, x, y, z),
          {:ok, current} <- diggable(World.block(x, y, z)),
          {:ok, _} <- World.put_block(x, y, z, 0) do
+      # whatever grew on it goes too
+      Sim.uproot({x, y, z + 1})
       changed(socket, [x, y, z], "air", current)
     else
       {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
@@ -49,8 +55,39 @@ defmodule SoshWeb.ActionChannel do
          {:ok, id} <- validate_block_type(block_type),
          :ok <- within_reach(socket, x, y, z),
          :ok <- free(World.block(x, y, z)),
+         :ok <- no_crop(x, y, z),
          {:ok, _} <- World.put_block(x, y, z, id) do
       changed(socket, [x, y, z], block_type, nil)
+    else
+      {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
+
+  # Plant a carrot in the air cell `position`, on grass or dirt; grass under
+  # it is tilled to dirt. It grows on its own (Sosh.Sim).
+  def handle_in("plant_action", %{"position" => pos}, socket) do
+    with {:ok, [x, y, z]} <- validate_block_position(pos),
+         :ok <- within_reach(socket, x, y, z),
+         :ok <- if(World.block(x, y, z) == 0, do: :ok, else: {:error, "occupied"}),
+         {:ok, soil} <- soil(World.block(x, y, z - 1)),
+         :ok <- Sim.plant({x, y, z}) do
+      if soil == @grass do
+        {:ok, _} = World.put_block(x, y, z - 1, @dirt)
+        changed(socket, [x, y, z - 1], "dirt", soil)
+      end
+
+      {:reply, {:ok, %{position: [x, y, z]}}, socket}
+    else
+      {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
+
+  # Pick the ripe crop in `position`.
+  def handle_in("harvest_action", %{"position" => pos}, socket) do
+    with {:ok, [x, y, z]} <- validate_block_position(pos),
+         :ok <- within_reach(socket, x, y, z),
+         {:ok, _} <- Sim.harvest({x, y, z}) do
+      {:reply, {:ok, %{position: [x, y, z], item: "carrot"}}, socket}
     else
       {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
     end
@@ -207,7 +244,9 @@ defmodule SoshWeb.ActionChannel do
      }}
   end
 
-  defp changed(socket, pos, block_type, _previous) do
+  defp changed(socket, [x, y, z] = pos, block_type, _previous) do
+    Sim.block_changed({x, y, z}, World.block_ids()[block_type])
+
     broadcast!(socket, "block_changed", %{
       user_id: to_string(socket.assigns.user_id),
       position: pos,
@@ -241,6 +280,12 @@ defmodule SoshWeb.ActionChannel do
   defp diggable(0), do: {:error, "nothing_there"}
   defp diggable(6), do: {:error, "cannot_dig_water"}
   defp diggable(id), do: {:ok, id}
+
+  defp soil(id) when id in [@grass, @dirt], do: {:ok, id}
+  defp soil(_), do: {:error, "needs_soil"}
+
+  defp no_crop(x, y, z),
+    do: if(Sim.crop({x, y, z}), do: {:error, "occupied"}, else: :ok)
 
   # Placing into air or water; anything else is occupied.
   defp free(id) when id in [0, 6], do: :ok
