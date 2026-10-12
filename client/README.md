@@ -35,8 +35,9 @@ just serve         # open http://localhost:4000
 ```
 
 After a script or asset change, rerun `just pack` (web) or reload the desktop
-client (Super+R). Set `P64=/path/to/petrichor64` if the engine checkout isn't
-at `~/projects/petrichor64`.
+client (Super+R). The client needs the engine's `feat/skinning` branch. The
+recipes use the `~/projects/petrichor64-ws` worktree of it if that exists,
+else `~/projects/petrichor64`; set `P64=/path/to/petrichor64` to override.
 
 ## Controls
 
