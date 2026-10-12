@@ -34,3 +34,6 @@ npm-debug.log
 
 # Rust binary artifacts
 /target/
+
+# Built by Rustler from native/universe on every compile.
+/priv/native/
