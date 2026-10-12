@@ -169,7 +169,11 @@ function start_session()
 	APP.spawn_y = sy
 	APP.screen = "world"
 	CAM.az = 0.6
-	add_chat(nil, "connecting to " .. url, C_DIM)
+	if APP.web then
+		add_chat(nil, "connecting...", C_DIM)
+	else
+		add_chat(nil, "connecting to " .. url, C_DIM)
+	end
 end
 
 -- ---------------------------------------------------------------------------
@@ -658,37 +662,85 @@ end
 -- ---------------------------------------------------------------------------
 -- HUD
 
-HUD_BTN_W = 92
+HUD_BTN_W = 72
 HUD_BTN_H = 18
+HUD_ROWS = 7 -- right-hand column: 4 emotes, face, pose, chat
+HINT = "enter: chat  wasd: walk  1-3: tool  z/x: block  f: face  g: pose  5-8: emote  q/e: look"
+TOOLS = { "walk", "dig", "build" }
+TOOL_W = 60
 
-function hud_buttons_x()
-	return gui.w - HUD_BTN_W - PAD * 2
+-- Where everything on the HUD goes this frame. The gui can be as small as
+-- 320x240, so nothing overlaps there: the button column hangs from the top
+-- right, the toolbar sits on the bottom edge (the block picker wraps to a row
+-- above it when it doesn't fit beside it), and chat stacks above those on the
+-- left, clear of the column.
+function hud_layout()
+	local L = {}
+	L.top_h = LH + PAD * 2
+	L.col_x = gui.w - HUD_BTN_W - PAD * 2
+	L.col_y = L.top_h + PAD * 2
+	L.col_h = (HUD_BTN_H + PAD) * HUD_ROWS
+
+	local tools_w = TOOL_W * #TOOLS + PAD * (#TOOLS - 1)
+	local pick_w = TOOL_W * #PLACEABLE + PAD * (#PLACEABLE - 1)
+	L.tb_y = gui.h - HUD_BTN_H - PAD * 2
+	L.tb_x = flr((gui.w - tools_w) / 2)
+	L.tb_w = tools_w
+	L.pick = APP.tool == "build"
+	L.pick_x = 0
+	L.pick_y = L.tb_y
+	L.pick_w = pick_w
+	local bottom = L.tb_y
+	if L.pick then
+		local both = tools_w + PAD * 3 + pick_w
+		if both <= gui.w - PAD * 4 then
+			L.tb_x = flr((gui.w - both) / 2)
+			L.pick_x = L.tb_x + tools_w + PAD * 3
+		else
+			L.pick_y = L.tb_y - HUD_BTN_H - PAD * 2
+			L.pick_x = flr((gui.w - pick_w) / 2)
+			bottom = L.pick_y
+		end
+	end
+	L.hint = UI.text_w(HINT) <= gui.w - PAD * 4
+	if L.hint then
+		bottom = bottom - LH - PAD
+	end
+	L.chat_bottom = bottom - PAD
+	local w = flr(gui.w * 0.45)
+	if w < 160 then
+		w = 160
+	end
+	local room = L.col_x - PAD * 3
+	if w > room then
+		w = room
+	end
+	L.chat_w = w
+	return L
 end
 
--- Rows of the right-hand button column, bottom up.
-HUD_ROWS = 7
-
 function hud_hit(x, y)
-	-- status strip, button column, chat box
-	if y < LH + PAD * 2 then
+	local L = hud_layout()
+	if y < L.top_h then
 		return true
 	end
-	local bx = hud_buttons_x()
-	if x >= bx and y >= gui.h - (HUD_BTN_H + PAD) * HUD_ROWS - PAD then
+	if x >= L.col_x and y >= L.col_y and y < L.col_y + L.col_h then
 		return true
 	end
-	-- the tool bar along the bottom middle
-	local tb = toolbar_rect()
-	if x >= tb[1] and x < tb[1] + tb[3] and y >= tb[2] then
+	if y >= L.tb_y and x >= L.tb_x and x < L.tb_x + L.tb_w then
 		return true
 	end
-	if APP.typing and y >= gui.h - LH - PAD * 4 then
+	if L.pick and y >= L.pick_y and y < L.pick_y + HUD_BTN_H and x >= L.pick_x and x < L.pick_x + L.pick_w then
+		return true
+	end
+	if APP.typing and x < PAD + L.chat_w and y >= L.chat_bottom - LH - PAD * 2 and y < L.chat_bottom then
 		return true
 	end
 	return false
 end
 
 function draw_hud()
+	local L = hud_layout()
 	-- avatars' overlays first so panels sit on top of them
 	for i = 1, #APP.order do
 		UI.avatar_overlay(APP.players[APP.order[i]], false)
@@ -702,7 +754,7 @@ function draw_hud()
 	if APP.me ~= nil then
 		online = online + 1
 	end
-	UI.panel(0, 0, gui.w, LH + PAD * 2, "0A0E16B0")
+	UI.panel(0, 0, gui.w, L.top_h, "0A0E16B0")
 	local st = PHX.state
 	local label = "connecting..."
 	local col = C_ACCENT
@@ -719,29 +771,20 @@ function draw_hud()
 	local hx = gui.w - UI.text_w(here) - PAD * 2
 	UI.text(here, hx, PAD + 1, C_DIM)
 
-	draw_chat()
-	draw_buttons()
-end
-
-TOOLS = { "walk", "dig", "build" }
-TOOL_W = 52
-
-function toolbar_rect()
-	local w = TOOL_W * #TOOLS + PAD * (#TOOLS - 1)
-	if APP.tool == "build" then
-		w = w + PAD * 2 + TOOL_W * #PLACEABLE + PAD * (#PLACEABLE - 1)
+	draw_chat(L)
+	if APP.me ~= nil then
+		draw_toolbar(L)
+		draw_buttons(L)
+		if L.hint and not APP.typing then
+			UI.text(HINT, PAD * 2, L.chat_bottom + PAD + 1, "FFFFFF70")
+		end
 	end
-	local x = flr((gui.w - w) / 2)
-	local y = gui.h - HUD_BTN_H - PAD * 6 - LH
-	local r = { x, y, w, HUD_BTN_H }
-	return r
 end
 
 -- Tools (1/2/3) and, while building, the block to place (Z/X).
-function draw_toolbar()
-	local r = toolbar_rect()
-	local x = r[1]
-	local y = r[2]
+function draw_toolbar(L)
+	local x = L.tb_x
+	local y = L.tb_y
 	for i = 1, #TOOLS do
 		local name = TOOLS[i]
 		local label = tostring(i) .. " " .. name
@@ -753,10 +796,11 @@ function draw_toolbar()
 		end
 		x = x + TOOL_W + PAD
 	end
-	if APP.tool ~= "build" then
+	if not L.pick then
 		return
 	end
-	x = x + PAD * 2
+	x = L.pick_x
+	y = L.pick_y
 	for i = 1, #PLACEABLE do
 		if APP.block_i == i then
 			gui:rrect(x - 1, y - 1, TOOL_W + 2, HUD_BTN_H + 2, 3, C_OK)
@@ -769,14 +813,10 @@ function draw_toolbar()
 	end
 end
 
-function draw_buttons()
+function draw_buttons(L)
 	local me = APP.me
-	if me == nil then
-		return
-	end
-	draw_toolbar()
-	local x = hud_buttons_x()
-	local y = gui.h - (HUD_BTN_H + PAD) * HUD_ROWS
+	local x = L.col_x
+	local y = L.col_y
 	for i = 1, #EMOTES do
 		local label = tostring(i + 4) .. " " .. EMOTES[i]
 		if UI.button(label, x, y, HUD_BTN_W, HUD_BTN_H) then
@@ -800,13 +840,10 @@ function draw_buttons()
 	end
 end
 
-function draw_chat()
-	local w = flr(gui.w * 0.45)
-	if w < 220 then
-		w = 220
-	end
+function draw_chat(L)
+	local w = L.chat_w
 	local cols = flr((w - PAD * 2) / CH)
-	local bottom = gui.h - PAD
+	local bottom = L.chat_bottom
 	if APP.typing then
 		bottom = bottom - (LH + PAD * 3)
 	end
@@ -840,6 +877,12 @@ function draw_chat()
 		i = i - 1
 	end
 
+	-- never climb into the top strip
+	local max_rows = flr((bottom - L.top_h - PAD * 4) / LH)
+	while #rows > max_rows and #rows > 0 do
+		table.remove(rows)
+	end
+
 	if #rows > 0 then
 		local h = #rows * LH + PAD * 2
 		gui:rrect(PAD, bottom - h, w, h, 3, "0A0E1690")
@@ -849,7 +892,7 @@ function draw_chat()
 	end
 
 	if APP.typing then
-		local y = gui.h - LH - PAD * 3
+		local y = L.chat_bottom - LH - PAD * 2
 		UI.panel(PAD, y, w, LH + PAD * 2, C_PANEL_HI)
 		local shown = "> " .. APP.draft.text
 		if #shown > cols - 1 then
@@ -859,7 +902,5 @@ function draw_chat()
 			shown = shown .. "_"
 		end
 		UI.text(shown, PAD * 2, y + PAD + 1, C_TEXT)
-	elseif APP.me ~= nil then
-		UI.text("enter: chat  wasd: walk  1-3: tool  z/x: block  f: face  g: pose  5-8: emote  q/e: look", PAD * 2, gui.h - LH - PAD, "FFFFFF70")
 	end
 end
