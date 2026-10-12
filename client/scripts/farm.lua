@@ -161,20 +161,22 @@ function Herd.shove(c, me)
 	end
 end
 
--- "moo!" over any cow that was just shoved.
-function Herd.overlay()
-	for id, c in pairs(Herd.cows) do
-		if c.moo > 0 then
-			local p = UI.project(c.x, c.y, c.z + 1.4)
-			if p ~= nil then
-				local text = "moo!"
-				local w = UI.text_w(text) + PAD * 2
-				local x = p[1] - flr(w / 2)
-				local y = p[2] - LH - PAD
-				gui:rrect(x, y, w, LH + PAD, 4, C_BUBBLE)
-				gui:rect(p[1] - 1, y + LH + PAD, 3, 2, C_BUBBLE)
-				UI.text(text, x + PAD, y + 2, C_BUBBLE_TEXT)
-			end
-		end
+-- Where a cow's "moo!" goes on screen (UI.project), or nil if it isn't
+-- mooing or is behind the camera.
+function Herd.moo_point(c)
+	if c.moo <= 0 then
+		return nil
 	end
+	return UI.project(c.x, c.y, c.z + 1.4)
+end
+
+-- "moo!" over a cow that was just shoved, at its moo_point `p`.
+function Herd.moo_bubble(p)
+	local text = "moo!"
+	local w = UI.text_w(text) + PAD * 2
+	local x = p[1] - flr(w / 2)
+	local y = p[2] - LH - PAD
+	gui:rrect(x, y, w, LH + PAD, 4, C_BUBBLE)
+	gui:rect(p[1] - 1, y + LH + PAD, 3, 2, C_BUBBLE)
+	UI.text(text, x + PAD, y + 2, C_BUBBLE_TEXT)
 end

@@ -853,16 +853,61 @@ function hud_hit(x, y)
 	return false
 end
 
+-- Name tags, speech bubbles and moos, painted farthest first. The gui is
+-- flat: whatever is drawn last covers the rest, so drawing them in a fixed
+-- order (cows, then players, then us) put a far label over a near one.
+function draw_world_labels()
+	local labels = {}
+	for id, c in pairs(Herd.cows) do
+		local p = Herd.moo_point(c)
+		if p ~= nil then
+			local l = {}
+			l.p = p
+			l.cow = c
+			table.insert(labels, l)
+		end
+	end
+	for i = 1, #APP.order + 1 do
+		local av = APP.me
+		if i <= #APP.order then
+			av = APP.players[APP.order[i]]
+		end
+		if av ~= nil then
+			local top = av:top()
+			local p = UI.project(top[1], top[2], top[3])
+			if p ~= nil then
+				local l = {}
+				l.p = p
+				l.av = av
+				l.me = av == APP.me
+				table.insert(labels, l)
+			end
+		end
+	end
+	-- insertion sort by depth (p[3]), farthest first; there are only a few
+	for i = 2, #labels do
+		local l = labels[i]
+		local j = i - 1
+		while j >= 1 and labels[j].p[3] < l.p[3] do
+			labels[j + 1] = labels[j]
+			j = j - 1
+		end
+		labels[j + 1] = l
+	end
+	for i = 1, #labels do
+		local l = labels[i]
+		if l.cow ~= nil then
+			Herd.moo_bubble(l.p)
+		else
+			UI.avatar_overlay(l.av, l.me, l.p)
+		end
+	end
+end
+
 function draw_hud()
 	local L = hud_layout()
 	-- world overlays first so panels sit on top of them
-	Herd.overlay()
-	for i = 1, #APP.order do
-		UI.avatar_overlay(APP.players[APP.order[i]], false)
-	end
-	if APP.me ~= nil then
-		UI.avatar_overlay(APP.me, true)
-	end
+	draw_world_labels()
 
 	-- top strip: connection + who's here
 	local online = #APP.order

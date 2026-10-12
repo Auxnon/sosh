@@ -201,13 +201,9 @@ function UI.project(px, py, pz)
 	return out
 end
 
--- Name tag and stacked speech bubbles over one avatar.
-function UI.avatar_overlay(av, is_me)
-	local top = av:top()
-	local p = UI.project(top[1], top[2], top[3])
-	if p == nil then
-		return
-	end
+-- Name tag and stacked speech bubbles over one avatar, at its projected
+-- head point `p` (UI.project of av:top()).
+function UI.avatar_overlay(av, is_me, p)
 	local x = p[1]
 	local y = p[2]
 	if x < -200 or x > gui.w + 200 or y < -200 or y > gui.h + 200 then
