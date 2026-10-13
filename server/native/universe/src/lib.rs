@@ -1,13 +1,18 @@
-//! NIFs for `Sosh.Universe`: the crop and cow simulation in `sim.rs`, held
-//! in a resource and driven by `Sosh.Sim`.
+//! NIFs for `Sosh.Universe`: the crop, cow and carrying simulation in
+//! `sim.rs`, held in a resource and driven by `Sosh.Sim`.
 
 use std::sync::{Mutex, MutexGuard};
 
-use rustler::{Binary, Error, NifResult, Resource, ResourceArc};
+use rustler::{Atom, Binary, Error, NifResult, Resource, ResourceArc};
 
 mod sim;
 
-use sim::Sim;
+use sim::{Held, Sim};
+
+rustler::atoms! {
+    block,
+    cow,
+}
 
 struct SimLock(Mutex<Sim>);
 
@@ -17,9 +22,24 @@ impl Resource for SimLock {}
 type Uni = ResourceArc<SimLock>;
 type Pos = (i32, i32, i32);
 type CowRow = (u32, f64, f64, f64, f64);
+type Feet = (f64, f64, f64);
+/// `{:block, id}` or `{:cow, id}`.
+type HeldTerm = (Atom, u32);
+
+fn held_term(h: Held) -> HeldTerm {
+    match h {
+        Held::Block(id) => (block(), id as u32),
+        Held::Cow(id) => (cow(), id),
+    }
+}
+
+fn reason<T>(r: Result<T, &'static str>) -> Result<T, String> {
+    r.map_err(str::to_string)
+}
 
 fn lock(u: &Uni) -> NifResult<MutexGuard<'_, Sim>> {
-    u.0.lock().map_err(|_| Error::Term(Box::new("universe lock poisoned")))
+    u.0.lock()
+        .map_err(|_| Error::Term(Box::new("universe lock poisoned")))
 }
 
 /// A new universe; crops advance one stage every `stage_ms`.
@@ -72,16 +92,67 @@ fn spawn_cow(u: Uni, x: f64, y: f64) -> NifResult<u32> {
 /// Every cow as `{id, x, y, z, heading}`.
 #[rustler::nif]
 fn cows(u: Uni) -> NifResult<Vec<CowRow>> {
-    Ok(lock(&u)?.cows.iter().map(|c| (c.id, c.x, c.y, c.z, c.heading)).collect())
+    Ok(lock(&u)?
+        .cows
+        .iter()
+        .map(|c| (c.id, c.x, c.y, c.z, c.heading))
+        .collect())
 }
 
-/// Advance to `now_ms` with players standing at `players` (`{x, y, z}` feet).
-/// Returns `{moved_cows, mooing_cow_ids, grown_crops}`.
+/// Block ids a player may carry.
+#[rustler::nif]
+fn carryable() -> Vec<u8> {
+    sim::CARRYABLE.to_vec()
+}
+
+/// `holder` standing at `at` lifts block `id`: `{:ok, {:block, id}}` or
+/// `{:error, reason}`. Taking it out of the world is the caller's job.
+#[rustler::nif]
+fn pick_block(u: Uni, holder: String, at: Feet, id: u8) -> NifResult<Result<HeldTerm, String>> {
+    let r = lock(&u)?.pick_block(&holder, at, id);
+    Ok(reason(r.map(|_| held_term(Held::Block(id)))))
+}
+
+/// `holder` standing at `at` lifts cow `id`: `{:ok, {:cow, id}}` or
+/// `{:error, reason}`.
+#[rustler::nif]
+fn pick_cow(u: Uni, holder: String, at: Feet, id: u32) -> NifResult<Result<HeldTerm, String>> {
+    let r = lock(&u)?.pick_cow(&holder, at, id);
+    Ok(reason(r.map(|_| held_term(Held::Cow(id)))))
+}
+
+/// `holder` puts what they carry in cell `pos`; `free` says the world has
+/// room for a block there. `{:ok, held}` or `{:error, reason}`.
+#[rustler::nif]
+fn put_down(u: Uni, holder: String, pos: Pos, free: bool) -> NifResult<Result<HeldTerm, String>> {
+    let r = lock(&u)?.put_down(&holder, pos, free);
+    Ok(reason(r.map(held_term)))
+}
+
+/// `holder` left: `{held, cell_they_stood_in}`, or nil if empty-handed.
+#[rustler::nif]
+fn release(u: Uni, holder: String) -> NifResult<Option<(HeldTerm, Pos)>> {
+    Ok(lock(&u)?
+        .release(&holder)
+        .map(|(h, cell)| (held_term(h), cell)))
+}
+
+/// Everyone carrying something, as `{holder, held}`.
+#[rustler::nif]
+fn holding(u: Uni) -> NifResult<Vec<(String, HeldTerm)>> {
+    Ok(lock(&u)?
+        .holding()
+        .map(|(k, h)| (k.clone(), held_term(h)))
+        .collect())
+}
+
+/// Advance to `now_ms` with players standing at `players` (`{id, x, y, z}`,
+/// feet). Returns `{moved_cows, mooing_cow_ids, grown_crops}`.
 #[rustler::nif]
 fn tick(
     u: Uni,
     now_ms: i64,
-    players: Vec<(f64, f64, f64)>,
+    players: Vec<(String, f64, f64, f64)>,
 ) -> NifResult<(Vec<CowRow>, Vec<u32>, Vec<(Pos, u8)>)> {
     let out = lock(&u)?.tick(now_ms, &players);
     Ok((out.cows, out.moos, out.crops))

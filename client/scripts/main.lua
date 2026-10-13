@@ -49,7 +49,7 @@ function main()
 	APP.sent_vy = 0
 	APP.sent_to = nil
 	APP.drag = false
-	-- "walk", "dig", "build" or "plant"
+	-- "walk", "dig", "build", "plant" or "carry"
 	APP.tool = "walk"
 	APP.block_i = 1
 	APP.cursor = nil
@@ -58,6 +58,7 @@ function main()
 	Blocks.init()
 	Farm.init()
 	Herd.init()
+	Carry.init()
 
 	-- something to look at behind the connect screen
 	CAM.az = 0.6
@@ -297,6 +298,9 @@ function bind_actions(ch)
 		-- the reply is Sosh.Sim's snapshot: every crop and cow
 		Farm.sync(reply.crops or {})
 		Herd.sync(reply.cows or {})
+		-- and who carries what, and what the universe lets anyone carry
+		Carry.set_carryable(reply.carryable or {})
+		Carry.sync(reply.held or {})
 	end
 	ch.on["block_changed"] = function(p)
 		local pos = p.position
@@ -313,6 +317,9 @@ function bind_actions(ch)
 	end
 	ch.on["moo"] = function(p)
 		Herd.moo(p.ids)
+	end
+	ch.on["carry"] = function(p)
+		Carry.set(p)
 	end
 end
 
@@ -366,6 +373,14 @@ function upsert_player(p, snap)
 	if snap and p.vec ~= nil then
 		av:follow(p.vec, p.v, p.to)
 	end
+end
+
+-- The avatar of a user id, ours included, or nil.
+function avatar_of(id)
+	if id ~= nil and id == APP.my_id then
+		return APP.me
+	end
+	return APP.players[id]
 end
 
 function remove_player(id)
@@ -488,6 +503,7 @@ function world_frame()
 		APP.players[APP.order[i]]:update(U.dt)
 	end
 	Herd.update(me)
+	Carry.update()
 
 	if me ~= nil then
 		place_camera(me.x, me.y, me.z)
@@ -500,8 +516,8 @@ function world_frame()
 end
 
 -- WASD / arrows walk relative to the camera; Q/E turn it; F/G cycle face and
--- pose; 1-4 pick walk/dig/build/plant; Z/X pick the block; 5-8 emote; Enter
--- opens chat.
+-- pose (G puts down what we carry); 1-5 pick walk/dig/build/plant/carry; Z/X
+-- pick the block; 6-9 emote; Enter opens chat.
 function world_keys(me)
 	if key("enter", true) then
 		APP.typing = true
@@ -521,6 +537,9 @@ function world_keys(me)
 	if key("4", true) then
 		APP.tool = "plant"
 	end
+	if key("5", true) then
+		APP.tool = "carry"
+	end
 	if key("z", true) then
 		APP.block_i = (APP.block_i - 2) % #PLACEABLE + 1
 	end
@@ -528,7 +547,7 @@ function world_keys(me)
 		APP.block_i = APP.block_i % #PLACEABLE + 1
 	end
 	for i = 1, #EMOTES do
-		local k = tostring(i + 4)
+		local k = tostring(i + 5)
 		if key(k, true) then
 			do_emote(EMOTES[i])
 		end
@@ -537,7 +556,7 @@ function world_keys(me)
 		change_face(1)
 	end
 	if key("g", true) then
-		change_anim(1)
+		pose_pressed()
 	end
 	if key("q") then
 		CAM.az = CAM.az + 0.03
@@ -577,8 +596,9 @@ function world_keys(me)
 	me:drive(dx / l * AV_SPEED, dy / l * AV_SPEED)
 end
 
--- The block under the pointer drives all three tools: walk to it, dig it, or
--- build on the face it was hit through. Right-drag orbits; scroll zooms.
+-- The block under the pointer drives the tools: walk to it, dig it, build on
+-- the face it was hit through, farm on it, or carry it (or a cow) and put it
+-- down on a face. Right-drag orbits; scroll zooms.
 function world_pointer(me)
 	local m = UI.mouse
 	if m.m2 then
@@ -590,10 +610,19 @@ function world_pointer(me)
 	end
 
 	local hit = nil
+	local cow = nil
 	-- Buttons are drawn after this runs, so hit-test the HUD region directly.
 	local over_hud = hud_hit(UI.mx, UI.my)
+	local holding = Carry.of(APP.my_id)
 	if not over_hud then
 		hit = Blocks.raycast(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, 48)
+		if APP.tool == "carry" and holding == nil then
+			local d = 48
+			if hit ~= nil then
+				d = hit.dist
+			end
+			cow = Herd.under_ray(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, d)
+		end
 	end
 
 	-- the cell a tool would act on
@@ -605,15 +634,33 @@ function world_pointer(me)
 			cell = hit.before
 		elseif APP.tool == "plant" then
 			cell = plant_cell(hit)
+		elseif APP.tool == "carry" then
+			if holding ~= nil then
+				cell = hit.before
+			elseif Carry.can_carry(hit.id) then
+				cell = hit.hit
+			end
 		end
+	end
+	if cow ~= nil then
+		local at = { cow.x, cow.y, cow.z }
+		cell = at
 	end
 	if cell ~= nil and not in_reach(me, cell) then
 		cell = nil
+		cow = nil
 	end
 	APP.target = cell
 	show_cursor(cell)
 
-	if not UI.clicked or over_hud or hit == nil then
+	if not UI.clicked or over_hud then
+		return
+	end
+	if cow ~= nil then
+		pick_up_cow(cow)
+		return
+	end
+	if hit == nil then
 		return
 	end
 	if APP.tool == "walk" then
@@ -627,6 +674,10 @@ function world_pointer(me)
 	elseif APP.tool == "plant" then
 		if cell ~= nil then
 			farm_action(cell)
+		end
+	elseif APP.tool == "carry" then
+		if cell ~= nil then
+			carry_action(cell)
 		end
 	elseif cell ~= nil then
 		edit_block(cell)
@@ -674,6 +725,66 @@ function farm_action(cell)
 				add_chat(nil, "can't harvest: " .. tostring(response.reason), C_BAD)
 			end
 		end)
+	end
+end
+
+-- Pick up the block in `cell`, or put down what we hold there. The server's
+-- `carry` broadcast is what changes our hands, for us as for everyone.
+function carry_action(cell)
+	local pos = { cell[1], cell[2], cell[3] }
+	local payload = {}
+	payload.position = pos
+	local event = "pick_up_action"
+	local verb = "pick that up"
+	if Carry.of(APP.my_id) ~= nil then
+		event = "put_down_action"
+		verb = "put it down"
+	end
+	PHX:push(ACTIONS, event, payload, function(status, response)
+		if status ~= "ok" and response ~= nil and response.reason ~= nil then
+			add_chat(nil, "can't " .. verb .. ": " .. tostring(response.reason), C_BAD)
+		end
+	end)
+end
+
+function pick_up_cow(cow)
+	local payload = {}
+	payload.cow = cow.id
+	PHX:push(ACTIONS, "pick_up_action", payload, function(status, response)
+		if status ~= "ok" and response ~= nil and response.reason ~= nil then
+			add_chat(nil, "can't pick it up: " .. tostring(response.reason), C_BAD)
+		end
+	end)
+end
+
+-- Stop carrying: put it down one cell ahead, where we face.
+function put_down_ahead()
+	local me = APP.me
+	local fx = cos(me.heading)
+	local fy = sin(me.heading)
+	local x = Blocks.cell(me.x)
+	local y = Blocks.cell(me.y)
+	if math.abs(fx) >= math.abs(fy) then
+		if fx < 0 then
+			x = x - 1
+		else
+			x = x + 1
+		end
+	elseif fy < 0 then
+		y = y - 1
+	else
+		y = y + 1
+	end
+	local cell = { x, y, flr(me.z + 0.01) }
+	carry_action(cell)
+end
+
+-- G and the pose button: put down what we carry, else sit or stand.
+function pose_pressed()
+	if Carry.of(APP.my_id) ~= nil then
+		put_down_ahead()
+	else
+		change_anim(1)
 	end
 end
 
@@ -779,8 +890,8 @@ end
 HUD_BTN_W = 72
 HUD_BTN_H = 18
 HUD_ROWS = 7 -- right-hand column: 4 emotes, face, pose, chat
-HINT = "enter: chat  wasd: walk  1-4: tool  z/x: block  f: face  g: pose  5-8: emote  q/e: look"
-TOOLS = { "walk", "dig", "build", "plant" }
+HINT = "enter: chat  wasd: walk  1-5: tool  z/x: block  f: face  g: pose/drop  6-9: emote  q/e: look"
+TOOLS = { "walk", "dig", "build", "plant", "carry" }
 TOOL_W = 60
 
 -- Where everything on the HUD goes this frame. The gui can be as small as
@@ -796,7 +907,14 @@ function hud_layout()
 	L.col_h = (HUD_BTN_H + PAD) * HUD_ROWS
 
 	local tools_w = TOOL_W * #TOOLS + PAD * (#TOOLS - 1)
-	local pick_w = TOOL_W * #PLACEABLE + PAD * (#PLACEABLE - 1)
+	-- block buttons narrow to fit a small gui on their own row
+	local n = #PLACEABLE
+	L.pick_bw = TOOL_W
+	local fit = flr((gui.w - PAD * 4 - PAD * (n - 1)) / n)
+	if fit < L.pick_bw then
+		L.pick_bw = fit
+	end
+	local pick_w = L.pick_bw * n + PAD * (n - 1)
 	L.tb_y = gui.h - HUD_BTN_H - PAD * 2
 	L.tb_x = flr((gui.w - tools_w) / 2)
 	L.tb_w = tools_w
@@ -807,7 +925,7 @@ function hud_layout()
 	local bottom = L.tb_y
 	if L.pick then
 		local both = tools_w + PAD * 3 + pick_w
-		if both <= gui.w - PAD * 4 then
+		if both <= gui.w - PAD * 4 and L.pick_bw == TOOL_W then
 			L.tb_x = flr((gui.w - both) / 2)
 			L.pick_x = L.tb_x + tools_w + PAD * 3
 		else
@@ -974,13 +1092,13 @@ function draw_toolbar(L)
 	y = L.pick_y
 	for i = 1, #PLACEABLE do
 		if APP.block_i == i then
-			gui:rrect(x - 1, y - 1, TOOL_W + 2, HUD_BTN_H + 2, 3, C_OK)
+			gui:rrect(x - 1, y - 1, L.pick_bw + 2, HUD_BTN_H + 2, 3, C_OK)
 		end
 		local name = PLACEABLE[i]
-		if UI.button(name, x, y, TOOL_W, HUD_BTN_H) then
+		if UI.button(name, x, y, L.pick_bw, HUD_BTN_H) then
 			APP.block_i = i
 		end
-		x = x + TOOL_W + PAD
+		x = x + L.pick_bw + PAD
 	end
 end
 
@@ -989,7 +1107,7 @@ function draw_buttons(L)
 	local x = L.col_x
 	local y = L.col_y
 	for i = 1, #EMOTES do
-		local label = tostring(i + 4) .. " " .. EMOTES[i]
+		local label = tostring(i + 5) .. " " .. EMOTES[i]
 		if UI.button(label, x, y, HUD_BTN_W, HUD_BTN_H) then
 			do_emote(EMOTES[i])
 		end
@@ -1001,8 +1119,11 @@ function draw_buttons(L)
 	end
 	y = y + HUD_BTN_H + PAD
 	local pose_label = me:anim_name()
+	if Carry.of(APP.my_id) ~= nil then
+		pose_label = "put down"
+	end
 	if UI.button(pose_label, x, y, HUD_BTN_W, HUD_BTN_H) then
-		change_anim(1)
+		pose_pressed()
 	end
 	y = y + HUD_BTN_H + PAD
 	if UI.button("chat", x, y, HUD_BTN_W, HUD_BTN_H) then

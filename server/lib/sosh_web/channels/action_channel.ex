@@ -5,7 +5,8 @@ defmodule SoshWeb.ActionChannel do
   alias Sosh.{Lobby, Sim, World}
 
   # Joining replies with the living world (Sosh.Sim.snapshot/0): every cow
-  # and crop. Updates then arrive as `cows`, `moo` and `crop` broadcasts.
+  # and crop, who carries what and which blocks can be carried. Updates then
+  # arrive as `cows`, `moo`, `crop` and `carry` broadcasts.
   def join("actions:lobby", _params, socket) do
     if socket.assigns[:user_id] do
       {:ok, Sim.snapshot(), socket}
@@ -88,6 +89,40 @@ defmodule SoshWeb.ActionChannel do
          :ok <- within_reach(socket, x, y, z),
          {:ok, _} <- Sim.harvest({x, y, z}) do
       {:reply, {:ok, %{position: [x, y, z], item: "carrot"}}, socket}
+    else
+      {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
+
+  # Pick up the block at `position`, or the cow `cow`. Sosh.Sim's universe
+  # decides whether it can be carried; one thing at a time.
+  def handle_in("pick_up_action", %{"cow" => id}, socket) when is_integer(id) do
+    with {:ok, at} <- player_position(socket),
+         {:ok, held} <- Sim.pick_up(socket.assigns.user_id, {:cow, id}, at) do
+      {:reply, {:ok, held}, socket}
+    else
+      {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
+
+  def handle_in("pick_up_action", %{"position" => pos}, socket) do
+    with {:ok, [x, y, z]} <- validate_block_position(pos),
+         :ok <- within_reach(socket, x, y, z),
+         {:ok, at} <- player_position(socket),
+         {:ok, held} <- Sim.pick_up(socket.assigns.user_id, {:block, {x, y, z}}, at) do
+      {:reply, {:ok, held}, socket}
+    else
+      {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
+    end
+  end
+
+  # Put what we carry in the cell `position`: a block goes back into the
+  # world, a cow onto the ground there.
+  def handle_in("put_down_action", %{"position" => pos}, socket) do
+    with {:ok, [x, y, z]} <- validate_block_position(pos),
+         :ok <- within_reach(socket, x, y, z),
+         {:ok, held} <- Sim.put_down(socket.assigns.user_id, {x, y, z}) do
+      {:reply, {:ok, held}, socket}
     else
       {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
     end
@@ -263,15 +298,28 @@ defmodule SoshWeb.ActionChannel do
 
   defp validate_block_position(_), do: {:error, "invalid_position_format"}
 
+  # Whatever they carried is set down when they go.
+  def terminate(_reason, socket) do
+    if user_id = socket.assigns[:user_id], do: Sim.release(user_id)
+    :ok
+  end
+
   # Measured from where Sosh.Lobby predicts the player is.
   defp within_reach(socket, x, y, z) do
+    with {:ok, {px, py, pz}} <- player_position(socket) do
+      dx = x + 0.5 - px
+      dy = y + 0.5 - py
+      dz = z + 0.5 - pz
+      if dx * dx + dy * dy + dz * dz <= @reach * @reach, do: :ok, else: {:error, "out_of_reach"}
+    end
+  end
+
+  # Their feet `{x, y, z}`, where Sosh.Lobby predicts them now.
+  defp player_position(socket) do
     case Enum.find(Lobby.list(), &(&1.user_id == socket.assigns.user_id)) do
       %{} = player ->
-        [px, py, pz] = Lobby.position(player, Lobby.now())
-        dx = x + 0.5 - px
-        dy = y + 0.5 - py
-        dz = z + 0.5 - pz
-        if dx * dx + dy * dy + dz * dz <= @reach * @reach, do: :ok, else: {:error, "out_of_reach"}
+        [x, y, z] = Lobby.position(player, Lobby.now())
+        {:ok, {x, y, z}}
 
       nil ->
         {:error, "not_in_world"}

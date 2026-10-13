@@ -238,6 +238,33 @@ def carrot_mesh(stage):
     return merge(*parts)
 
 
+def pot_texture():
+    """16x8: terracotta with a darker band (0-7), soil (8-15)."""
+    im = Image.new("RGBA", (16, 8), (196, 104, 62, 255))
+    for px in range(8):
+        for py in (5, 6):
+            im.putpixel((px, py), (164, 82, 48, 255))
+    for px in range(8, 16):
+        for py in range(8):
+            im.putpixel((px, py), (74, 52, 38, 255) if (px + py * 3) % 4 else (58, 40, 30, 255))
+    return im
+
+
+def pot_mesh(cx, cy):
+    """A clay pot most of a block high, centred on (cx, cy), base at z = 0.
+    Every corner sits on a 1/16 step: the engine stores model vertices in
+    sixteenths of a tile."""
+    clay = rect(0, 0, 8, 8, 16, 8)
+    soil = rect(8, 0, 16, 8, 16, 8)
+    rim_uv = lambda n: soil(n) if n == "top" else clay(n)
+    s = 1 / 16
+    return merge(
+        box(cx, cy, 4 * s, 4 * s, 0.0, 8 * s, clay, top=(6 * s, 6 * s)),
+        box(cx, cy, 6 * s, 6 * s, 8 * s, 11 * s, clay, top=(4 * s, 4 * s)),
+        box(cx, cy, 5 * s, 5 * s, 11 * s, 13 * s, rim_uv),
+    )
+
+
 def solid(rgb, size=8):
     return Image.new("RGBA", (size, size), rgb)
 
@@ -305,6 +332,11 @@ def main():
         pos, uvs, idx = carrot_mesh(stage)
         write_glb(ASSETS / f"carrot{stage}.glb", pos, uvs, idx, png_bytes(crop_texture()))
 
+    # The pot block, drawn as an entity in its cell (blocks.lua) and when
+    # carried.
+    pos, uvs, idx = pot_mesh(0.0, 0.0)
+    write_glb(ASSETS / "pot.glb", pos, uvs, idx, png_bytes(pot_texture()))
+
     # Cart icon (game root, required by `pack`): the smiling head on dusk blue.
     icon = Image.new("RGBA", (64, 64), (70, 110, 170, 255))
     head = Image.new("RGBA", (48, 48), HEAD_RGB)
@@ -312,7 +344,7 @@ def main():
     icon.alpha_composite(head, (8, 8))
     icon.save(ROOT / "icon.png")
 
-    print(f"wrote {count} heads, body, arm, cow, carrots and ground tiles to {ASSETS}")
+    print(f"wrote {count} heads, body, arm, cow, carrots, pots and ground tiles to {ASSETS}")
 
 
 if __name__ == "__main__":

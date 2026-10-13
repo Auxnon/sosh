@@ -7,7 +7,8 @@
 --
 -- Cows are simulated on the server and arrive as positions about ten times a
 -- second. Each one eases toward its latest server position, and the local
--- player shoves it straight away (the server agrees a moment later).
+-- player shoves it straight away (the server agrees a moment later). A
+-- carried cow rides over its holder (carry.lua) instead.
 
 Farm = {}
 Herd = {}
@@ -21,7 +22,10 @@ MOO_FRAMES = 90
 function Farm.init()
 	if Farm.crops ~= nil then
 		for k, c in pairs(Farm.crops) do
-			c.ent:kill()
+			-- (pairs() yields picked crops too, as nil; see carry.lua)
+			if c ~= nil then
+				c.ent:kill()
+			end
 		end
 	end
 	Farm.crops = {}
@@ -119,12 +123,24 @@ end
 function Herd.update(me)
 	local k = U.rate(COW_EASE, U.dt)
 	for id, c in pairs(Herd.cows) do
-		c.x = U.lerp(c.x, c.sx, k)
-		c.y = U.lerp(c.y, c.sy, k)
-		c.z = U.lerp(c.z, c.sz, k)
-		c.h = c.h + U.angle_diff(c.h, c.sh) * k
-		if me ~= nil then
-			Herd.shove(c, me)
+		local held = Carry.cow_spot(id)
+		if held ~= nil then
+			-- set down later, it eases from up here to where it lands
+			c.x = held[1]
+			c.y = held[2]
+			c.z = held[3]
+			c.h = held[4]
+			c.sx = c.x
+			c.sy = c.y
+			c.sz = c.z
+		else
+			c.x = U.lerp(c.x, c.sx, k)
+			c.y = U.lerp(c.y, c.sy, k)
+			c.z = U.lerp(c.z, c.sz, k)
+			c.h = c.h + U.angle_diff(c.h, c.sh) * k
+			if me ~= nil then
+				Herd.shove(c, me)
+			end
 		end
 		if c.moo > 0 then
 			c.moo = c.moo - 1
@@ -159,6 +175,33 @@ function Herd.shove(c, me)
 		c.sx = U.lerp(c.sx, nx, 0.5)
 		c.sy = U.lerp(c.sy, ny, 0.5)
 	end
+end
+
+-- The nearest cow the ray from (ox, oy, oz) along (dx, dy, dz) passes
+-- through, within max_dist: cow, distance along the ray. nil if none.
+function Herd.under_ray(ox, oy, oz, dx, dy, dz, max_dist)
+	local l = sqrt(dx * dx + dy * dy + dz * dz)
+	if l < 0.0001 then
+		return nil
+	end
+	dx = dx / l
+	dy = dy / l
+	dz = dz / l
+	local best = nil
+	local best_t = max_dist
+	for id, c in pairs(Herd.cows) do
+		-- a sphere around the body
+		local cx = c.x - ox
+		local cy = c.y - oy
+		local cz = c.z + 0.6 - oz
+		local t = cx * dx + cy * dy + cz * dz
+		local miss = cx * cx + cy * cy + cz * cz - t * t
+		if t > 0 and t < best_t and miss < 0.36 then
+			best = c
+			best_t = t
+		end
+	end
+	return best, best_t
 end
 
 -- Where a cow's "moo!" goes on screen (UI.project), or nil if it isn't

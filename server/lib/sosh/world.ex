@@ -25,9 +25,10 @@ defmodule Sosh.World do
     "stone" => 3,
     "wood" => 4,
     "path" => 5,
-    "water" => 6
+    "water" => 6,
+    "pot" => 7
   }
-  @placeable ~w(grass dirt stone wood path)
+  @placeable ~w(grass dirt stone wood path pot)
 
   # The plaza generated where nothing has been saved; mirrors the client's
   # original world.lua layout.
@@ -37,6 +38,7 @@ defmodule Sosh.World do
 
   def size, do: @size
   def block_ids, do: @blocks
+  def block_name(id), do: Enum.find_value(@blocks, fn {name, i} -> if i == id, do: name end)
   def placeable, do: @placeable
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)

@@ -2,7 +2,10 @@
 --
 -- The server owns the world in 16x16x16 chunks of block ids and sends them run
 -- length encoded; edits arrive as `block_changed`. Here every solid block is a
--- tile() and also kept in a table for height and ray queries.
+-- tile() and also kept in a table for height and ray queries. A block with a
+-- model (the pot) is an entity in its cell instead of a tile: on the web the
+-- tile world lives in the Lua worker, which only knows texture names, so a
+-- model name there draws as a cube with the model's texture.
 --
 -- Tile convention: a block at integer (x, y, z) spans x-0.5..x+0.5,
 -- y-0.5..y+0.5 and z..z+1, so standing on it puts your feet at z + 1.
@@ -10,15 +13,19 @@
 Blocks = {}
 
 CHUNK = 16
-BLOCK_NAMES = { "grass", "dirt", "stone", "wood", "path", "water" }
-PLACEABLE = { "grass", "dirt", "stone", "wood", "path" }
+-- a name is its tile texture, or for a model block its model
+BLOCK_NAMES = { "grass", "dirt", "stone", "wood", "path", "water", "pot" }
+PLACEABLE = { "grass", "dirt", "stone", "wood", "path", "pot" }
 WATER = 6
+POT = 7
 FETCH_RADIUS = 2 -- chunks around the player, horizontally
 FETCH_Z = { -1, 0 } -- chunk layers: the floor and what's built on it
 REACH = 6.5 -- slightly under the server's 7
 
 function Blocks.init()
 	Blocks.solid = {}
+	-- model blocks' entities, by key
+	Blocks.models = {}
 	Blocks.have = {}
 	-- chunks applied at least once this session: a refresh of one must also
 	-- clear blocks that became air meanwhile
@@ -35,14 +42,41 @@ function Blocks.get(x, y, z)
 	return Blocks.solid[Blocks.key(x, y, z)] or 0
 end
 
+-- Drawn as a model entity rather than a tile.
+function Blocks.is_model(id)
+	return id == POT
+end
+
 function Blocks.set(x, y, z, id)
 	local k = Blocks.key(x, y, z)
+	local was = Blocks.solid[k] or 0
+	local ent = Blocks.models[k]
+	if ent ~= nil and was ~= id then
+		ent:kill()
+		Blocks.models[k] = nil
+		ent = nil
+	end
+	-- only clear a tile that's there: clearing one in an empty chunk makes
+	-- the engine build that chunk for nothing
+	local tiled = was ~= 0 and not Blocks.is_model(was)
 	if id == 0 then
 		Blocks.solid[k] = nil
-		tile(nil, x, y, z, 0)
+		if tiled then
+			tile(nil, x, y, z, 0)
+		end
+		return
+	end
+	Blocks.solid[k] = id
+	local name = BLOCK_NAMES[id] or "stone"
+	if Blocks.is_model(id) then
+		if tiled then
+			tile(nil, x, y, z, 0)
+		end
+		if ent == nil then
+			ent = make(name, x, y, z, 1)
+			Blocks.models[k] = ent
+		end
 	else
-		Blocks.solid[k] = id
-		local name = BLOCK_NAMES[id] or "stone"
 		tile(name, x, y, z, 0)
 	end
 end

@@ -12,7 +12,8 @@
 -- along walls. Remote avatars follow the owner's `move` messages
 -- (`follow`): the same motion, carried on between messages, and any drift
 -- from where the owner says they are eased away over a few frames. Poses and emotes are procedural
--- placeholders until the rigged player model is in.
+-- placeholders until the rigged player model is in. Whatever they carry
+-- (carry.lua) rides over their head, arms raised to it.
 
 Avatar = {}
 Avatar.__index = Avatar
@@ -27,7 +28,8 @@ AV_SNAP = 4 -- tiles adrift before jumping there instead
 AV_BODY_H = 0.85
 AV_SHOULDER = 0.27
 FACE_COUNT = 8
-ANIMS = { "idle", "sit", "carry" }
+ANIMS = { "idle", "sit" }
+AV_HOLD_ARMS = -2.85 -- arms raised to what's carried, a touch forward
 EMOTES = { "wave", "dance", "jump", "cheer" }
 EMOTE_FRAMES = 150
 EMOTE_SAY = { wave = "*waves*", dance = "*dances*", jump = "*jumps*", cheer = "*cheers*" }
@@ -58,6 +60,7 @@ function Avatar.new(id, name, x, y, z, face, anim)
 	a.emote = nil
 	a.emote_t = 0
 	a.bubbles = {}
+	a.hold = nil -- {x, y, z, heading}: where a carried thing goes
 	a.tint = U.tint_for(id)
 	a.hex = U.hex_for(id)
 	a:spawn()
@@ -321,16 +324,16 @@ function Avatar:pose()
 	else
 		bob = math.abs(sin(t * 0.24)) * 0.06 * self.walk + sin(t * 0.05) * 0.012
 		swing = sin(t * 0.24) * 0.7 * self.walk
-		if anim == 2 then
-			-- carry: arms straight out front
-			arm_l = -1.45
-			arm_r = -1.45
-			swing = swing * 0.15
-		end
+	end
+	local holding = Carry.of(self.id) ~= nil
+	if holding then
+		arm_l = AV_HOLD_ARMS
+		arm_r = AV_HOLD_ARMS
+		swing = swing * 0.1
 	end
 
 	local e = self.emote
-	if e ~= nil then
+	if e ~= nil and not holding then
 		-- 0 -> 1 over the emote, for one-shot shapes
 		local p = 1 - self.emote_t / EMOTE_FRAMES
 		if e == "wave" then
@@ -384,10 +387,19 @@ function Avatar:pose()
 	ar.z = shoulder_z
 	ar.rz = facing
 	ar.ry = arm_r - swing
+
+	local hold = { self.x, self.y, z + bob + CARRY_Z, h }
+	self.hold = hold
 end
 
--- Point above the head where the name tag sits, as {x, y, z}.
+-- Point above the head where the name tag sits, as {x, y, z}; above what
+-- they carry, if anything.
 function Avatar:top()
-	local p = { self.x, self.y, self.head.z + 0.75 }
+	local z = self.head.z + 0.75
+	local held = Carry.height(self.id)
+	if held > 0 and self.hold ~= nil then
+		z = self.hold[3] + held + 0.15
+	end
+	local p = { self.x, self.y, z }
 	return p
 end

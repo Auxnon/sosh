@@ -1,5 +1,9 @@
-//! The living part of the world: crops that grow on wall-clock time and cows
-//! that wander the plaza and get shoved by players.
+//! The living part of the world: crops that grow on wall-clock time, cows
+//! that wander the plaza and get shoved by players, and what players carry.
+//!
+//! Carrying is decided here: a player holds one thing, either a block the
+//! sim deems carryable (`CARRYABLE`) or a cow, which then rides over their
+//! head instead of wandering until it is put down.
 //!
 //! The block world itself belongs to `Sosh.World` (Elixir); the sim keeps a
 //! read-only mirror of the chunks it needs for walking (`load_chunk`,
@@ -12,6 +16,14 @@ use std::collections::HashMap;
 pub const CHUNK: i32 = 16;
 pub const CHUNK_VOLUME: usize = (CHUNK * CHUNK * CHUNK) as usize;
 const WATER: u8 = 6;
+pub const POT: u8 = 7;
+/// Blocks a player can pick up and carry.
+pub const CARRYABLE: &[u8] = &[POT];
+/// How far a player reaches to pick a cow up, from feet to the cow's middle;
+/// blocks use `Sosh.World`'s reach check, the same 7.
+const CARRY_REACH: f64 = 7.0;
+/// A carried cow rides this far above its holder's feet: over their head.
+pub const CARRY_Z: f64 = 1.5;
 
 /// Ripe at this stage.
 pub const RIPE: u8 = 3;
@@ -44,6 +56,20 @@ pub struct Cow {
     idle_until_ms: i64,
     last_moo_ms: i64,
     sent: (f64, f64, f64, f64),
+    pub carried: bool,
+}
+
+/// What a player has in their hands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Held {
+    Block(u8),
+    Cow(u32),
+}
+
+struct Holder {
+    held: Held,
+    /// Where they last stood (feet), from the last tick or the pick up.
+    at: (f64, f64, f64),
 }
 
 /// What changed in a tick, for broadcasting.
@@ -60,6 +86,9 @@ pub struct Sim {
     chunks: HashMap<(i32, i32, i32), Box<[u8]>>,
     pub crops: HashMap<(i32, i32, i32), Crop>,
     pub cows: Vec<Cow>,
+    holders: HashMap<String, Holder>,
+    // cows lifted since the last tick, mooing about it
+    lifted: Vec<u32>,
     next_cow: u32,
     stage_ms: i64,
     last_ms: Option<i64>,
@@ -72,6 +101,8 @@ impl Sim {
             chunks: HashMap::new(),
             crops: HashMap::new(),
             cows: Vec::new(),
+            holders: HashMap::new(),
+            lifted: Vec::new(),
             next_cow: 1,
             stage_ms: stage_ms.max(1),
             last_ms: None,
@@ -170,15 +201,160 @@ impl Sim {
             idle_until_ms: 0,
             last_moo_ms: i64::MIN / 2,
             sent: (f64::NAN, 0.0, 0.0, 0.0),
+            carried: false,
         });
         id
     }
 
+    // -- carrying
+
+    pub fn carryable(id: u8) -> bool {
+        CARRYABLE.contains(&id)
+    }
+
+    /// What `holder` carries, if anything.
+    pub fn held(&self, holder: &str) -> Option<Held> {
+        self.holders.get(holder).map(|h| h.held)
+    }
+
+    /// Everyone carrying something.
+    pub fn holding(&self) -> impl Iterator<Item = (&String, Held)> {
+        self.holders.iter().map(|(k, h)| (k, h.held))
+    }
+
+    /// `holder`, standing at `at`, lifts the block `id` (the caller takes it
+    /// out of the world once this agrees).
+    pub fn pick_block(
+        &mut self,
+        holder: &str,
+        at: (f64, f64, f64),
+        id: u8,
+    ) -> Result<(), &'static str> {
+        if self.holders.contains_key(holder) {
+            return Err("hands_full");
+        }
+        if !Self::carryable(id) {
+            return Err("cannot_carry");
+        }
+        let held = Held::Block(id);
+        self.holders.insert(holder.to_string(), Holder { held, at });
+        Ok(())
+    }
+
+    /// `holder`, standing at `at`, lifts cow `id` over their head.
+    pub fn pick_cow(
+        &mut self,
+        holder: &str,
+        at: (f64, f64, f64),
+        id: u32,
+    ) -> Result<(), &'static str> {
+        if self.holders.contains_key(holder) {
+            return Err("hands_full");
+        }
+        let Some(cow) = self.cows.iter_mut().find(|c| c.id == id) else {
+            return Err("no_such_cow");
+        };
+        if cow.carried {
+            return Err("already_carried");
+        }
+        let (dx, dy, dz) = (cow.x - at.0, cow.y - at.1, cow.z + 0.5 - at.2);
+        if dx * dx + dy * dy + dz * dz > CARRY_REACH * CARRY_REACH {
+            return Err("out_of_reach");
+        }
+        cow.carried = true;
+        cow.target = None;
+        cow.vz = 0.0;
+        (cow.x, cow.y, cow.z) = (at.0, at.1, at.2 + CARRY_Z);
+        self.lifted.push(id);
+        self.holders.insert(
+            holder.to_string(),
+            Holder {
+                held: Held::Cow(id),
+                at,
+            },
+        );
+        Ok(())
+    }
+
+    /// `holder` puts what they carry into the cell `pos`. `free` is whether
+    /// the world has room for a block there (no block, no crop): the caller
+    /// knows the whole world, the sim only its mirror. A cow also needs
+    /// ground to stand on. On success they're empty-handed and it's theirs
+    /// to put in the world if it's a block.
+    pub fn put_down(
+        &mut self,
+        holder: &str,
+        pos: (i32, i32, i32),
+        free: bool,
+    ) -> Result<Held, &'static str> {
+        let Some(h) = self.holders.get(holder) else {
+            return Err("hands_empty");
+        };
+        if !free {
+            return Err("occupied");
+        }
+        let held = h.held;
+        if let Held::Cow(id) = held {
+            let (x, y, z) = (pos.0 as f64, pos.1 as f64, pos.2 as f64);
+            if !self.walkable(x, y, z) {
+                return Err("no_room_for_a_cow");
+            }
+            let ground = self.ground(x, y, z).unwrap_or(z);
+            self.land_cow(id, x, y, ground);
+        }
+        self.holders.remove(holder);
+        Ok(held)
+    }
+
+    /// `holder` left: a cow is set down where they last stood (or sent home
+    /// if it can't stand there). Returns what they held and the cell they
+    /// stood in, where the caller can try to put a block back.
+    pub fn release(&mut self, holder: &str) -> Option<(Held, (i32, i32, i32))> {
+        let h = self.holders.remove(holder)?;
+        let (x, y, z) = h.at;
+        if let Held::Cow(id) = h.held {
+            let spot = match self.ground(x, y, z) {
+                Some(g) if self.walkable(x, y, z) => Some((x, y, g)),
+                _ => None,
+            };
+            let (cx, cy, cz) = match spot {
+                Some(s) => s,
+                None => {
+                    let (hx, hy) = self
+                        .cows
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map_or((0.0, 0.0), |c| c.home);
+                    (hx, hy, self.ground(hx, hy, 8.0).unwrap_or(0.0))
+                }
+            };
+            self.land_cow(id, cx, cy, cz);
+        }
+        Some((h.held, (cell(x), cell(y), (z + 0.01).floor() as i32)))
+    }
+
+    /// Back on its feet at (x, y), falling from where it was carried down to
+    /// height `z`.
+    fn land_cow(&mut self, id: u32, x: f64, y: f64, z: f64) {
+        let now = self.last_ms.unwrap_or(0);
+        if let Some(cow) = self.cows.iter_mut().find(|c| c.id == id) {
+            cow.carried = false;
+            cow.x = x;
+            cow.y = y;
+            // it drops from overhead under gravity; never start below ground
+            cow.z = cow.z.max(z);
+            cow.vz = 0.0;
+            cow.target = None;
+            cow.idle_until_ms = now + 1500;
+        }
+    }
+
     // -- the tick
 
-    /// Advance to `now_ms` (wall clock). `players` are feet positions.
-    pub fn tick(&mut self, now_ms: i64, players: &[(f64, f64, f64)]) -> TickOut {
+    /// Advance to `now_ms` (wall clock). `players` are (id, feet position).
+    pub fn tick(&mut self, now_ms: i64, players: &[(String, f64, f64, f64)]) -> TickOut {
         let mut out = TickOut::default();
+        out.moos.append(&mut self.lifted);
         let dt = match self.last_ms {
             // a long stall (or the first tick) shouldn't teleport anything
             Some(last) => ((now_ms - last) as f64 / 1000.0).clamp(0.0, 0.25),
@@ -195,8 +371,23 @@ impl Sim {
             }
         }
 
+        // carried cows ride over their holders
+        for (id, x, y, z) in players {
+            if let Some(h) = self.holders.get_mut(id) {
+                h.at = (*x, *y, *z);
+                if let Held::Cow(cid) = h.held {
+                    if let Some(cow) = self.cows.iter_mut().find(|c| c.id == cid) {
+                        (cow.x, cow.y, cow.z) = (*x, *y, *z + CARRY_Z);
+                    }
+                }
+            }
+        }
+
+        let feet: Vec<(f64, f64, f64)> = players.iter().map(|&(_, x, y, z)| (x, y, z)).collect();
         for i in 0..self.cows.len() {
-            self.step_cow(i, now_ms, dt, players, &mut out);
+            if !self.cows[i].carried {
+                self.step_cow(i, now_ms, dt, &feet, &mut out);
+            }
         }
         self.separate_cows();
 
@@ -349,10 +540,18 @@ impl Sim {
         let n = self.cows.len();
         for a in 0..n {
             for b in (a + 1)..n {
-                let (ox, oy) = (self.cows[b].x - self.cows[a].x, self.cows[b].y - self.cows[a].y);
+                let (ox, oy) = (
+                    self.cows[b].x - self.cows[a].x,
+                    self.cows[b].y - self.cows[a].y,
+                );
                 let d = (ox * ox + oy * oy).sqrt();
                 let min = COW_RADIUS * 2.0;
-                if d >= min || d < 0.0001 || (self.cows[a].z - self.cows[b].z).abs() > 1.5 {
+                let carried = self.cows[a].carried || self.cows[b].carried;
+                if carried
+                    || d >= min
+                    || d < 0.0001
+                    || (self.cows[a].z - self.cows[b].z).abs() > 1.5
+                {
                     continue;
                 }
                 let push = (min - d) / 2.0;
@@ -380,7 +579,11 @@ pub fn cell(v: f64) -> i32 {
 
 /// Chunk key and index within it (x fastest, then y, then z), as Sosh.World.
 fn locate(x: i32, y: i32, z: i32) -> ((i32, i32, i32), usize) {
-    let key = (x.div_euclid(CHUNK), y.div_euclid(CHUNK), z.div_euclid(CHUNK));
+    let key = (
+        x.div_euclid(CHUNK),
+        y.div_euclid(CHUNK),
+        z.div_euclid(CHUNK),
+    );
     let i = x.rem_euclid(CHUNK) + y.rem_euclid(CHUNK) * CHUNK + z.rem_euclid(CHUNK) * CHUNK * CHUNK;
     (key, i as usize)
 }
@@ -410,6 +613,11 @@ mod tests {
         s.load_chunk((0, 0, -1), &floor);
         s.load_chunk((0, 0, 0), &vec![0u8; CHUNK_VOLUME]);
         s
+    }
+
+    /// A player called "p" standing at (x, y, z).
+    fn p(x: f64, y: f64, z: f64) -> (String, f64, f64, f64) {
+        ("p".to_string(), x, y, z)
     }
 
     #[test]
@@ -446,13 +654,17 @@ mod tests {
         let id = s.spawn_cow(8.0, 8.0);
         s.cows[0].idle_until_ms = i64::MAX; // stand still
         s.tick(0, &[]);
-        let out = s.tick(100, &[(7.8, 8.0, 0.0)]);
+        let out = s.tick(100, &[p(7.8, 8.0, 0.0)]);
         assert!(s.cows[0].x > 8.5, "pushed along +x: {}", s.cows[0].x);
-        assert!(s.cows[0].x <= 8.0 + PUSH_SPEED * 0.1 + 1e-9, "too fast: {}", s.cows[0].x);
+        assert!(
+            s.cows[0].x <= 8.0 + PUSH_SPEED * 0.1 + 1e-9,
+            "too fast: {}",
+            s.cows[0].x
+        );
         assert!((s.cows[0].y - 8.0).abs() < 0.001);
         assert_eq!(out.moos, vec![id]);
         // no second moo straight away
-        let out = s.tick(200, &[(s.cows[0].x - 0.3, 8.0, 0.0)]);
+        let out = s.tick(200, &[p(s.cows[0].x - 0.3, 8.0, 0.0)]);
         assert!(out.moos.is_empty());
     }
 
@@ -468,7 +680,13 @@ mod tests {
             s.tick(t, &[]);
         }
         for c in &s.cows {
-            assert!(s.walkable(c.x, c.y, c.z), "cow {} off the floor at {},{}", c.id, c.x, c.y);
+            assert!(
+                s.walkable(c.x, c.y, c.z),
+                "cow {} off the floor at {},{}",
+                c.id,
+                c.x,
+                c.y
+            );
             assert_eq!(c.z, 0.0);
         }
         // and they spread out rather than stacking
@@ -488,8 +706,65 @@ mod tests {
         s.tick(0, &[]);
         for t in 1..20 {
             let x = s.cows[0].x - 0.5;
-            s.tick(t * 100, &[(x, 8.0, 0.0)]);
+            s.tick(t * 100, &[p(x, 8.0, 0.0)]);
         }
         assert!(s.cows[0].x < 9.5, "went through the wall: {}", s.cows[0].x);
+    }
+
+    #[test]
+    fn only_carryable_blocks_and_one_thing_at_a_time() {
+        let mut s = flat();
+        let at = (4.0, 4.0, 0.0);
+        assert_eq!(s.pick_block("p", at, 3), Err("cannot_carry"));
+        assert_eq!(s.held("p"), None);
+        assert_eq!(s.pick_block("p", at, POT), Ok(()));
+        assert_eq!(s.held("p"), Some(Held::Block(POT)));
+        assert_eq!(s.pick_block("p", at, POT), Err("hands_full"));
+        // the world has no room there: still holding it
+        assert_eq!(s.put_down("p", (5, 4, 0), false), Err("occupied"));
+        assert_eq!(s.put_down("p", (5, 4, 0), true), Ok(Held::Block(POT)));
+        assert_eq!(s.put_down("p", (5, 4, 0), true), Err("hands_empty"));
+    }
+
+    #[test]
+    fn a_carried_cow_rides_overhead_then_is_set_down() {
+        let mut s = flat();
+        let id = s.spawn_cow(8.0, 8.0);
+        s.tick(0, &[]);
+        assert_eq!(s.pick_cow("p", (1.0, 1.0, 0.0), id), Err("out_of_reach"));
+        assert_eq!(s.pick_cow("p", (7.0, 8.0, 0.0), id), Ok(()));
+        assert_eq!(s.pick_cow("q", (7.0, 8.0, 0.0), id), Err("already_carried"));
+        // it moos about it, follows its holder and nobody shoves it
+        let out = s.tick(100, &[p(5.0, 6.0, 0.0), ("q".to_string(), 5.2, 6.0, 0.0)]);
+        assert_eq!(out.moos, vec![id]);
+        let c = &s.cows[0];
+        assert_eq!((c.x, c.y, c.z), (5.0, 6.0, CARRY_Z));
+        // a cow needs somewhere to stand
+        s.set_block(6, 6, 0, 3);
+        s.set_block(6, 6, 1, 3);
+        assert_eq!(s.put_down("p", (6, 6, 0), true), Err("no_room_for_a_cow"));
+        assert_eq!(s.put_down("p", (6, 7, 0), true), Ok(Held::Cow(id)));
+        // and falls back to the ground
+        for t in 2..20 {
+            s.tick(t * 100, &[]);
+        }
+        let c = &s.cows[0];
+        assert!(!c.carried);
+        assert_eq!(c.z, 0.0);
+        assert!(s.walkable(c.x, c.y, c.z));
+    }
+
+    #[test]
+    fn leaving_lets_go() {
+        let mut s = flat();
+        let id = s.spawn_cow(8.0, 8.0);
+        s.tick(0, &[]);
+        assert_eq!(s.pick_cow("p", (7.0, 8.0, 0.0), id), Ok(()));
+        s.tick(100, &[p(3.2, 2.9, 0.0)]);
+        assert_eq!(s.release("p"), Some((Held::Cow(id), (3, 3, 0))));
+        assert_eq!((s.cows[0].x, s.cows[0].y), (3.2, 2.9));
+        assert_eq!(s.release("p"), None);
+        assert_eq!(s.pick_block("p", (2.0, 2.0, 0.0), POT), Ok(()));
+        assert_eq!(s.release("p"), Some((Held::Block(POT), (2, 2, 0))));
     }
 }

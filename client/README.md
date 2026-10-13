@@ -7,7 +7,7 @@ behave identically.
 
 ```
 client/
-  scripts/   Lua (silt): main, phx, avatar, world, blocks, farm, ui, util
+  scripts/   Lua (silt): main, phx, avatar, world, blocks, farm, carry, ui, util
   assets/    generated models (.glb) and tile textures
   tools/     gen_assets.py — regenerates assets/ from front/public/assets/faces.png
   icon.png   cart icon (required by `pack`)
@@ -58,7 +58,9 @@ this and refuses anything farther.
 
 Carrots grow on the server's clock, a stage a minute until ripe at three
 (orange tops), whether or not anyone is online. Cows wander the plaza; walk
-into one to push it.
+into one to push it. The carry tool (5) lifts a pot block or a cow over
+your head; click a face to put it down, or press G (the pose button says
+"put down") to set it one cell ahead.
 
 ## Protocol
 
@@ -74,7 +76,10 @@ joins two channels:
   `Sosh.World`. The join reply carries every crop and cow;
   `plant_action`/`harvest_action` farm, and `crop`, `cows` and `moo`
   broadcast the simulation (`Sosh.Sim`, which runs the Rust universe NIF
-  ten times a second).
+  ten times a second). `pick_up_action` (`position` of a block, or `cow`)
+  and `put_down_action` (`position`) carry things; the universe decides
+  what can be carried (the join reply's `carryable` block ids, and any cow)
+  and `carry` broadcasts who holds what (`held` in the join reply).
 
 Movement is sent as motion, not a stream of positions. `move` carries where
 the player stands (`at`), their velocity in tiles a second (`v`) and, when
@@ -108,5 +113,12 @@ frames.
   a `local` first (petrichor64 `SILT-BUGS.md` #5).
 - **`now()`:** the engine's clock (seconds since start) is new on
   petrichor64-ws `feat/skinning`; silt's own `clock()` panics on the web.
+- **No model tiles on the web:** the tile world lives in the Lua worker,
+  which only learns texture names, so `tile("pot", …)` draws a cube with
+  the pot's texture there. Model blocks are entities in their cell
+  (`Blocks.is_model`).
+- **`pairs()` yields removed keys:** a key set to `nil` still comes back
+  from `pairs()`, with a nil value; loops over tables that lose keys skip
+  those.
 - **Load order:** script load order isn't guaranteed, so top level only
   defines things and everything runs from `main()`.
