@@ -120,5 +120,10 @@ frames.
 - **`pairs()` yields removed keys:** a key set to `nil` still comes back
   from `pairs()`, with a nil value; loops over tables that lose keys skip
   those.
+- **Smooth ground:** grass and dirt are a `tileset` with the smooth look
+  (`world_ground`), so the engine meshes them with marching cubes. It's only
+  the look: the edge of a step slopes over half a block either side, while
+  walking, rays and the server still use whole blocks. `tileset()` is on
+  petrichor64's `feat/tilesets`; without it the ground stays cubes.
 - **Load order:** script load order isn't guaranteed, so top level only
   defines things and everything runs from `main()`.

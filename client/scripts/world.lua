@@ -5,6 +5,17 @@ GROUND_Z = 0
 
 function world_build()
 	world_sky()
+	world_ground()
+end
+
+-- Grass and dirt mesh together as smooth ground: marching cubes over the
+-- tiles, so steps and edges turn into 45° slopes. Only the look changes;
+-- heights, rays and the server still see whole blocks. (Needs an engine with
+-- tileset(), from petrichor64's feat/tilesets.)
+function world_ground()
+	if tileset ~= nil then
+		tileset("ground", { "grass", "dirt" }, { look = "smooth" })
+	end
 end
 
 function world_sky()
