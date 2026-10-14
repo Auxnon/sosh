@@ -22,10 +22,7 @@ MOO_FRAMES = 90
 function Farm.init()
 	if Farm.crops ~= nil then
 		for k, c in pairs(Farm.crops) do
-			-- (pairs() yields picked crops too, as nil; see carry.lua)
-			if c ~= nil then
-				c.ent:kill()
-			end
+			c.ent:kill()
 		end
 	end
 	Farm.crops = {}

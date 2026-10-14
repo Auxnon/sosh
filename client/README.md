@@ -117,9 +117,6 @@ frames.
   which only learns texture names, so `tile("pot", …)` draws a cube with
   the pot's texture there. Model blocks are entities in their cell
   (`Blocks.is_model`).
-- **`pairs()` yields removed keys:** a key set to `nil` still comes back
-  from `pairs()`, with a nil value; loops over tables that lose keys skip
-  those.
 - **Smooth ground:** grass and dirt are a `tileset` with the smooth look
   (`world_ground`), so the engine meshes them with marching cubes. It's only
   the look: the edge of a step slopes over half a block either side, while

@@ -7,9 +7,6 @@
 --
 -- The thing rides directly above its holder, where the raised arms point:
 -- a block as its own small entity, a cow as the herd's entity, moved there.
---
--- silt's pairs() still yields a key after it's set to nil, with a nil
--- value, so the loops here skip those.
 
 Carry = {}
 
@@ -20,9 +17,7 @@ HELD_COW_H = 1.1
 function Carry.init()
 	if Carry.by ~= nil then
 		for id, h in pairs(Carry.by) do
-			if h ~= nil then
-				Carry.let_go(h)
-			end
+			Carry.let_go(h)
 		end
 	end
 	-- user id -> {block, cow, ent}
@@ -129,10 +124,7 @@ end
 -- Put each held block over its holder, after the avatars have posed.
 function Carry.update()
 	for id, h in pairs(Carry.by) do
-		local e = nil
-		if h ~= nil then
-			e = h.ent
-		end
+		local e = h.ent
 		if e ~= nil then
 			local av = avatar_of(id)
 			if av ~= nil and av.hold ~= nil then
