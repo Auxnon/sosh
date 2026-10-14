@@ -1,19 +1,20 @@
 -- avatar — a player in the world, local or remote.
 --
--- Built from the generated models in assets/ (tools/gen_assets.py): a tinted
--- body, two tinted arms and a head whose model carries the face. On the web
--- build only an entity's transform syncs after the frame it was made in, so
--- every other property is set right after make(), and changing the face
--- swaps the head entity rather than retexturing it.
+-- The rigged player model (assets/player.glb, converted from the old web
+-- client's by tools/gen_assets.py) plays its clips: idle, sit and carry are
+-- still poses. Walking and emotes bend its bones on top of the clip
+-- (`ent:bone`). The face is its own small model, face0-7, kept on the head
+-- bone; on the web build only an entity's transform syncs after the frame it
+-- was made in, so changing the face swaps that entity rather than
+-- retexturing it.
 --
 -- Avatars move over the block terrain (blocks.lua): one block is a step, two
 -- is a wall, and they fall off edges. Either they walk to a point (a click,
 -- `walk_to`) or they're driven at a velocity (the keys, `drive`), sliding
 -- along walls. Remote avatars follow the owner's `move` messages
 -- (`follow`): the same motion, carried on between messages, and any drift
--- from where the owner says they are eased away over a few frames. Poses and emotes are procedural
--- placeholders until the rigged player model is in. Whatever they carry
--- (carry.lua) rides over their head, arms raised to it.
+-- from where the owner says they are eased away over a few frames. Whatever
+-- they carry (carry.lua) rides over their head, arms raised to it.
 
 Avatar = {}
 Avatar.__index = Avatar
@@ -25,11 +26,10 @@ AV_TURN = 11 -- rate the remaining turn is taken at, per second
 AV_GRAVITY = 72 -- tiles a second, per second
 AV_CORRECT = 9 -- rate the drift from the owner's position is fixed at, per second
 AV_SNAP = 4 -- tiles adrift before jumping there instead
-AV_BODY_H = 0.85
-AV_SHOULDER = 0.27
+AV_HEIGHT = 1.45 -- the player model, feet to the top of the head
 FACE_COUNT = 8
 ANIMS = { "idle", "sit" }
-AV_HOLD_ARMS = -2.85 -- arms raised to what's carried, a touch forward
+AV_HOLD_ARMS = 2.85 -- arms swung forward and up to what's carried
 EMOTES = { "wave", "dance", "jump", "cheer" }
 EMOTE_FRAMES = 150
 EMOTE_SAY = { wave = "*waves*", dance = "*dances*", jump = "*jumps*", cheer = "*cheers*" }
@@ -61,28 +61,20 @@ function Avatar.new(id, name, x, y, z, face, anim)
 	a.emote_t = 0
 	a.bubbles = {}
 	a.hold = nil -- {x, y, z, heading}: where a carried thing goes
-	a.tint = U.tint_for(id)
+	a.clip = nil -- the clip the model is playing
 	a.hex = U.hex_for(id)
 	a:spawn()
 	return a
 end
 
 function Avatar:spawn()
-	local tint = self.tint
-	self.body = make("body", self.x, self.y, self.z, 1)
-	self.body.tint = tint
-	self.arm_l = make("arm", self.x, self.y, self.z, 1)
-	self.arm_l.tint = tint
-	self.arm_r = make("arm", self.x, self.y, self.z, 1)
-	self.arm_r.tint = tint
-	self.head = make("head" .. self.face, self.x, self.y, self.z, 1)
+	self.body = make("player", self.x, self.y, self.z, 1)
+	self.head = make("face" .. self.face, self.x, self.y, self.z, 1)
 	self:pose()
 end
 
 function Avatar:remove()
 	self.body:kill()
-	self.arm_l:kill()
-	self.arm_r:kill()
 	self.head:kill()
 end
 
@@ -93,7 +85,7 @@ function Avatar:set_face(face)
 	end
 	self.face = face
 	self.head:kill()
-	self.head = make("head" .. face, self.x, self.y, self.z, 1)
+	self.head = make("face" .. face, self.x, self.y, self.z, 1)
 	self:pose()
 end
 
@@ -304,32 +296,39 @@ function Avatar:update(dt)
 	self:pose()
 end
 
--- Place every part from position, heading, animation, emote and time.
+-- Pose the model from position, heading, animation, emote and time: the
+-- clip, then bones bent on top of it, then the face on the head.
+--
+-- The bones turn in their own frames, and every limb's local z points
+-- forward. Arms swing forward and back at the collarbone (shoulder.l/r,
+-- about local y: + takes the left arm back and the right forward), whose
+-- side axis runs through the shoulder joint, and lift out sideways at the
+-- upper arm (arm.l/r, about local z: + the left out, - the right); lifting
+-- at the collarbone would pivot from the neck. Legs swing at the hips
+-- (waist.l/r) as the arms do at the collarbones.
 function Avatar:pose()
 	local h = self.heading
 	local t = self.t
-	local anim = self.anim
+	local holding = Carry.of(self.id) ~= nil
 
-	local z = self.z
+	local clip = "idle"
 	local bob = 0
 	local swing = 0
-	local arm_l = 0
-	local arm_r = 0
-	local twist = 0
-	if anim == 1 then
-		-- sit: sink, arms resting forward on the knees
-		z = z - 0.32
-		arm_l = -0.9
-		arm_r = -0.9
+	if self.anim == 1 then
+		clip = "sit"
 	else
 		bob = math.abs(sin(t * 0.24)) * 0.06 * self.walk + sin(t * 0.05) * 0.012
 		swing = sin(t * 0.24) * 0.7 * self.walk
 	end
-	local holding = Carry.of(self.id) ~= nil
+	-- arms: forward swing and sideways lift, left and right
+	local fl = swing
+	local fr = swing
+	local ll = 0
+	local lr = 0
+	local twist = 0
 	if holding then
-		arm_l = AV_HOLD_ARMS
-		arm_r = AV_HOLD_ARMS
-		swing = swing * 0.1
+		fl = -AV_HOLD_ARMS
+		fr = AV_HOLD_ARMS
 	end
 
 	local e = self.emote
@@ -337,65 +336,62 @@ function Avatar:pose()
 		-- 0 -> 1 over the emote, for one-shot shapes
 		local p = 1 - self.emote_t / EMOTE_FRAMES
 		if e == "wave" then
-			arm_r = -2.7 + sin(t * 0.4) * 0.35
+			lr = -2.3 + sin(t * 0.4) * 0.35
+			fr = 0
 		elseif e == "dance" then
 			twist = sin(t * 0.25) * 0.6
 			bob = bob + math.abs(sin(t * 0.25)) * 0.12
-			arm_l = -1.2 + sin(t * 0.25) * 0.8
-			arm_r = -1.2 - sin(t * 0.25) * 0.8
+			ll = 1.2 + sin(t * 0.25) * 0.8
+			lr = -1.2 + sin(t * 0.25) * 0.8
 		elseif e == "jump" then
 			-- two hops
 			bob = bob + math.abs(sin(p * math.pi * 2)) * 0.9
-			arm_l = -0.6
-			arm_r = -0.6
+			ll = 0.6
+			lr = -0.6
 		elseif e == "cheer" then
 			bob = bob + math.abs(sin(t * 0.3)) * 0.1
-			arm_l = -2.9 + sin(t * 0.3) * 0.2
-			arm_r = -2.9 - sin(t * 0.3) * 0.2
+			ll = 2.4 + sin(t * 0.3) * 0.2
+			lr = -2.4 + sin(t * 0.3) * 0.2
+			fl = 0
+			fr = 0
 		end
 	end
 
-	local facing = h + twist
-	local fx = cos(facing)
-	local fy = sin(facing)
-	-- side vector: the avatar's left
-	local sx = -fy
-	local sy = fx
-
 	local body = self.body
+	if clip ~= self.clip then
+		self.clip = clip
+		body:anim(clip)
+	end
+	local facing = h + twist
 	body.x = self.x
 	body.y = self.y
-	body.z = z + bob
+	body.z = self.z + bob
 	body.rz = facing
+	body:bone("shoulder.l", { 0, fl, 0 })
+	body:bone("shoulder.r", { 0, fr, 0 })
+	body:bone("arm.l", { 0, 0, ll })
+	body:bone("arm.r", { 0, 0, lr })
+	body:bone("waist.l", { 0, -swing, 0 })
+	body:bone("waist.r", { 0, -swing, 0 })
 
+	-- the face model's origin is the head bone's
 	local head = self.head
-	head.x = self.x
-	head.y = self.y
-	head.z = z + bob * 1.4 + AV_BODY_H
-	head.rz = h
+	local hb = body:bone("head")
+	if hb ~= nil then
+		head.x = hb.x
+		head.y = hb.y
+		head.z = hb.z
+	end
+	head.rz = facing
 
-	local shoulder_z = z + bob + AV_BODY_H - 0.08
-	local al = self.arm_l
-	al.x = self.x + sx * AV_SHOULDER
-	al.y = self.y + sy * AV_SHOULDER
-	al.z = shoulder_z
-	al.rz = facing
-	al.ry = arm_l + swing
-	local ar = self.arm_r
-	ar.x = self.x - sx * AV_SHOULDER
-	ar.y = self.y - sy * AV_SHOULDER
-	ar.z = shoulder_z
-	ar.rz = facing
-	ar.ry = arm_r - swing
-
-	local hold = { self.x, self.y, z + bob + CARRY_Z, h }
+	local hold = { self.x, self.y, self.z + bob + CARRY_Z, h }
 	self.hold = hold
 end
 
 -- Point above the head where the name tag sits, as {x, y, z}; above what
 -- they carry, if anything.
 function Avatar:top()
-	local z = self.head.z + 0.75
+	local z = self.body.z + AV_HEIGHT + 0.15
 	local held = Carry.height(self.id)
 	if held > 0 and self.hold ~= nil then
 		z = self.hold[3] + held + 0.15

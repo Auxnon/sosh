@@ -22,6 +22,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
 FACES = ROOT.parent / "front" / "public" / "assets" / "faces.png"
+PLAYER = ROOT.parent / "front" / "public" / "models" / "player.glb"
 
 HEAD_RGB = (244, 232, 212, 255)
 WHITE = (255, 255, 255, 255)
@@ -265,17 +266,6 @@ def pot_mesh(cx, cy):
     )
 
 
-def solid(rgb, size=8):
-    return Image.new("RGBA", (size, size), rgb)
-
-
-def head_texture(face):
-    """128x64: left half plain head colour, right half the face on it."""
-    im = Image.new("RGBA", (128, 64), HEAD_RGB)
-    im.alpha_composite(face, (64, 0))
-    return im
-
-
 def tile_texture(base, speckle, seed):
     """16x16 pixel-art ground tile: base colour with deterministic speckles."""
     im = Image.new("RGBA", (16, 16), base)
@@ -286,23 +276,229 @@ def tile_texture(base, speckle, seed):
     return im
 
 
+# -- the rigged player, from the old three.js client's model
+
+# glTF is Y-up and the model faces +Z; sosh is Z-up and faces +X. (x, y, z)
+# -> (z, x, y) is a rotation (120 degrees about (1, 1, 1)), so the rig needs
+# no mirroring. Scaled to 1.45 tall, as the old cube avatar was, so what
+# they carry (carry.lua, 1.5 up) rides just over their head.
+PLAYER_SCALE = 0.7
+PLAYER_ROT = (0.5, 0.5, 0.5, 0.5)  # that rotation as a quaternion, xyzw
+
+
+def to_sosh(v, s=1.0):
+    return (v[2] * s, v[0] * s, v[1] * s)
+
+
+def quat_mul(a, b):
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    )
+
+
+def srgb(c):
+    """A linear vertex colour channel as an sRGB byte."""
+    c = min(max(c, 0.0), 1.0)
+    c = c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+    return round(c * 255)
+
+
+class Glb:
+    """A .glb's JSON and binary chunk, with accessors read and written in place."""
+
+    SIZES = {5126: "f", 5123: "H", 5121: "B"}
+    WIDTHS = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
+
+    def __init__(self, path):
+        b = path.read_bytes()
+        n = struct.unpack_from("<I", b, 12)[0]
+        self.json = json.loads(b[20 : 20 + n])
+        m = struct.unpack_from("<I", b, 20 + n)[0]
+        self.bin = bytearray(b[28 + n : 28 + n + m])
+
+    def _layout(self, i):
+        a = self.json["accessors"][i]
+        v = self.json["bufferViews"][a["bufferView"]]
+        fmt = "<" + self.SIZES[a["componentType"]] * self.WIDTHS[a["type"]]
+        stride = v.get("byteStride", struct.calcsize(fmt))
+        return a, fmt, v.get("byteOffset", 0) + a.get("byteOffset", 0), stride
+
+    def read(self, i):
+        a, fmt, off, stride = self._layout(i)
+        return [struct.unpack_from(fmt, self.bin, off + k * stride) for k in range(a["count"])]
+
+    def write(self, i, rows):
+        a, fmt, off, stride = self._layout(i)
+        assert len(rows) == a["count"]
+        for k, r in enumerate(rows):
+            struct.pack_into(fmt, self.bin, off + k * stride, *r)
+
+    def add_view(self, data):
+        self.bin += b"\0" * (-len(self.bin) % 4)
+        self.json["bufferViews"].append(
+            {"buffer": 0, "byteOffset": len(self.bin), "byteLength": len(data)}
+        )
+        self.bin += data
+        return len(self.json["bufferViews"]) - 1
+
+    def save(self, path):
+        self.bin += b"\0" * (-len(self.bin) % 4)
+        self.json["buffers"] = [{"byteLength": len(self.bin)}]
+        js = json.dumps(self.json, separators=(",", ":")).encode()
+        js += b" " * (-len(js) % 4)
+        out = struct.pack("<III", 0x46546C67, 2, 28 + len(js) + len(self.bin))
+        out += struct.pack("<II", len(js), 0x4E4F534A) + js
+        out += struct.pack("<II", len(self.bin), 0x004E4942) + bytes(self.bin)
+        path.write_bytes(out)
+
+
+def player_model(src, dst):
+    """Convert the old client's player.glb: Z-up facing +X, scaled, and its
+    vertex colours (which the engine doesn't read) baked into a palette
+    texture. Keeps the skin and the clips (idle, sit, carry).
+
+    The rig is rotated and scaled at its root bone: every bone's translation
+    scales, the root's rest pose and keys also rotate, and the inverse bind
+    matrices follow so the skin still fits. Returns the head bone's rest
+    position and the front of the head, for the face."""
+    g = Glb(src)
+    j = g.json
+    s = PLAYER_SCALE
+    prim = j["meshes"][0]["primitives"][0]
+    attrs = prim["attributes"]
+
+    pos = [to_sosh(p, s) for p in g.read(attrs["POSITION"])]
+    g.write(attrs["POSITION"], pos)
+    acc = j["accessors"][attrs["POSITION"]]
+    acc["min"] = [min(c) for c in zip(*pos)]
+    acc["max"] = [max(c) for c in zip(*pos)]
+    g.write(attrs["NORMAL"], [to_sosh(n) for n in g.read(attrs["NORMAL"])])
+
+    # Palette: one texel per distinct colour, each vertex at its texel's centre.
+    colours = [tuple(srgb(c) for c in col[:3]) + (255,) for col in g.read(attrs.pop("COLOR_0"))]
+    palette = sorted(set(colours))
+    side = 1
+    while side * side < len(palette):
+        side *= 2
+    im = Image.new("RGBA", (side, side), WHITE)
+    uv_of = {}
+    for i, c in enumerate(palette):
+        x, y = i % side, i // side
+        im.putpixel((x, y), c)
+        uv_of[c] = ((x + 0.5) / side, (y + 0.5) / side)
+    g.write(attrs["TEXCOORD_0"], [uv_of[c] for c in colours])
+    view = g.add_view(png_bytes(im))
+    j["images"] = [{"bufferView": view, "mimeType": "image/png"}]
+    j["samplers"] = [{"magFilter": 9728, "minFilter": 9728}]
+    j["textures"] = [{"source": 0, "sampler": 0}]
+    j["materials"] = [{"name": "palette", "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}]
+
+    skin = j["skins"][0]
+    joints = skin["joints"]
+    parent = {c: i for i, n in enumerate(j["nodes"]) for c in n.get("children", [])}
+    roots = [n for n in joints if parent.get(n) not in joints]
+    assert len(roots) == 1, roots
+    root = roots[0]
+
+    def bone(node, t, r):
+        """A bone's (translation, rotation) in the converted rig."""
+        if node == root:
+            return to_sosh(t, s), quat_mul(PLAYER_ROT, r)
+        return tuple(c * s for c in t), r
+
+    for n in joints:
+        node = j["nodes"][n]
+        t, r = bone(n, node.get("translation", (0, 0, 0)), node.get("rotation", (0, 0, 0, 1)))
+        node["translation"] = list(t)
+        node["rotation"] = list(r)
+
+    # Each key: the same change as the bone's rest pose. Outputs are per
+    # channel in Blender's exports; a shared one would be converted twice.
+    seen = set()
+    for anim in j["animations"]:
+        for ch in anim["channels"]:
+            n, path = ch["target"]["node"], ch["target"]["path"]
+            out = anim["samplers"][ch["sampler"]]["output"]
+            if path == "scale" or n not in joints:
+                continue
+            assert out not in seen, "shared animation output"
+            seen.add(out)
+            keys = g.read(out)
+            if path == "translation":
+                keys = [bone(n, k, (0, 0, 0, 1))[0] for k in keys]
+            else:
+                keys = [bone(n, (0, 0, 0), k)[1] for k in keys]
+            g.write(out, keys)
+
+    # Inverse bind: IBM' = D IBM D^-1 R^-1 for scale D and rotation R, so
+    # (R D G D^-1)(IBM')(R D p) = R D (G IBM p). Column-major in glTF.
+    def ibm(m):
+        cols = [m[0:4], m[4:8], m[8:12], m[12:16]]
+        # sosh x, y, z are glTF z, x, y, so column k of IBM R^-1 is IBM's
+        # column for the glTF axis sosh axis k came from.
+        cols = [cols[2], cols[0], cols[1], cols[3]]
+        t = cols[3]
+        cols[3] = (t[0] * s, t[1] * s, t[2] * s, t[3])
+        return tuple(c for col in cols for c in col)
+
+    ibms = skin["inverseBindMatrices"]
+    g.write(ibms, [ibm(m) for m in g.read(ibms)])
+
+    j["asset"]["generator"] = "sosh gen_assets.py from front/public/models/player.glb"
+    g.save(dst)
+
+    # where the face goes: the head bone at rest, and the front of the head
+    ji = {n: i for i, n in enumerate(joints)}
+    head = ji[next(n for n in joints if j["nodes"][n].get("name") == "head")]
+    front = max(
+        p[0]
+        for p, jt, w in zip(pos, g.read(attrs["JOINTS_0"]), g.read(attrs["WEIGHTS_0"]))
+        if any(jt[k] == head and w[k] > 0.5 for k in range(4))
+    )
+    # The bone's rest position: its inverse bind is rigid, [R | t], so the
+    # bind pose is at -R^T t, and R^T's rows are the IBM's columns.
+    m = g.read(ibms)[head]
+    cols, t = [m[0:3], m[4:7], m[8:11]], m[12:15]
+    head_pos = tuple(-sum(cols[r][k] * t[k] for k in range(3)) for r in range(3))
+    return head_pos, front
+
+
+# The old client's face plane: 0.6 square, centred 1.6 up (model units).
+FACE_SIZE = 0.6
+FACE_UP = 1.6
+
+
+def face_quad(head_pos, front):
+    """A square facing +X whose origin is the head bone at rest, so it goes
+    where the bone is: the face on the front of the head, as the old client
+    had it."""
+    hx, hy, hz = head_pos
+    x = front + 0.005 - hx
+    zc = FACE_UP * PLAYER_SCALE - hz
+    h = FACE_SIZE * PLAYER_SCALE / 2
+    pos = [(x, -h, zc - h), (x, h, zc - h), (x, h, zc + h), (x, -h, zc + h)]
+    uvs = [(0, 1), (1, 1), (1, 0), (0, 0)]
+    # +X normal from the winding (counter-clockwise seen from the front)
+    return pos, uvs, [0, 1, 2, 0, 2, 3]
+
+
 def main():
     ASSETS.mkdir(parents=True, exist_ok=True)
 
     faces = Image.open(FACES).convert("RGBA")
     count = faces.width // 64
+    head_pos, front = player_model(PLAYER, ASSETS / "player.glb")
+    pos, uvs, idx = face_quad(head_pos, front)
     for i in range(count):
         face = faces.crop((i * 64, 0, i * 64 + 64, 64))
-        uv = lambda n: (0.5, 0.0, 1.0, 1.0) if n == "front" else (0.0, 0.0, 0.5, 1.0)
-        pos, uvs, idx = frustum(0.3, 0.3, 0.3, 0.3, 0.0, 0.6, uv)
-        write_glb(ASSETS / f"head{i}.glb", pos, uvs, idx, png_bytes(head_texture(face)))
+        write_glb(ASSETS / f"face{i}.glb", pos, uvs, idx, png_bytes(face))
 
-    # Body and arm are white so per-player tint colours them.
     whole = lambda n: (0.0, 0.0, 1.0, 1.0)
-    pos, uvs, idx = frustum(0.34, 0.3, 0.2, 0.18, 0.0, 0.85, whole)
-    write_glb(ASSETS / "body.glb", pos, uvs, idx, png_bytes(solid(WHITE)))
-    pos, uvs, idx = frustum(0.07, 0.07, 0.07, 0.07, -0.5, 0.0, whole)
-    write_glb(ASSETS / "arm.glb", pos, uvs, idx, png_bytes(solid(WHITE)))
 
     tile_texture((112, 168, 96, 255), (92, 146, 80, 255), 7).save(ASSETS / "grass.png")
     tile_texture((196, 178, 140, 255), (176, 158, 120, 255), 3).save(ASSETS / "path.png")
@@ -344,7 +540,7 @@ def main():
     icon.alpha_composite(head, (8, 8))
     icon.save(ROOT / "icon.png")
 
-    print(f"wrote {count} heads, body, arm, cow, carrots, pots and ground tiles to {ASSETS}")
+    print(f"wrote the player, {count} faces, cow, carrots, pots and ground tiles to {ASSETS}")
 
 
 if __name__ == "__main__":

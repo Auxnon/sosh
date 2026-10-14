@@ -177,12 +177,6 @@ function U.color_index(id)
 	return (h % #PALETTE) + 1
 end
 
-function U.tint_for(id)
-	local c = PALETTE[U.color_index(id)]
-	local t = { c[1], c[2], c[3], 1.0 }
-	return t
-end
-
 -- Hex string ("rgb") for gui drawing.
 HEX = "0123456789ABCDEF"
 
