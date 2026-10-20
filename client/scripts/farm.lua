@@ -26,7 +26,6 @@ function Farm.init()
 		end
 	end
 	Farm.crops = {}
-	Farm.carrots = 0
 end
 
 -- The crop in cell (x, y, z), or nil.

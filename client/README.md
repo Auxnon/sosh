@@ -7,7 +7,9 @@ behave identically.
 
 ```
 client/
-  scripts/   Lua (silt): main, phx, avatar, world, blocks, farm, carry, ui, util
+  scripts/   Lua (silt): main (app, network), tools (keys, pointer), hud, phx,
+             avatar, world, blocks, farm, carry, furniture, ships (and
+             helpers), bag, ui, util
   assets/    generated models (.glb) and tile textures
   tools/     gen_assets.py — regenerates assets/, the player and faces from the
              old web client's front/public/models/player.glb and faces.png
@@ -40,47 +42,109 @@ client (Super+R). The client needs the engine's `feat/skinning` branch. The
 recipes use the `~/projects/petrichor64-ws` worktree of it if that exists,
 else `~/projects/petrichor64`; set `P64=/path/to/petrichor64` to override.
 
+## The world
+
+The world is a grid of **universes**. Each is 96×96 blocks of floating
+islands, over the sea or over wild land far below. Universe (0, 0) is the
+plaza; (1, 0) lies east of it. A universe with nobody in it sleeps: crops
+stop ticking (and catch up the moment someone arrives), empty ships fly
+home, and a universe whose ship has flown away builds another.
+
+**Airships** are blocks that fly together: a hull, a deck with rails, a
+helm at the stern and a balloon on four masts. One docks by each
+universe's home island, its side to the shore; step aboard amidships,
+where the rail is open. Anyone at the helm steers it. It only turns about
+the vertical, and it can't fly through islands or other ships. Everyone on
+deck moves with it. A ship is built like anything else: put blocks on it
+(deck, hull, balloon, rail and helm blocks come from digging one, and new
+players start with some deck), set chests and furniture down on it, lay
+out blueprints on it. Whatever's aboard flies with it. Fly one off the edge
+of the universe and it crosses into the neighbour on that side, everyone
+and everything aboard, if the grid has one; if not, the ship stops there.
+
+Your **bag** goes by your name and follows you between universes. Digging
+fills it and building spends from it. New players start with wood, stone,
+path, deck and two pots.
+
+**Furniture** (chest, drawer, dresser, table, stool, wardrobe) is built
+from blueprints. Lay one out with the craft tool and scaffolding fills its
+footprint. Then click the scaffolding to put in the ingredients until the
+recipe is met. Chests, drawers, dressers and wardrobes hold things. Most
+furniture stays whole: carry it (one thing at a time) to move it. Drawers
+and stools pack into the bag when empty. Dressers and wardrobes are heavy
+and take two to lift: another player, or a helper (Porter and Hob on the
+plaza; one on every home island). Digging furniture breaks it: half of
+what it was made of comes back, and everything it held. Whatever doesn't
+fit in your bag is left in a sack.
+
 ## Controls
 
-- **1–4**: tool. **Walk** clicks a block to walk onto it, **dig** removes
-  the outlined block, **build** places a block on the outlined face, and
-  **plant** plants carrots on grass or dirt, or picks them once ripe. The
-  toolbar at the bottom does the same.
-- **Z / X**: block to build with (grass, dirt, stone, wood, path)
+- **1–6**: tool. **Walk** clicks a block to walk onto it, furniture to
+  open it, and a ship's helm to take it. **Dig** digs into your bag, breaks
+  furniture, and takes scaffolding down (everything put in comes back).
+  **Build** places what's picked from the bag on the outlined face.
+  **Plant** plants carrots on grass or dirt, or picks them once ripe.
+  **Carry** lifts a pot, a cow or furniture over your head and puts it
+  down on a face. **Craft** lays out a blueprint, then puts in its
+  ingredients. The toolbar at the bottom does the same.
+- **Z / X**: what the tool uses: the item to build, or the blueprint.
+  **R** turns furniture and blueprints. A green outline shows where they'll
+  go.
+- **I**: the bag. With furniture open, click a bag slot to put that stack
+  in and a furniture slot to take it out. Otherwise clicking a slot picks
+  it to build with. **Esc** closes it.
+- **H**: holding one end of something heavy, ask the nearest helper for
+  the other. Clicking a helper with the carry tool does the same.
+- **B**: take the helm you're standing at, or let go of it. At the helm,
+  **W / S** drive the ship ahead and astern, **A / D** turn it, and
+  **Space / C** climb and sink.
 - **WASD / arrows**: walk. One block is a step up, two is a wall.
-- **5–8**: emote (wave, dance, jump, cheer). The buttons on the right do the
+- **7–0**: emote (wave, dance, jump, cheer). The buttons on the right do the
   same.
 - **Enter**: chat (Enter sends, Esc cancels)
-- **F**: next face. **G**: cycle pose (idle, sit, carry).
+- **F**: next face. **G**: put down what you carry (one cell ahead), let
+  go of the helm, or sit and stand.
 - **Q/E, right-drag**: orbit the camera. **Scroll**: zoom.
 
-Digging, building and planting reach about 7 blocks. The server enforces
-this and refuses anything farther.
-
-Carrots grow on the server's clock, a stage a minute until ripe at three
-(orange tops), whether or not anyone is online. Cows wander the plaza; walk
-into one to push it. The carry tool (5) lifts a pot block or a cow over
-your head; click a face to put it down, or press G (the pose button says
-"put down") to set it one cell ahead.
+Everything reaches about 7 blocks. The server enforces this and refuses
+anything farther.
 
 ## Protocol
 
 `phx.lua` speaks Phoenix Channels (V2 JSON serializer) over the engine's
 websocket, with reply callbacks for request/response pushes. The client
-joins two channels:
+joins two channels for the universe it's in, both with its `name`:
 
-- **`room:lobby`**: presence, movement, faces, poses, emotes and chat. See
-  `SoshWeb.RoomChannel`.
-- **`actions:lobby`**: the block world. `get_chunks` returns 16×16×16
-  chunks run-length encoded, `dig_action`/`place_action` edit, and
-  `block_changed` broadcasts each edit. See `SoshWeb.ActionChannel` and
-  `Sosh.World`. The join reply carries every crop and cow;
-  `plant_action`/`harvest_action` farm, and `crop`, `cows` and `moo`
-  broadcast the simulation (`Sosh.Sim`, which runs the Rust universe NIF
-  ten times a second). `pick_up_action` (`position` of a block, or `cow`)
-  and `put_down_action` (`position`) carry things; the universe decides
-  what can be carried (the join reply's `carryable` block ids, and any cow)
-  and `carry` broadcasts who holds what (`held` in the join reply).
+- **`room:gx,gy`**: presence, movement, faces, poses, emotes and chat. The
+  join reply says where you stand (`at`, and if that's on a ship, `on` its
+  id and `local` where on it). Joining a universe you're not in
+  is refused with `reason: "elsewhere"` and the `universe` you are in, and
+  the client goes there. See `SoshWeb.RoomChannel`.
+- **`actions:gx,gy`**: everything else. See `SoshWeb.ActionChannel` and
+  `Sosh.Sim`. The join reply is the universe: crops, cows, furniture,
+  blueprints (`sites`), ships, helpers, who holds what, which sides lead
+  to another universe (`open`), and what lies below (`kind`). It also
+  carries your `bag` and the `catalog` of items and furniture.
+  - `get_chunks` returns 16×16×16 chunks, run-length encoded.
+  - Cells are in the world, or, with `on` a ship's id, in that ship's own
+    frame. Every action aimed at a cell takes `on`.
+  - `dig_action`, `place_action` (`item`, `rot`), `plant_action` and
+    `harvest_action` edit the world, and ships.
+  - `build_action` (`kind`, `rot`) lays out a blueprint, and
+    `deposit_action` puts ingredients in.
+  - `pick_up_action` (`position`, `cow` or `furniture`) and
+    `put_down_action` (`rot`) carry things; `call_helper_action` asks a
+    helper for a hand.
+  - `stash_action` and `take_action` move stacks in and out of furniture.
+  - `helm_action` takes the helm we stand at or lets go; `steer` (`helm`
+    [thrust, turn, lift], each -1..1) flies the ship.
+
+  Every reply that changes your bag carries the new one. Broadcasts cover
+  everything as it changes: `block_changed`, `crop`, `cows`, `moo`,
+  `carry`, `furniture`/`furniture_gone`, `site`/`site_gone`, `helpers`,
+  `ship` (a whole ship: pose, pilot, blocks), `ship_block`, `ships` (poses
+  and velocities, ten times a second), and `travel` when a ship crosses
+  into the next universe with its riders.
 
 Movement is sent as motion, not a stream of positions. `move` carries where
 the player stands (`at`), their velocity in tiles a second (`v`) and, when
@@ -90,12 +154,18 @@ a wall), plus once a second while moving to correct drift. Other clients
 carry each avatar along its last motion and ease out any error. The server
 predicts the same way (`Sosh.Lobby.position/2`) to push cows and check
 reach. Walking is about 6 messages a second at worst, and nothing while
-standing still.
+standing still. On a ship, `move` also carries `on` (its id) and `local`,
+where on it you stand, with `v` and `to` in the ship's frame: the ship
+carries everyone on it, so a rider standing still on a flying ship sends
+nothing either, and every client places them by the same pose as the ship.
 
-The world lives in Postgres (`chunks` table, one 4 KB row per chunk). Chunks
-nobody has edited are generated, not stored. Edits autosave every 30s and on
-shutdown, and `Sosh.World.save()` saves on demand, for example from
-`iex -S mix phx.server`. Movement runs on the engine's `now()` clock, so it's
+The world lives in Postgres. Each universe's islands are generated from
+its seed (`universes` table), and only chunks someone has changed are
+stored (`chunks`, one 4 KB row per chunk). The rest of a universe's state
+(crops, furniture, blueprints, ships) is a JSON blob in `universes.state`.
+It saves when the universe goes to sleep, every 30s while awake and on
+shutdown; `Sosh.Sim.save({0, 0})` saves on demand, for example from
+`iex -S mix phx.server`. Players' bags and whereabouts are in `players`. Movement runs on the engine's `now()` clock, so it's
 the same speed at any frame rate (an engine without `now()` falls back to
 counting frames). Heartbeats, reconnect backoff and other timers count
 frames.
@@ -128,3 +198,19 @@ frames.
   petrichor64's `feat/tilesets`; without it the ground stays cubes.
 - **Load order:** script load order isn't guaranteed, so top level only
   defines things and everything runs from `main()`.
+- **JSON nulls vanish:** the decoder drops nulls from arrays and closes the
+  gap, so a Phoenix broadcast `[null, null, topic, event, payload]` arrives
+  three long. `phx.lua` reads frames from the end, and the server sends
+  empty bag and furniture slots as `[]`, not null.
+- **Entity tile grids:** a ship is one entity whose tiles (`ent:tile`)
+  move and turn with it. On the web an entity's tiles only reach the
+  renderer in the frame it's made, so a ship whose blocks change is made
+  again. `hit.grid` (and every `hit.*`) waits on a reply the worker never
+  gets, like `dtile`, so ships' collisions are worked out by the server and
+  players' footing on them by `Avatar.footing`.
+- **No anonymous functions:** `local f = function() … end` inside a
+  function panics silt's compiler (`SILT-BUGS.md` #10); only named
+  functions.
+- **No `dtile()` on the web:** there it waits on a reply the worker never
+  gets and hangs the VM (and with no arguments it drops only one chunk
+  anyway). `Blocks.clear` clears tiles one by one.

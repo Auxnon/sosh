@@ -1,12 +1,16 @@
 -- carry — who holds what, overhead.
 --
 -- The server's universe (Sosh.Sim) decides what can be carried: the block
--- ids it lists on join (`carryable`) and any cow. Each change arrives as
--- `carry` {user_id, block, cow}, both nil when they put it down; picking a
--- block up or putting it down also arrives as an ordinary `block_changed`.
+-- ids it lists on join (`carryable`), any cow and any furniture. Each
+-- change arrives as `carry` {user_id, block, cow, furniture}, all nil when
+-- they put it down; picking a block up or putting it down also arrives as
+-- an ordinary `block_changed`.
 --
 -- The thing rides directly above its holder, where the raised arms point:
--- a block as its own small entity, a cow as the herd's entity, moved there.
+-- a block as its own small entity, a cow as the herd's entity, moved there,
+-- and furniture as its own (furniture.lua), which also knows when heavy
+-- furniture is only gripped, waiting for a second carrier. Helpers hold
+-- furniture too (Furn.helper_holds).
 
 Carry = {}
 
@@ -56,12 +60,17 @@ function Carry.set(p)
 		Carry.let_go(old)
 		Carry.by[p.user_id] = nil
 	end
-	if p.block == nil and p.cow == nil then
+	if p.block == nil and p.cow == nil and p.furniture == nil then
 		return
 	end
 	local h = {}
 	h.block = p.block
 	h.cow = p.cow
+	h.furniture = p.furniture
+	if p.furniture ~= nil then
+		Carry.by[p.user_id] = h
+		return
+	end
 	if p.block ~= nil then
 		-- hoisted: see Farm.set (SILT-BUGS.md #7)
 		local model = Carry.model(p.block)
@@ -95,7 +104,15 @@ function Carry.of(user_id)
 	return Carry.by[user_id]
 end
 
--- How tall the thing a player holds is, or 0.
+-- Whether an avatar (a player's or a helper's) has its hands on something.
+function Carry.holds(av)
+	if Carry.by[av.id] ~= nil then
+		return true
+	end
+	return av.helper_id ~= nil and Furn.helper_holds[av.helper_id] ~= nil
+end
+
+-- How tall the thing a player holds over their head is, or 0.
 function Carry.height(user_id)
 	local h = Carry.of(user_id)
 	if h == nil then
@@ -104,7 +121,23 @@ function Carry.height(user_id)
 	if h.cow ~= nil then
 		return HELD_COW_H
 	end
+	if h.furniture ~= nil then
+		local f = Furn.pieces[h.furniture]
+		if f == nil or not f.lifted then
+			return 0
+		end
+		return Furn.height(h.furniture)
+	end
 	return HELD_H
+end
+
+-- The furniture `user_id` has hold of, or nil.
+function Carry.furniture(user_id)
+	local h = Carry.of(user_id)
+	if h == nil then
+		return nil
+	end
+	return h.furniture
 end
 
 -- Where a carried cow is ({x, y, z, heading}), or nil if it isn't carried

@@ -266,6 +266,199 @@ def pot_mesh(cx, cy):
     )
 
 
+# -- furniture, blueprints, airships and what lies below
+
+# Swatch patterns, each 8x8: a base colour and a darker accent.
+def swatch(kind, base, dark):
+    im = Image.new("RGBA", (8, 8), base)
+    for y in range(8):
+        for x in range(8):
+            c = None
+            if kind == "plank" and y in (0, 4):
+                c = dark
+            elif kind == "drawer" and (x in (0, 7) or y in (0, 7)):
+                c = dark
+            elif kind == "drawer" and (x, y) in ((3, 3), (4, 3)):
+                c = (214, 178, 92, 255)
+            elif kind == "door" and (x in (0, 7) or y in (0, 7) or x == 4):
+                c = dark
+            elif kind == "door" and (x, y) in ((3, 4), (5, 4)):
+                c = (214, 178, 92, 255)
+            elif kind == "burlap" and (x + y) % 3 == 0:
+                c = dark
+            elif kind == "speckle" and (x * 5 + y * 3) % 7 == 0:
+                c = dark
+            elif kind == "latch" and 2 <= x <= 5 and 1 <= y <= 4:
+                c = (214, 178, 92, 255) if (x, y) != (3, 3) else dark
+            if c:
+                im.putpixel((x, y), c)
+    return im
+
+
+def atlas(*swatches):
+    """Swatches side by side; returns the image and uv(i) -> face_uv for swatch i."""
+    im = Image.new("RGBA", (8 * len(swatches), 8))
+    for i, sw in enumerate(swatches):
+        im.paste(sw, (i * 8, 0))
+    w = im.width
+    # inset half a texel so nearest filtering never bleeds a neighbour in
+    uv = lambda i: (lambda n: ((i * 8 + 0.5) / w, 0.5 / 8, (i * 8 + 7.5) / w, 7.5 / 8))
+    return im, uv
+
+
+WOOD = (168, 120, 72, 255)
+WOOD_DK = (120, 84, 48, 255)
+WOOD_RED = (150, 86, 60, 255)
+WOOD_RED_DK = (104, 56, 40, 255)
+
+
+def faced(front, rest):
+    """Front (-Y, frustum's "right") one way, every other face another."""
+    return lambda n: front(n) if n == "right" else rest(n)
+
+
+def furniture_models():
+    """Each piece drawn from its origin cell's centre at its base, along +x
+    (width) and +y (depth), front facing -y: Sosh's footprint convention,
+    so a model rotated by rot quarter turns covers the cells it takes."""
+    im, uv = atlas(
+        swatch("plank", WOOD, WOOD_DK),  # 0
+        swatch("drawer", WOOD, WOOD_DK),  # 1
+        swatch("latch", WOOD, WOOD_DK),  # 2
+        swatch("plank", WOOD_RED, WOOD_RED_DK),  # 3
+        swatch("drawer", WOOD_RED, WOOD_RED_DK),  # 4
+        swatch("door", WOOD_RED, WOOD_RED_DK),  # 5
+        swatch("burlap", (190, 164, 112, 255), (160, 134, 86, 255)),  # 6
+        swatch("plank", (196, 150, 98, 255), (150, 108, 64, 255)),  # 7
+    )
+    png = png_bytes(im)
+    s = 1 / 16
+
+    def legs(x0, x1, y0, y1, z1, t):
+        return [box(x, y, t, t, 0.0, z1, uv(0)) for x in (x0, x1) for y in (y0, y1)]
+
+    models = {
+        "chest": merge(
+            box(0, 0, 7 * s, 5 * s, 0.0, 6 * s, faced(uv(1), uv(0))),
+            box(0, 0, 7.5 * s, 5.5 * s, 6 * s, 10 * s, faced(uv(2), uv(0))),
+        ),
+        "drawer": merge(
+            box(0, 0, 6 * s, 5 * s, 0.0, 6 * s, faced(uv(4), uv(3))),
+            box(0, 0, 6 * s, 5 * s, 6 * s, 12 * s, faced(uv(4), uv(3))),
+            box(0, 0, 6.5 * s, 5.5 * s, 12 * s, 13 * s, uv(3)),
+        ),
+        "dresser": merge(
+            *[
+                box(x, 0, 7.5 * s, 6 * s, z0, z0 + 5 * s, faced(uv(4), uv(3)))
+                for x in (0.0, 1.0)
+                for z0 in (1 * s, 6 * s, 11 * s)
+            ],
+            box(0.5, 0, 15.5 * s, 6.5 * s, 0.0, 1 * s, uv(3)),
+            box(0.5, 0, 16 * s, 7 * s, 16 * s, 17 * s, uv(3)),
+        ),
+        "table": merge(
+            box(0.5, 0, 15 * s, 7 * s, 11 * s, 13 * s, uv(7)),
+            *legs(-6 * s, 1 + 6 * s, -5 * s, 5 * s, 11 * s, 1 * s),
+        ),
+        "stool": merge(
+            box(0, 0, 5 * s, 5 * s, 7 * s, 9 * s, uv(7)),
+            *legs(-4 * s, 4 * s, -4 * s, 4 * s, 7 * s, 0.75 * s),
+        ),
+        "wardrobe": merge(
+            box(0, 0, 7 * s, 6 * s, 0.0, 30 * s, faced(uv(5), uv(3))),
+            box(0, 0, 7.5 * s, 6.5 * s, 30 * s, 31 * s, uv(3)),
+        ),
+        "sack": merge(
+            box(0, 0, 5 * s, 5 * s, 0.0, 6 * s, uv(6), top=(4 * s, 4 * s)),
+            box(0, 0, 4 * s, 4 * s, 6 * s, 9 * s, uv(6), top=(1.5 * s, 1.5 * s)),
+            box(0, 0, 2 * s, 2 * s, 9 * s, 10 * s, uv(6)),
+        ),
+    }
+    for name, (pos, uvs, idx) in models.items():
+        write_glb(ASSETS / f"{name}.glb", pos, uvs, idx, png)
+
+
+def scaffold_model():
+    """A blueprint's cell: a frame of poles on the cell's edges."""
+    im, uv = atlas(swatch("plank", (210, 176, 120, 255), (170, 132, 82, 255)))
+    t = 1 / 32
+    parts = []
+    for x in (-0.5 + t, 0.5 - t):
+        for y in (-0.5 + t, 0.5 - t):
+            parts.append(box(x, y, t, t, 0.0, 1.0, uv(0)))
+    for z0 in (0.0, 1.0 - 2 * t):
+        for y in (-0.5 + t, 0.5 - t):
+            parts.append(box(0, y, 0.5, t, z0, z0 + 2 * t, uv(0)))
+        for x in (-0.5 + t, 0.5 - t):
+            parts.append(box(x, 0, t, 0.5, z0, z0 + 2 * t, uv(0)))
+    pos, uvs, idx = merge(*parts)
+    write_glb(ASSETS / "scaffold.glb", pos, uvs, idx, png_bytes(im))
+
+
+def ship_textures():
+    """The tiles airships are built of (scripts/ships.lua), each a block:
+    deck planks, a dark hull, balloon canvas with a red band, a rail and the
+    helm's wheel."""
+    deck = tile_texture((196, 150, 98, 255), (178, 134, 86, 255), 31)
+    for y in (0, 4, 8, 12):
+        for x in range(16):
+            deck.putpixel((x, y), (150, 108, 64, 255))
+    for y0, x in ((1, 5), (5, 11), (9, 3), (13, 9)):
+        for y in range(y0, y0 + 3):
+            deck.putpixel((x, y), (150, 108, 64, 255))
+    deck.save(ASSETS / "deck.png")
+
+    hull = tile_texture((112, 78, 52, 255), (96, 66, 44, 255), 37)
+    for y in (0, 5, 10, 15):
+        for x in range(16):
+            hull.putpixel((x, y), (74, 50, 34, 255))
+    for x in (2, 9):
+        for y in (2, 7, 12):
+            hull.putpixel((x, y), (190, 170, 120, 255))
+    hull.save(ASSETS / "hull.png")
+
+    balloon = tile_texture((232, 222, 200, 255), (214, 202, 178, 255), 41)
+    for y in range(6, 10):
+        for x in range(16):
+            balloon.putpixel((x, y), (200, 80, 64, 255) if y in (7, 8) else (176, 64, 52, 255))
+    balloon.save(ASSETS / "balloon.png")
+
+    rail = tile_texture((168, 120, 72, 255), (146, 102, 60, 255), 43)
+    for y in range(16):
+        for x in range(16):
+            if y < 3 or x in (0, 15, 7, 8):
+                rail.putpixel((x, y), (120, 84, 48, 255))
+            elif y > 12:
+                rail.putpixel((x, y), (146, 102, 60, 255))
+    rail.save(ASSETS / "rail.png")
+
+    helm = tile_texture((168, 120, 72, 255), (146, 102, 60, 255), 47)
+    gold = (214, 178, 92, 255)
+    for y in range(16):
+        for x in range(16):
+            d = ((x - 7.5) ** 2 + (y - 7.5) ** 2) ** 0.5
+            if 4.5 <= d <= 6.2 or (d < 6.2 and (abs(x - 7.5) < 1 or abs(y - 7.5) < 1)):
+                helm.putpixel((x, y), gold if d > 1.5 else (120, 84, 48, 255))
+    helm.save(ASSETS / "helm.png")
+
+
+def below_model(name, base, speckle, seed):
+    """What lies far below the islands: a wide flat grid at z = 0, its
+    texture repeated once a cell (the engine has no wrapping UVs)."""
+    tex = tile_texture(base, speckle, seed)
+    cells, size = 24, 12.0
+    half = cells * size / 2
+    pos, uvs, idx = [], [], []
+    for j in range(cells):
+        for i in range(cells):
+            x0, y0 = -half + i * size, -half + j * size
+            n = len(pos)
+            pos += [(x0, y0, 0.0), (x0 + size, y0, 0.0), (x0 + size, y0 + size, 0.0), (x0, y0 + size, 0.0)]
+            uvs += [(0, 1), (1, 1), (1, 0), (0, 0)]
+            idx += [n, n + 1, n + 2, n, n + 2, n + 3]
+    write_glb(ASSETS / f"{name}.glb", pos, uvs, idx, png_bytes(tex))
+
+
 def tile_texture(base, speckle, seed):
     """16x16 pixel-art ground tile: base colour with deterministic speckles."""
     im = Image.new("RGBA", (16, 16), base)
@@ -521,6 +714,19 @@ def main():
             edge.putpixel((t, i), (255, 236, 160, 255))
     pos, uvs, idx = frustum(0.52, 0.52, 0.52, 0.52, -0.02, 1.02, whole)
     write_glb(ASSETS / "cursor.glb", pos, uvs, idx, png_bytes(edge))
+    # A blueprint's footprint before it's laid out: the cursor, in green.
+    ghost = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    for i in range(16):
+        for t in (0, 15):
+            ghost.putpixel((i, t), (140, 236, 150, 255))
+            ghost.putpixel((t, i), (140, 236, 150, 255))
+    write_glb(ASSETS / "ghost.glb", pos, uvs, idx, png_bytes(ghost))
+
+    furniture_models()
+    scaffold_model()
+    ship_textures()
+    below_model("sea", (54, 104, 160, 255), (78, 128, 184, 255), 23)
+    below_model("land", (88, 120, 70, 255), (70, 98, 56, 255), 29)
 
     pos, uvs, idx = cow_mesh()
     write_glb(ASSETS / "cow.glb", pos, uvs, idx, png_bytes(cow_texture()))
@@ -540,7 +746,10 @@ def main():
     icon.alpha_composite(head, (8, 8))
     icon.save(ROOT / "icon.png")
 
-    print(f"wrote the player, {count} faces, cow, carrots, pots and ground tiles to {ASSETS}")
+    print(
+        f"wrote the player, {count} faces, cow, carrots, pots, furniture, ship tiles,"
+        f" sea, land and ground tiles to {ASSETS}"
+    )
 
 
 if __name__ == "__main__":

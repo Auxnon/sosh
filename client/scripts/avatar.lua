@@ -15,6 +15,13 @@
 -- (`follow`): the same motion, carried on between messages, and any drift
 -- from where the owner says they are eased away over a few frames. Whatever
 -- they carry (carry.lua) rides over their head, arms raised to it.
+--
+-- Airships (ships.lua) are ground too. Standing on one, an avatar is `on`
+-- it and rides along: every frame it's first carried by however the ship
+-- moved and turned, then walks as usual, so ship and rider never part and
+-- nothing jitters. Walking off the edge, it falls. Remote players aboard
+-- report where on the ship they stand, so they're placed by the same
+-- (eased) pose as the ship itself.
 
 Avatar = {}
 Avatar.__index = Avatar
@@ -61,6 +68,10 @@ function Avatar.new(id, name, x, y, z, face, anim)
 	a.emote_t = 0
 	a.bubbles = {}
 	a.hold = nil -- {x, y, z, heading}: where a carried thing goes
+	a.on = nil -- the ship id it stands on, if any
+	a.ton = nil -- the ship (tx, ty) is on, if they're in its frame
+	-- where on ship `on` to stand once we know where that ship is
+	a.wait = nil
 	a.clip = nil -- the clip the model is playing
 	a.hex = U.hex_for(id)
 	a:spawn()
@@ -109,9 +120,11 @@ function Avatar:play_emote(name)
 	self:say(EMOTE_SAY[name])
 end
 
-function Avatar:walk_to(x, y)
+-- Walk to (x, y): in the world, or on ship `on`, in its frame.
+function Avatar:walk_to(x, y, on)
 	self.tx = x
 	self.ty = y
+	self.ton = on
 	self.dvx = 0
 	self.dvy = 0
 end
@@ -120,6 +133,7 @@ end
 function Avatar:drive(vx, vy)
 	self.tx = nil
 	self.ty = nil
+	self.ton = nil
 	self.dvx = vx
 	self.dvy = vy
 end
@@ -133,20 +147,52 @@ function Avatar:driven()
 end
 
 -- A remote player's `move`: they're at `at`, moving at `v` tiles a second,
--- and stopping at `to` if it isn't nil.
-function Avatar:follow(at, v, to)
-	local ex = at[1] - self.x
-	local ey = at[2] - self.y
-	if ex * ex + ey * ey > AV_SNAP * AV_SNAP then
-		self:teleport(at[1], at[2], at[3])
+-- and stopping at `to` if it isn't nil. On ship `on`, all three are in its
+-- frame.
+function Avatar:follow(at, v, to, on)
+	local x = at[1]
+	local y = at[2]
+	local z = at[3]
+	local vx = 0
+	local vy = 0
+	if v ~= nil then
+		vx = v[1]
+		vy = v[2]
+	end
+	local s = Ships.get(on)
+	if on ~= nil and s == nil then
+		-- a ship we don't know yet: stand there once it shows up
+		self.on = on
+		self.wait = at
+		self:stop()
+		return
+	end
+	if s ~= nil then
+		local wx, wy, wz = Ships.to_world(s, at[1], at[2], at[3])
+		x = wx
+		y = wy
+		z = wz
+		local c = cos(s.h)
+		local n = sin(s.h)
+		local wvx = vx * c - vy * n
+		vy = vx * n + vy * c
+		vx = wvx
+	end
+	self.on = on
+	self.wait = nil
+	local ex = x - self.x
+	local ey = y - self.y
+	if ex * ex + ey * ey > AV_SNAP * AV_SNAP or math.abs(z - self.z) > AV_SNAP then
+		self:teleport(x, y, z)
+		self.on = on
 	else
 		self.ex = ex
 		self.ey = ey
 	end
 	if to ~= nil then
-		self:walk_to(to[1], to[2])
+		self:walk_to(to[1], to[2], on)
 	elseif v ~= nil then
-		self:drive(v[1], v[2])
+		self:drive(vx, vy)
 	else
 		self:stop()
 	end
@@ -157,6 +203,8 @@ function Avatar:teleport(x, y, z)
 	self.y = y
 	self.z = z
 	self.vz = 0
+	self.on = nil
+	self.wait = nil
 	self.ex = 0
 	self.ey = 0
 	self:stop()
@@ -177,19 +225,75 @@ function Avatar:say(text)
 	end
 end
 
+-- Where a foot can find purchase off the middle: so a sliver of a gap
+-- between a ship and the shore, or a deck's edge, doesn't stop anyone.
+AV_TOES = { { 0.3, 0 }, { -0.3, 0 }, { 0, 0.3 }, { 0, -0.3 } }
+
+-- Where feet rest at (x, y) for someone at height z: on the world's blocks
+-- or a ship's, whichever is higher (one block up is a step, as
+-- Blocks.ground); and the ship's id if it's a ship. Over nothing, what's
+-- under their toes, if anything. nil if nothing's below.
+function Avatar.footing(x, y, z)
+	local g, on = Avatar.footing_at(x, y, z)
+	if g ~= nil then
+		return g, on
+	end
+	for i = 1, #AV_TOES do
+		local t = AV_TOES[i]
+		local tg, ton = Avatar.footing_at(x + t[1], y + t[2], z)
+		if tg ~= nil and (g == nil or tg > g) then
+			g = tg
+			on = ton
+		end
+	end
+	return g, on
+end
+
+-- Avatar.footing, right under (x, y).
+function Avatar.footing_at(x, y, z)
+	local g = Blocks.ground(x, y, z)
+	local on = nil
+	for id, s in pairs(Ships.list) do
+		local sg = Ships.ground(s, x, y, z)
+		if sg ~= nil and (g == nil or sg > g) then
+			g = sg
+			on = id
+		end
+	end
+	return g, on
+end
+
+-- Can someone at height z walk into (x, y)? Ground underfoot and two clear
+-- cells of headroom, in the world and on every ship.
+function Avatar.walkable(x, y, z)
+	local g = Avatar.footing(x, y, z)
+	if g == nil then
+		return false
+	end
+	local cx = Blocks.cell(x)
+	local cy = Blocks.cell(y)
+	local gz = flr(g + 0.01)
+	if Blocks.get(cx, cy, gz) ~= 0 or Blocks.get(cx, cy, gz + 1) ~= 0 then
+		return false
+	end
+	local knee = g + 0.5
+	local head = g + 1.5
+	return not Ships.solid_at(x, y, knee) and not Ships.solid_at(x, y, head)
+end
+
 -- Move by (wx, wy) if the way is clear. Driven avatars slide along a wall
 -- on whichever axis is free; one walking to a point just stops there.
 -- Returns true if it moved.
 function Avatar:step(wx, wy, dt)
 	local nx = self.x + wx
 	local ny = self.y + wy
-	if not Blocks.walkable(nx, ny, self.z) then
+	if not Avatar.walkable(nx, ny, self.z) then
 		if self.tx ~= nil then
 			return false
 		end
-		if wx ~= 0 and Blocks.walkable(nx, self.y, self.z) then
+		if wx ~= 0 and Avatar.walkable(nx, self.y, self.z) then
 			ny = self.y
-		elseif wy ~= 0 and Blocks.walkable(self.x, ny, self.z) then
+		elseif wy ~= 0 and Avatar.walkable(self.x, ny, self.z) then
 			nx = self.x
 		else
 			return false
@@ -202,16 +306,63 @@ function Avatar:step(wx, wy, dt)
 	return true
 end
 
+-- Carried by the ship we stand on, however it moved since last frame. A
+-- ship we're waiting to learn about holds us where we are.
+function Avatar:ride()
+	if self.on == nil then
+		return true
+	end
+	local s = Ships.get(self.on)
+	if s == nil then
+		if self.wait ~= nil then
+			return false
+		end
+		self.on = nil
+		return true
+	end
+	if self.wait ~= nil then
+		local w = self.wait
+		local wx, wy, wz = Ships.to_world(s, w[1], w[2], w[3])
+		self.x = wx
+		self.y = wy
+		self.z = wz
+		self.wait = nil
+		self.vz = 0
+		return true
+	end
+	local x, y, z, turned = Ships.carry(s, self.x, self.y, self.z)
+	self.x = x
+	self.y = y
+	self.z = z
+	self.heading = self.heading + turned
+	return true
+end
+
 function Avatar:update(dt)
 	self.t = self.t + 1
+
+	if not self:ride() then
+		self:age_bubbles()
+		self:pose()
+		return
+	end
 
 	local px = self.x
 	local py = self.y
 	local wx = self.dvx * dt
 	local wy = self.dvy * dt
 	if self.tx ~= nil then
-		local dx = self.tx - self.x
-		local dy = self.ty - self.y
+		-- the point to walk to, in the world now
+		local gx = self.tx
+		local gy = self.ty
+		local ts = Ships.get(self.ton)
+		if ts ~= nil then
+			local wx, wy, wz = Ships.to_world(ts, self.tx, self.ty, 0)
+			gx = wx
+			gy = wy
+		end
+		local dx = gx - self.x
+		local dy = gy - self.y
 		local dist = sqrt(dx * dx + dy * dy)
 		if dist > 0.02 then
 			local step = AV_SPEED * dt
@@ -223,6 +374,7 @@ function Avatar:update(dt)
 		else
 			self.tx = nil
 			self.ty = nil
+			self.ton = nil
 			wx = 0
 			wy = 0
 		end
@@ -260,8 +412,9 @@ function Avatar:update(dt)
 		self.walk = U.lerp(self.walk, 0, 0.2)
 	end
 
-	-- terrain: step up onto a single block, fall otherwise
-	local g = Blocks.ground(self.x, self.y, self.z)
+	-- blocks, the world's or a ship's: step up onto a single block, fall
+	-- otherwise; standing on a ship, we're on it
+	local g, on = Avatar.footing(self.x, self.y, self.z)
 	if g ~= nil then
 		if g >= self.z then
 			self.z = g
@@ -274,6 +427,13 @@ function Avatar:update(dt)
 				self.vz = 0
 			end
 		end
+		if self.z == g then
+			self.on = on
+		else
+			self.on = nil
+		end
+	else
+		self.on = nil
 	end
 
 	if self.emote_t > 0 then
@@ -283,6 +443,11 @@ function Avatar:update(dt)
 		end
 	end
 
+	self:age_bubbles()
+	self:pose()
+end
+
+function Avatar:age_bubbles()
 	local i = #self.bubbles
 	while i >= 1 do
 		local b = self.bubbles[i]
@@ -292,8 +457,6 @@ function Avatar:update(dt)
 		end
 		i = i - 1
 	end
-
-	self:pose()
 end
 
 -- Pose the model from position, heading, animation, emote and time: the
@@ -309,7 +472,7 @@ end
 function Avatar:pose()
 	local h = self.heading
 	local t = self.t
-	local holding = Carry.of(self.id) ~= nil
+	local holding = Carry.holds(self)
 
 	local clip = "idle"
 	local bob = 0

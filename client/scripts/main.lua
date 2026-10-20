@@ -1,4 +1,12 @@
--- sosh — a little social plaza. Petrichor64 client for the Phoenix server.
+-- sosh — floating islands in a grid of universes, to hang out on together.
+-- Petrichor64 client for the Phoenix server.
+--
+-- A universe is one cell of the grid: islands floating over the sea or
+-- over wild land, with airships to fly between them and, off the edge of
+-- the universe, into the next one. We're in one at a time, joined to its
+-- two channels (`room:gx,gy` for people, `actions:gx,gy` for everything
+-- else); flying into another, or being told we're elsewhere when joining,
+-- swaps them for that universe's (enter_universe).
 --
 -- Runs unchanged as a desktop app and in the browser: all UI is drawn on the
 -- engine's gui layer, and the network is the engine's websocket `conn`
@@ -49,16 +57,33 @@ function main()
 	APP.sent_vy = 0
 	APP.sent_to = nil
 	APP.drag = false
-	-- "walk", "dig", "build", "plant" or "carry"
+	-- "walk", "dig", "build", "plant", "carry" or "craft"
 	APP.tool = "walk"
-	APP.block_i = 1
+	-- what the build tool places (an item in the bag), and the blueprint
+	-- the craft tool lays out (an index into Furn.order)
+	APP.build_item = nil
+	APP.craft_i = 1
+	-- quarter turns for furniture and blueprints (R)
+	APP.rot = 0
 	APP.cursor = nil
 	APP.target = nil
 	APP.fetch_tick = 0
+	APP.universe = { 0, 0 }
+	APP.kind = "sea"
+	-- which sides have a neighbour: east, west, north, south
+	APP.open = {}
+	-- what we last asked our ship for, and when
+	APP.steer = nil
+	APP.steer_at = 0
 	Blocks.init()
 	Farm.init()
 	Herd.init()
 	Carry.init()
+	Furn.init()
+	Ships.init()
+	Helpers.init()
+	Bag.init()
+	world_below("sea")
 
 	-- something to look at behind the connect screen
 	CAM.az = 0.6
@@ -105,7 +130,7 @@ function connect_screen()
 	local y = flr((gui.h - h) / 2)
 	UI.panel(x, y, w, h)
 	UI.text("sosh", x + PAD * 3, y + PAD * 3, C_ACCENT)
-	UI.text("a little plaza to hang out in", x + PAD * 3, y + PAD * 3 + LH + 2, C_DIM)
+	UI.text("islands in the sky to hang out on", x + PAD * 3, y + PAD * 3 + LH + 2, C_DIM)
 
 	local fx = x + PAD * 3
 	local fw = w - PAD * 6
@@ -162,23 +187,10 @@ function start_session()
 	APP.my_name = name
 
 	PHX = Phx.new(url)
-	local sx = rnd() * 4 - 2
-	local sy = rnd() * 4 - 2
-	local params = {}
-	params.name = name
-	local vec = { sx, sy, GROUND_Z }
-	params.vec = vec
-	params.face = 0
-	params.animation = 0
-	LOBBY = PHX:channel("room:lobby", params)
-	bind_lobby(LOBBY)
-	local none = {}
-	ACTIONS = PHX:channel("actions:lobby", none)
-	bind_actions(ACTIONS)
+	-- the server says which universe we're in (and where we stand) on join
+	enter_universe(APP.universe)
 	PHX:connect()
 
-	APP.spawn_x = sx
-	APP.spawn_y = sy
 	APP.screen = "world"
 	CAM.az = 0.6
 	if APP.web then
@@ -191,19 +203,87 @@ end
 -- ---------------------------------------------------------------------------
 -- network
 
+function universe_key(u)
+	return tostring(u[1]) .. "," .. tostring(u[2])
+end
+
+-- Join universe `u`'s channels, leaving the ones we were in, with nothing
+-- of the last universe left in view.
+function enter_universe(u)
+	if LOBBY ~= nil then
+		PHX:leave(LOBBY)
+	end
+	if ACTIONS ~= nil then
+		PHX:leave(ACTIONS)
+	end
+	clear_world()
+	APP.universe = u
+	local key = universe_key(u)
+	local params = {}
+	params.name = APP.my_name
+	params.face = 0
+	params.animation = 0
+	if APP.me ~= nil then
+		params.face = APP.me.face
+		params.animation = APP.me.anim
+	end
+	LOBBY = PHX:channel("room:" .. key, params)
+	bind_lobby(LOBBY)
+	local ap = {}
+	ap.name = APP.my_name
+	ACTIONS = PHX:channel("actions:" .. key, ap)
+	bind_actions(ACTIONS)
+	PHX:open(LOBBY)
+	PHX:open(ACTIONS)
+end
+
+function clear_world()
+	Blocks.clear()
+	Farm.init()
+	Herd.init()
+	Carry.init()
+	Furn.init()
+	Ships.init()
+	Helpers.init()
+	Bag.box = nil
+	while #APP.order > 0 do
+		remove_player(APP.order[1])
+	end
+	APP.fetch_tick = 0
+end
+
 function bind_lobby(ch)
 	ch.on_join = function(reply)
 		APP.my_id = reply.user_id
-		if APP.me == nil then
-			APP.me = Avatar.new(reply.user_id, APP.my_name, APP.spawn_x, APP.spawn_y, GROUND_Z, 0, 0)
-		else
-			-- rejoined after a drop: new id, same body (LOBBY.params has
-			-- kept up with position/face/pose, so others see us as we were)
-			APP.me.id = reply.user_id
+		-- where the server says we stand: where we left off, aboard the
+		-- ship we flew in on, or on the home island
+		local at = reply.at
+		if at == nil then
+			at = { 0, 0, GROUND_Z }
 		end
-		add_chat(nil, "joined the plaza", C_OK)
+		if APP.me == nil then
+			APP.me = Avatar.new(reply.user_id, APP.my_name, at[1], at[2], at[3], 0, 0)
+		else
+			-- rejoined (a drop, another universe): new id, same body
+			APP.me.id = reply.user_id
+			APP.me:teleport(at[1], at[2], at[3])
+		end
+		local on = Furn.frame(reply.on)
+		if on ~= nil and reply["local"] ~= nil then
+			-- on deck, once we know where the ship is
+			APP.me.on = on
+			APP.me.wait = reply["local"]
+		end
+		APP.sent_on = nil
+		APP.sent_at = 0
+		add_chat(nil, "in universe " .. universe_key(APP.universe), C_OK)
 	end
 	ch.on_error = function(reply)
+		if reply ~= nil and reply.reason == "elsewhere" and reply.universe ~= nil then
+			-- we're in another universe: go there
+			enter_universe(reply.universe)
+			return
+		end
 		local why = "join refused"
 		if reply ~= nil and reply.reason ~= nil then
 			why = why .. ": " .. tostring(reply.reason)
@@ -246,8 +326,14 @@ function bind_lobby(ch)
 	end
 	ch.on["move"] = function(p)
 		local av = APP.players[p.user_id]
-		if av ~= nil and p.at ~= nil then
-			av:follow(p.at, p.v, p.to)
+		if av == nil or p.at == nil then
+			return
+		end
+		local on = Furn.frame(p.on)
+		if on ~= nil and p["local"] ~= nil then
+			av:follow(p["local"], p.v, p.to, on)
+		else
+			av:follow(p.at, p.v, p.to, nil)
 		end
 	end
 	ch.on["face"] = function(p)
@@ -288,16 +374,29 @@ function bind_lobby(ch)
 	end
 end
 
--- World edits and chunk streaming (SoshWeb.ActionChannel).
+-- Everything that happens in the universe (SoshWeb.ActionChannel).
 function bind_actions(ch)
 	ch.on_join = function(reply)
 		-- (re)joined: anything we hold may be stale, so fetch it all again
 		Blocks.have = {}
 		Blocks.wanted = {}
 		APP.fetch_tick = 0
-		-- the reply is Sosh.Sim's snapshot: every crop and cow
+		APP.kind = reply.kind or "sea"
+		world_below(APP.kind)
+		APP.open = reply.open or {}
+		-- what there is, and what's in our bag
+		Furn.set_catalog(reply.catalog)
+		Bag.set(reply.bag)
+		if APP.build_item == nil or Bag.count(APP.build_item) == 0 then
+			APP.build_item = Bag.placeable()[1]
+		end
+		-- the reply is Sosh.Sim's snapshot: crops and cows, furniture and
+		-- blueprints, ships and helpers
 		Farm.sync(reply.crops or {})
 		Herd.sync(reply.cows or {})
+		Furn.sync(reply.furniture or {}, reply.sites or {})
+		Ships.sync(reply.ships or {})
+		Helpers.sync(reply.helpers or {})
 		-- and who carries what, and what the universe lets anyone carry
 		Carry.set_carryable(reply.carryable or {})
 		Carry.sync(reply.held or {})
@@ -310,7 +409,7 @@ function bind_actions(ch)
 		Farm.set(p.position, p.stage)
 	end
 	ch.on["cows"] = function(p)
-		local rows = p.cows
+		local rows = p.rows
 		for i = 1, #rows do
 			Herd.put(rows[i])
 		end
@@ -320,6 +419,49 @@ function bind_actions(ch)
 	end
 	ch.on["carry"] = function(p)
 		Carry.set(p)
+	end
+	ch.on["furniture"] = function(p)
+		Furn.set(p)
+	end
+	ch.on["furniture_gone"] = function(p)
+		Furn.gone(p.id)
+	end
+	ch.on["site"] = function(p)
+		Furn.set_site(p)
+	end
+	ch.on["site_gone"] = function(p)
+		Furn.site_gone(p.id)
+	end
+	ch.on["ships"] = function(p)
+		local rows = p.rows
+		for i = 1, #rows do
+			Ships.put(rows[i])
+		end
+	end
+	ch.on["ship"] = function(p)
+		Ships.set(p)
+	end
+	ch.on["ship_block"] = function(p)
+		Ships.block(p)
+	end
+	ch.on["helpers"] = function(p)
+		local rows = p.rows
+		for i = 1, #rows do
+			Helpers.put(rows[i])
+		end
+	end
+	-- a ship flew off the edge into the next universe; if we're aboard,
+	-- so do we
+	ch.on["travel"] = function(p)
+		Ships.remove(p.ship)
+		local users = p.users
+		for i = 1, #users do
+			if users[i] == APP.my_id then
+				add_chat(nil, "flying on into universe " .. universe_key(p.to) .. "...", C_ACCENT)
+				enter_universe(p.to)
+				return
+			end
+		end
 	end
 end
 
@@ -369,9 +511,13 @@ function upsert_player(p, snap)
 		av:set_face(p.face or 0)
 		av:set_anim(p.animation or 0)
 	end
-	-- `vec` is where the server reckons they are now; carry on from there
-	if snap and p.vec ~= nil then
-		av:follow(p.vec, p.v, p.to)
+	-- `vec` is where the server reckons they are now (on a ship, `local`
+	-- where on it); carry on from there
+	local on = Furn.frame(p.on)
+	if snap and on ~= nil and p["local"] ~= nil then
+		av:follow(p["local"], p.v, p.to, on)
+	elseif snap and p.vec ~= nil then
+		av:follow(p.vec, p.v, p.to, nil)
 	end
 end
 
@@ -414,23 +560,43 @@ end
 -- second and where we're walking to, if anywhere. Everyone (the server too)
 -- carries us along that until the next one, so this only goes out when the
 -- motion changes, plus a heartbeat to correct drift (see world_frame).
+-- Standing on a ship, all three are in its frame (`local`, with `on` its
+-- id): it carries us, so only our own walking is news.
 function send_move()
 	local me = APP.me
-	local vx = U.round(me.vx, 1000)
-	local vy = U.round(me.vy, 1000)
 	APP.sent_at = U.clock
-	APP.sent_vx = vx
-	APP.sent_vy = vy
+	APP.sent_vx = me.vx
+	APP.sent_vy = me.vy
 	APP.sent_to = nil
+	APP.sent_on = me.on
+	local vx = me.vx
+	local vy = me.vy
 	local ax = U.round(me.x, 1000)
 	local ay = U.round(me.y, 1000)
 	local az = U.round(me.z, 1000)
 	local at = { ax, ay, az }
-	local v = { vx, vy }
 	local payload = {}
 	payload.at = at
+	local s = Ships.get(me.on)
+	if s ~= nil then
+		local lx, ly, lz = Ships.to_local(s, me.x, me.y, me.z)
+		local rx = U.round(lx, 1000)
+		local ry = U.round(ly, 1000)
+		local rz = U.round(lz, 1000)
+		local here = { rx, ry, rz }
+		payload.on = s.id
+		payload["local"] = here
+		local c = cos(s.h)
+		local n = sin(s.h)
+		local lvx = vx * c + vy * n
+		vy = -vx * n + vy * c
+		vx = lvx
+	end
+	local rvx = U.round(vx, 1000)
+	local rvy = U.round(vy, 1000)
+	local v = { rvx, rvy }
 	payload.v = v
-	if me.tx ~= nil then
+	if me.tx ~= nil and me.ton == me.on then
 		local to = { me.tx, me.ty }
 		payload.to = to
 		APP.sent_to = to
@@ -443,6 +609,9 @@ end
 -- Whether our motion has drifted from what we last sent: a start, a stop,
 -- a turn, a new destination, or a wall in the way.
 function motion_changed(me)
+	if me.on ~= APP.sent_on then
+		return true -- stepped aboard or ashore
+	end
 	local to = APP.sent_to
 	if me.tx ~= nil then
 		-- walking to a point: everyone walks us there, so only a new point
@@ -487,7 +656,14 @@ function world_frame()
 			world_keys(me)
 		end
 		world_pointer(me)
+	end
+	-- ships first: whoever's on deck is carried by them
+	Ships.update(U.dt)
+	if me ~= nil then
 		me:update(U.dt)
+		if Ships.piloted_by(APP.my_id) ~= nil then
+			steer_ship(me)
+		end
 		if LOBBY.joined then
 			local since = U.clock - APP.sent_at
 			local moving = me.vx ~= 0 or me.vy ~= 0
@@ -497,13 +673,22 @@ function world_frame()
 				send_move()
 			end
 		end
+		-- walked away from what we had open
+		if Bag.box ~= nil then
+			local f = Furn.pieces[Bag.box]
+			if f == nil or f.lifted or not in_reach(me, f.origin, f.on) then
+				Bag.box = nil
+			end
+		end
 	end
 
 	for i = 1, #APP.order do
 		APP.players[APP.order[i]]:update(U.dt)
 	end
+	Helpers.update(U.dt)
 	Herd.update(me)
 	Carry.update()
+	Furn.update()
 
 	if me ~= nil then
 		place_camera(me.x, me.y, me.z)
@@ -515,360 +700,9 @@ function world_frame()
 	draw_hud()
 end
 
--- WASD / arrows walk relative to the camera; Q/E turn it; F/G cycle face and
--- pose (G puts down what we carry); 1-5 pick walk/dig/build/plant/carry; Z/X
--- pick the block; 6-9 emote; Enter opens chat.
-function world_keys(me)
-	if key("enter", true) then
-		APP.typing = true
-		APP.draft.text = ""
-		cin() -- swallow anything typed this frame
-		return
-	end
-	if key("1", true) then
-		APP.tool = "walk"
-	end
-	if key("2", true) then
-		APP.tool = "dig"
-	end
-	if key("3", true) then
-		APP.tool = "build"
-	end
-	if key("4", true) then
-		APP.tool = "plant"
-	end
-	if key("5", true) then
-		APP.tool = "carry"
-	end
-	if key("z", true) then
-		APP.block_i = (APP.block_i - 2) % #PLACEABLE + 1
-	end
-	if key("x", true) then
-		APP.block_i = APP.block_i % #PLACEABLE + 1
-	end
-	for i = 1, #EMOTES do
-		local k = tostring(i + 5)
-		if key(k, true) then
-			do_emote(EMOTES[i])
-		end
-	end
-	if key("f", true) then
-		change_face(1)
-	end
-	if key("g", true) then
-		pose_pressed()
-	end
-	if key("q") then
-		CAM.az = CAM.az + 0.03
-	end
-	if key("e") then
-		CAM.az = CAM.az - 0.03
-	end
 
-	local fwd = 0
-	local side = 0
-	if key("w") or key("up") then
-		fwd = fwd + 1
-	end
-	if key("s") or key("down") then
-		fwd = fwd - 1
-	end
-	if key("a") or key("left") then
-		side = side + 1
-	end
-	if key("d") or key("right") then
-		side = side - 1
-	end
-	if fwd == 0 and side == 0 then
-		if me:driven() then
-			me:stop()
-		end
-		return
-	end
-	if me.anim == 1 then
-		change_anim(1) -- stand up to walk
-	end
-	local fx = cos(CAM.az)
-	local fy = sin(CAM.az)
-	local dx = fx * fwd - fy * side
-	local dy = fy * fwd + fx * side
-	local l = sqrt(dx * dx + dy * dy)
-	me:drive(dx / l * AV_SPEED, dy / l * AV_SPEED)
-end
-
--- The block under the pointer drives the tools: walk to it, dig it, build on
--- the face it was hit through, farm on it, or carry it (or a cow) and put it
--- down on a face. Right-drag orbits; scroll zooms.
-function world_pointer(me)
-	local m = UI.mouse
-	if m.m2 then
-		CAM.az = CAM.az - m.dx * 4
-		CAM.alt = U.clamp(CAM.alt + m.dy * 2, -1.3, -0.15)
-	end
-	if m.scroll ~= 0 then
-		CAM.dist = U.clamp(CAM.dist - m.scroll * 1.5, 4, 22)
-	end
-
-	local hit = nil
-	local cow = nil
-	-- Buttons are drawn after this runs, so hit-test the HUD region directly.
-	local over_hud = hud_hit(UI.mx, UI.my)
-	local holding = Carry.of(APP.my_id)
-	if not over_hud then
-		hit = Blocks.raycast(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, 48)
-		if APP.tool == "carry" and holding == nil then
-			local d = 48
-			if hit ~= nil then
-				d = hit.dist
-			end
-			cow = Herd.under_ray(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, d)
-		end
-	end
-
-	-- the cell a tool would act on
-	local cell = nil
-	if hit ~= nil then
-		if APP.tool == "dig" then
-			cell = hit.hit
-		elseif APP.tool == "build" then
-			cell = hit.before
-		elseif APP.tool == "plant" then
-			cell = plant_cell(hit)
-		elseif APP.tool == "carry" then
-			if holding ~= nil then
-				cell = hit.before
-			elseif Carry.can_carry(hit.id) then
-				cell = hit.hit
-			end
-		end
-	end
-	if cow ~= nil then
-		local at = { cow.x, cow.y, cow.z }
-		cell = at
-	end
-	if cell ~= nil and not in_reach(me, cell) then
-		cell = nil
-		cow = nil
-	end
-	APP.target = cell
-	show_cursor(cell)
-
-	if not UI.clicked or over_hud then
-		return
-	end
-	if cow ~= nil then
-		pick_up_cow(cow)
-		return
-	end
-	if hit == nil then
-		return
-	end
-	if APP.tool == "walk" then
-		local h = hit.hit
-		if Blocks.walkable(h[1], h[2], h[3] + 1) then
-			if me.anim == 1 then
-				change_anim(1)
-			end
-			me:walk_to(h[1], h[2])
-		end
-	elseif APP.tool == "plant" then
-		if cell ~= nil then
-			farm_action(cell)
-		end
-	elseif APP.tool == "carry" then
-		if cell ~= nil then
-			carry_action(cell)
-		end
-	elseif cell ~= nil then
-		edit_block(cell)
-	end
-end
-
--- The plant tool works on the cell above the soil under the pointer: harvest
--- what grows there, or plant in it.
-function plant_cell(hit)
-	local h = hit.hit
-	local x = h[1]
-	local y = h[2]
-	local z = h[3] + 1
-	if Farm.get(x, y, z) == nil then
-		if hit.id ~= 1 and hit.id ~= 2 then
-			return nil -- grass or dirt only
-		end
-		if Blocks.get(x, y, z) ~= 0 then
-			return nil
-		end
-	end
-	local cell = { x, y, z }
-	return cell
-end
-
-function farm_action(cell)
-	local crop = Farm.get(cell[1], cell[2], cell[3])
-	local pos = { cell[1], cell[2], cell[3] }
-	local payload = {}
-	payload.position = pos
-	if crop == nil then
-		PHX:push(ACTIONS, "plant_action", payload, function(status, response)
-			if status ~= "ok" and response ~= nil and response.reason ~= nil then
-				add_chat(nil, "can't plant: " .. tostring(response.reason), C_BAD)
-			end
-		end)
-	elseif crop.stage < CROP_RIPE then
-		add_chat(nil, "not ripe yet", C_DIM)
-	else
-		PHX:push(ACTIONS, "harvest_action", payload, function(status, response)
-			if status == "ok" then
-				Farm.carrots = Farm.carrots + 1
-				add_chat(nil, "+1 carrot", C_OK)
-			elseif response ~= nil and response.reason ~= nil then
-				add_chat(nil, "can't harvest: " .. tostring(response.reason), C_BAD)
-			end
-		end)
-	end
-end
-
--- Pick up the block in `cell`, or put down what we hold there. The server's
--- `carry` broadcast is what changes our hands, for us as for everyone.
-function carry_action(cell)
-	local pos = { cell[1], cell[2], cell[3] }
-	local payload = {}
-	payload.position = pos
-	local event = "pick_up_action"
-	local verb = "pick that up"
-	if Carry.of(APP.my_id) ~= nil then
-		event = "put_down_action"
-		verb = "put it down"
-	end
-	PHX:push(ACTIONS, event, payload, function(status, response)
-		if status ~= "ok" and response ~= nil and response.reason ~= nil then
-			add_chat(nil, "can't " .. verb .. ": " .. tostring(response.reason), C_BAD)
-		end
-	end)
-end
-
-function pick_up_cow(cow)
-	local payload = {}
-	payload.cow = cow.id
-	PHX:push(ACTIONS, "pick_up_action", payload, function(status, response)
-		if status ~= "ok" and response ~= nil and response.reason ~= nil then
-			add_chat(nil, "can't pick it up: " .. tostring(response.reason), C_BAD)
-		end
-	end)
-end
-
--- Stop carrying: put it down one cell ahead, where we face.
-function put_down_ahead()
-	local me = APP.me
-	local fx = cos(me.heading)
-	local fy = sin(me.heading)
-	local x = Blocks.cell(me.x)
-	local y = Blocks.cell(me.y)
-	if math.abs(fx) >= math.abs(fy) then
-		if fx < 0 then
-			x = x - 1
-		else
-			x = x + 1
-		end
-	elseif fy < 0 then
-		y = y - 1
-	else
-		y = y + 1
-	end
-	local cell = { x, y, flr(me.z + 0.01) }
-	carry_action(cell)
-end
-
--- G and the pose button: put down what we carry, else sit or stand.
-function pose_pressed()
-	if Carry.of(APP.my_id) ~= nil then
-		put_down_ahead()
-	else
-		change_anim(1)
-	end
-end
-
-function in_reach(me, cell)
-	local dx = cell[1] - me.x
-	local dy = cell[2] - me.y
-	local dz = cell[3] + 0.5 - me.z
-	return dx * dx + dy * dy + dz * dz <= REACH * REACH
-end
-
--- The outline cube around the targeted cell, parked far away when there is
--- none (only transforms sync on the web, so it's moved, never re-made).
-function show_cursor(cell)
-	if APP.cursor == nil then
-		APP.cursor = make("cursor", 0, 0, -1000, 1)
-	end
-	local c = APP.cursor
-	if cell == nil then
-		c.z = -1000
-	else
-		c.x = cell[1]
-		c.y = cell[2]
-		c.z = cell[3]
-	end
-end
-
-function edit_block(cell)
-	local pos = { cell[1], cell[2], cell[3] }
-	local payload = {}
-	payload.position = pos
-	local event = "dig_action"
-	if APP.tool == "build" then
-		event = "place_action"
-		payload.block_type = PLACEABLE[APP.block_i]
-	end
-	PHX:push(ACTIONS, event, payload, function(status, response)
-		if status ~= "ok" and response ~= nil and response.reason ~= nil then
-			add_chat(nil, "can't: " .. tostring(response.reason), C_BAD)
-		end
-	end)
-end
-
-function do_emote(name)
-	local me = APP.me
-	me:play_emote(name)
-	local payload = {}
-	payload.emote = name
-	PHX:push(LOBBY, "emote", payload)
-end
-
-function chat_typing()
-	local res = UI.type_into(APP.draft)
-	if res == "escape" then
-		APP.typing = false
-	elseif res == "enter" then
-		local body = U.trim(APP.draft.text)
-		APP.typing = false
-		if body ~= "" then
-			local payload = {}
-			payload.body = body
-			if not PHX:push(LOBBY, "new_msg", payload) then
-				add_chat(nil, "not connected, message not sent", C_BAD)
-			end
-		end
-	end
-end
-
-function change_face(d)
-	local me = APP.me
-	me:set_face(me.face + d)
-	local payload = {}
-	payload.face = me.face
-	LOBBY.params.face = me.face
-	PHX:push(LOBBY, "face", payload)
-end
-
-function change_anim(d)
-	local me = APP.me
-	me:set_anim(me.anim + d)
-	local payload = {}
-	payload.animation = me.anim
-	LOBBY.params.animation = me.anim
-	PHX:push(LOBBY, "animation", payload)
-end
+-- On a ship the camera stands well back, clear of the balloon.
+SHIP_CAM_DIST = 14
 
 function place_camera(x, y, z)
 	local cl = cos(CAM.alt)
@@ -876,323 +710,14 @@ function place_camera(x, y, z)
 	local fy = sin(CAM.az) * cl
 	local fz = sin(CAM.alt)
 	local focus_z = z + 1.1
-	CAM.x = x - fx * CAM.dist
-	CAM.y = y - fy * CAM.dist
-	CAM.z = focus_z - fz * CAM.dist
+	local dist = CAM.dist
+	if APP ~= nil and APP.me ~= nil and APP.me.on ~= nil and dist < SHIP_CAM_DIST then
+		dist = SHIP_CAM_DIST
+	end
+	CAM.x = x - fx * dist
+	CAM.y = y - fy * dist
+	CAM.z = focus_z - fz * dist
 	local pos = { CAM.x, CAM.y, CAM.z }
 	local rot = { CAM.az, CAM.alt }
 	cam({ pos = pos, rot = rot })
-end
-
--- ---------------------------------------------------------------------------
--- HUD
-
-HUD_BTN_W = 72
-HUD_BTN_H = 18
-HUD_ROWS = 7 -- right-hand column: 4 emotes, face, pose, chat
-HINT = "enter: chat  wasd: walk  1-5: tool  z/x: block  f: face  g: pose/drop  6-9: emote  q/e: look"
-TOOLS = { "walk", "dig", "build", "plant", "carry" }
-TOOL_W = 60
-
--- Where everything on the HUD goes this frame. The gui can be as small as
--- 320x240, so nothing overlaps there: the button column hangs from the top
--- right, the toolbar sits on the bottom edge (the block picker wraps to a row
--- above it when it doesn't fit beside it), and chat stacks above those on the
--- left, clear of the column.
-function hud_layout()
-	local L = {}
-	L.top_h = LH + PAD * 2
-	L.col_x = gui.w - HUD_BTN_W - PAD * 2
-	L.col_y = L.top_h + PAD * 2
-	L.col_h = (HUD_BTN_H + PAD) * HUD_ROWS
-
-	local tools_w = TOOL_W * #TOOLS + PAD * (#TOOLS - 1)
-	-- block buttons narrow to fit a small gui on their own row
-	local n = #PLACEABLE
-	L.pick_bw = TOOL_W
-	local fit = flr((gui.w - PAD * 4 - PAD * (n - 1)) / n)
-	if fit < L.pick_bw then
-		L.pick_bw = fit
-	end
-	local pick_w = L.pick_bw * n + PAD * (n - 1)
-	L.tb_y = gui.h - HUD_BTN_H - PAD * 2
-	L.tb_x = flr((gui.w - tools_w) / 2)
-	L.tb_w = tools_w
-	L.pick = APP.tool == "build"
-	L.pick_x = 0
-	L.pick_y = L.tb_y
-	L.pick_w = pick_w
-	local bottom = L.tb_y
-	if L.pick then
-		local both = tools_w + PAD * 3 + pick_w
-		if both <= gui.w - PAD * 4 and L.pick_bw == TOOL_W then
-			L.tb_x = flr((gui.w - both) / 2)
-			L.pick_x = L.tb_x + tools_w + PAD * 3
-		else
-			L.pick_y = L.tb_y - HUD_BTN_H - PAD * 2
-			L.pick_x = flr((gui.w - pick_w) / 2)
-			bottom = L.pick_y
-		end
-	end
-	L.hint = UI.text_w(HINT) <= gui.w - PAD * 4
-	if L.hint then
-		bottom = bottom - LH - PAD
-	end
-	L.chat_bottom = bottom - PAD
-	local w = flr(gui.w * 0.45)
-	if w < 160 then
-		w = 160
-	end
-	local room = L.col_x - PAD * 3
-	if w > room then
-		w = room
-	end
-	L.chat_w = w
-	return L
-end
-
-function hud_hit(x, y)
-	local L = hud_layout()
-	if y < L.top_h then
-		return true
-	end
-	if x >= L.col_x and y >= L.col_y and y < L.col_y + L.col_h then
-		return true
-	end
-	if y >= L.tb_y and x >= L.tb_x and x < L.tb_x + L.tb_w then
-		return true
-	end
-	if L.pick and y >= L.pick_y and y < L.pick_y + HUD_BTN_H and x >= L.pick_x and x < L.pick_x + L.pick_w then
-		return true
-	end
-	if APP.typing and x < PAD + L.chat_w and y >= L.chat_bottom - LH - PAD * 2 and y < L.chat_bottom then
-		return true
-	end
-	return false
-end
-
--- Name tags, speech bubbles and moos, painted farthest first. The gui is
--- flat: whatever is drawn last covers the rest, so drawing them in a fixed
--- order (cows, then players, then us) put a far label over a near one.
-function draw_world_labels()
-	local labels = {}
-	for id, c in pairs(Herd.cows) do
-		local p = Herd.moo_point(c)
-		if p ~= nil then
-			local l = {}
-			l.p = p
-			l.cow = c
-			table.insert(labels, l)
-		end
-	end
-	for i = 1, #APP.order + 1 do
-		local av = APP.me
-		if i <= #APP.order then
-			av = APP.players[APP.order[i]]
-		end
-		if av ~= nil then
-			local top = av:top()
-			local p = UI.project(top[1], top[2], top[3])
-			if p ~= nil then
-				local l = {}
-				l.p = p
-				l.av = av
-				l.me = av == APP.me
-				table.insert(labels, l)
-			end
-		end
-	end
-	-- insertion sort by depth (p[3]), farthest first; there are only a few
-	for i = 2, #labels do
-		local l = labels[i]
-		local j = i - 1
-		while j >= 1 and labels[j].p[3] < l.p[3] do
-			labels[j + 1] = labels[j]
-			j = j - 1
-		end
-		labels[j + 1] = l
-	end
-	for i = 1, #labels do
-		local l = labels[i]
-		if l.cow ~= nil then
-			Herd.moo_bubble(l.p)
-		else
-			UI.avatar_overlay(l.av, l.me, l.p)
-		end
-	end
-end
-
-function draw_hud()
-	local L = hud_layout()
-	-- world overlays first so panels sit on top of them
-	draw_world_labels()
-
-	-- top strip: connection + who's here
-	local online = #APP.order
-	if APP.me ~= nil then
-		online = online + 1
-	end
-	UI.panel(0, 0, gui.w, L.top_h, "0A0E16B0")
-	local st = PHX.state
-	local label = "connecting..."
-	local col = C_ACCENT
-	if st == "open" then
-		label = "connected"
-		col = C_OK
-	elseif st == "waiting" then
-		label = "reconnecting in " .. tostring(flr(PHX.retry_in / FPS) + 1) .. "s"
-		col = C_BAD
-	end
-	UI.text("sosh", PAD * 2, PAD + 1, C_ACCENT)
-	UI.text(label, PAD * 2 + 6 * CH, PAD + 1, col)
-	local here = tostring(online) .. " here"
-	local hx = gui.w - UI.text_w(here) - PAD * 2
-	UI.text(here, hx, PAD + 1, C_DIM)
-	if Farm.carrots > 0 then
-		local carrots = tostring(Farm.carrots) .. " carrot"
-		if Farm.carrots > 1 then
-			carrots = carrots .. "s"
-		end
-		local cx = hx - UI.text_w(carrots) - PAD * 3
-		-- only where it clears the status
-		if cx > PAD * 2 + 6 * CH + UI.text_w(label) + PAD * 2 then
-			UI.text(carrots, cx, PAD + 1, "EE842A")
-		end
-	end
-
-	draw_chat(L)
-	if APP.me ~= nil then
-		draw_toolbar(L)
-		draw_buttons(L)
-		if L.hint and not APP.typing then
-			UI.text(HINT, PAD * 2, L.chat_bottom + PAD + 1, "FFFFFF70")
-		end
-	end
-end
-
--- Tools (1-4) and, while building, the block to place (Z/X).
-function draw_toolbar(L)
-	local x = L.tb_x
-	local y = L.tb_y
-	for i = 1, #TOOLS do
-		local name = TOOLS[i]
-		local label = tostring(i) .. " " .. name
-		if APP.tool == name then
-			gui:rrect(x - 1, y - 1, TOOL_W + 2, HUD_BTN_H + 2, 3, C_ACCENT)
-		end
-		if UI.button(label, x, y, TOOL_W, HUD_BTN_H) then
-			APP.tool = name
-		end
-		x = x + TOOL_W + PAD
-	end
-	if not L.pick then
-		return
-	end
-	x = L.pick_x
-	y = L.pick_y
-	for i = 1, #PLACEABLE do
-		if APP.block_i == i then
-			gui:rrect(x - 1, y - 1, L.pick_bw + 2, HUD_BTN_H + 2, 3, C_OK)
-		end
-		local name = PLACEABLE[i]
-		if UI.button(name, x, y, L.pick_bw, HUD_BTN_H) then
-			APP.block_i = i
-		end
-		x = x + L.pick_bw + PAD
-	end
-end
-
-function draw_buttons(L)
-	local me = APP.me
-	local x = L.col_x
-	local y = L.col_y
-	for i = 1, #EMOTES do
-		local label = tostring(i + 5) .. " " .. EMOTES[i]
-		if UI.button(label, x, y, HUD_BTN_W, HUD_BTN_H) then
-			do_emote(EMOTES[i])
-		end
-		y = y + HUD_BTN_H + PAD
-	end
-	local face_label = "face " .. tostring(me.face + 1) .. "/" .. tostring(FACE_COUNT)
-	if UI.button(face_label, x, y, HUD_BTN_W, HUD_BTN_H) then
-		change_face(1)
-	end
-	y = y + HUD_BTN_H + PAD
-	local pose_label = me:anim_name()
-	if Carry.of(APP.my_id) ~= nil then
-		pose_label = "put down"
-	end
-	if UI.button(pose_label, x, y, HUD_BTN_W, HUD_BTN_H) then
-		pose_pressed()
-	end
-	y = y + HUD_BTN_H + PAD
-	if UI.button("chat", x, y, HUD_BTN_W, HUD_BTN_H) then
-		APP.typing = not APP.typing
-		APP.draft.text = ""
-	end
-end
-
-function draw_chat(L)
-	local w = L.chat_w
-	local cols = flr((w - PAD * 2) / CH)
-	local bottom = L.chat_bottom
-	if APP.typing then
-		bottom = bottom - (LH + PAD * 3)
-	end
-
-	-- gather wrapped lines from the newest message back
-	local rows = {}
-	local i = #APP.chat
-	while i >= 1 and #rows < CHAT_SHOWN do
-		local c = APP.chat[i]
-		c.age = c.age + 1
-		if c.age < CHAT_FADE or APP.typing then
-			local text = c.body
-			if c.name ~= nil then
-				text = c.name .. ": " .. c.body
-			end
-			local wrapped = U.wrap(text, cols)
-			local j = #wrapped
-			while j >= 1 and #rows < CHAT_SHOWN do
-				local row = {}
-				row.text = wrapped[j]
-				row.col = c.col
-				table.insert(rows, row)
-				j = j - 1
-			end
-		end
-		i = i - 1
-	end
-	-- still age the rest
-	while i >= 1 do
-		APP.chat[i].age = APP.chat[i].age + 1
-		i = i - 1
-	end
-
-	-- never climb into the top strip
-	local max_rows = flr((bottom - L.top_h - PAD * 4) / LH)
-	while #rows > max_rows and #rows > 0 do
-		table.remove(rows)
-	end
-
-	if #rows > 0 then
-		local h = #rows * LH + PAD * 2
-		gui:rrect(PAD, bottom - h, w, h, 3, "0A0E1690")
-		for r = 1, #rows do
-			UI.text(rows[r].text, PAD * 2, bottom - PAD - r * LH + 1, rows[r].col)
-		end
-	end
-
-	if APP.typing then
-		local y = L.chat_bottom - LH - PAD * 2
-		UI.panel(PAD, y, w, LH + PAD * 2, C_PANEL_HI)
-		local shown = "> " .. APP.draft.text
-		if #shown > cols - 1 then
-			shown = shown:sub(#shown - cols + 2)
-		end
-		if UI.blink < 30 then
-			shown = shown .. "_"
-		end
-		UI.text(shown, PAD * 2, y + PAD + 1, C_TEXT)
-	end
 end
