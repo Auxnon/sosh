@@ -15,6 +15,7 @@
 --   phx:connect()
 --   phx:push(lobby, "new_msg", { body = "hi" })
 --   phx:push(actions, "get_chunks", payload, function(status, response) ... end)
+--   phx:leave(lobby)  -- and phx:channel(...) + phx:open(ch) for another
 
 Phx = {}
 Phx.__index = Phx
@@ -59,6 +60,32 @@ function Phx:channel(topic, params)
 	self.channels[topic] = ch
 	table.insert(self.topics, topic)
 	return ch
+end
+
+-- Leave a channel and forget it: nothing more arrives for its topic.
+function Phx:leave(ch)
+	if self.sock ~= nil and ch.joined then
+		local ref = self:next_ref()
+		local payload = {}
+		payload.leaving = true
+		local frame = { ch.join_ref, ref, ch.topic, "phx_leave", payload }
+		self.sock:send(frame)
+	end
+	ch.joined = false
+	self.channels[ch.topic] = nil
+	for i = 1, #self.topics do
+		if self.topics[i] == ch.topic then
+			table.remove(self.topics, i)
+			return
+		end
+	end
+end
+
+-- Join a channel added after connecting (before, connect() joins it).
+function Phx:open(ch)
+	if self.sock ~= nil then
+		self:join(ch)
+	end
 end
 
 function Phx:connect()
@@ -175,22 +202,46 @@ function Phx:dispatch(msg)
 	self.state = "open"
 	self.retries = 0
 
-	local topic = msg[3]
-	local event = msg[4]
-	local payload = msg[5]
+	-- Frames are [join_ref, ref, topic, event, payload], but the decoder
+	-- drops nulls and closes the gaps: a broadcast ([null, null, ...])
+	-- arrives as [topic, event, payload] and a push to us ([join_ref,
+	-- null, ...]) as [join_ref, topic, event, payload]. So read from the
+	-- end.
+	local n = #msg
+	if n < 3 then
+		return
+	end
+	local payload = msg[n]
+	local event = msg[n - 1]
+	local topic = msg[n - 2]
+	local join_ref = nil
+	local ref = nil
+	if n >= 5 then
+		join_ref = msg[1]
+		ref = msg[2]
+	elseif n == 4 then
+		if event == "phx_reply" then
+			ref = msg[1]
+		else
+			join_ref = msg[1]
+		end
+	end
 	local ch = self.channels[topic]
 	if ch == nil then
 		return
 	end
 
 	if event == "phx_reply" then
-		local cb = self.replies[msg[2]]
+		local cb = nil
+		if ref ~= nil then
+			cb = self.replies[ref]
+		end
 		if cb ~= nil then
-			self.replies[msg[2]] = nil
+			self.replies[ref] = nil
 			cb(payload.status, payload.response)
 			return
 		end
-		if msg[2] == ch.join_ref then
+		if ref == ch.join_ref then
 			if payload.status == "ok" then
 				ch.joined = true
 				if ch.on_join ~= nil then
@@ -208,7 +259,7 @@ function Phx:dispatch(msg)
 
 	if event == "phx_error" or event == "phx_close" then
 		-- The channel process died server side: rejoin on the same socket.
-		if msg[1] == ch.join_ref and self.sock ~= nil then
+		if join_ref == ch.join_ref and self.sock ~= nil then
 			self:join(ch)
 		end
 		return

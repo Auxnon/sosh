@@ -1,274 +1,526 @@
 defmodule Sosh.Sim do
   @moduledoc """
-  Runs the living part of the world in a `Sosh.Universe` (Rust): carrots that
-  grow on wall-clock time, cows that wander the plaza and get pushed by
-  players, and what players carry. The universe decides what can be carried
-  (`Universe.carryable/0`, any cow) and who holds what.
+  Runs one universe of the grid (`Sosh.Universes`) in a `Sosh.Universe`
+  (Rust): its blocks, crops, cows, furniture and blueprints, airships,
+  helpers and what everyone holds. One process per universe, registered
+  under `{gx, gy}`; every call names the universe.
 
-  Every `tick_ms` it advances the universe with the players' positions as
-  `Sosh.Lobby` predicts them and broadcasts what changed on `actions:lobby`:
+  **Awake and asleep.** While anyone is in the universe it ticks every
+  `tick_ms` with the players' positions as `Sosh.Lobby` predicts them, and
+  broadcasts what changed on `actions:gx,gy`. Once it has been empty for
+  `sleep_after_ms` it saves and sleeps: only ambient systems run, every
+  `idle_ms` (empty ships fly home, helpers and cows go home). Growth doesn't
+  run at all while asleep; the first tick after waking catches up on every
+  world tick slept through.
 
-    * `cows` `%{cows: [[id, x, y, z, heading]]}` - cows that moved
-    * `moo` `%{ids: [id]}` - cows that were just shoved
-    * `crop` `%{position: [x, y, z], stage: 0..3}` - a crop grew (3 is ripe)
-    * `carry` `%{user_id, block, cow}` - what someone now holds: a block id,
-      a cow id, or neither (both nil); a carried cow rides over their head
-    * `block_changed` - as `SoshWeb.ActionChannel`'s, when carrying takes a
-      block out of the world or puts one back
+  **Frames.** Cells are in the world or on an airship: `on` is 0 for the
+  world, else the ship's id, and the cell is in that ship's own frame (it
+  turns and flies with it). Players on a ship report where on it they
+  stand (`Sosh.Lobby.frame/2`).
 
-  Crops persist in Postgres (`Sosh.Crop`) as the time they were planted, so
-  they keep growing while the server is down. Cows don't persist; `cows`
-  spawn on every start, and what's carried is lost with them.
+  Broadcasts:
 
-  The universe walks on a mirror of the plaza's chunks from `Sosh.World`,
-  loaded at start and kept current by `block_changed/2`.
+    * `cows`, `helpers` `%{rows: [[id, x, y, z, heading]]}` - what moved
+    * `ships` `%{rows: [[id, x, y, z, heading, vx, vy, vz, spin]]}` - ships
+      that moved, and how fast they're going (spin: radians a second)
+    * `ship` - a ship arrived or changed pilots: `%{id, x, y, z, heading, v,
+      pilot, blocks: [[x, y, z, block]]}`, blocks in its frame
+    * `ship_block` `%{ship, position, block}` - a block of a ship's changed
+    * `moo` `%{ids: [id]}` - cows that were just shoved or lifted
+    * `crop` `%{position, stage}` - a crop grew (3 is ripe; nil: gone)
+    * `block_changed` `%{position, block, block_type}`
+    * `carry` `%{user_id, block, cow, furniture}` - what someone holds now
+    * `furniture` - a piece changed: `%{id, kind, on, origin, rot, lifted,
+      carriers, helpers, slots}`; `furniture_gone` `%{id}`
+    * `site` - a blueprint changed: `%{id, kind, on, origin, rot, have,
+      need}`; `site_gone` `%{id}`
+    * `travel` `%{ship, users, to: [gx, gy]}` - a ship flew into the
+      neighbouring universe with them aboard: it's gone from here (with
+      everything on it), and they're in that one now
+
+  Bags belong to `Sosh.Players`; calls that change one take the player's
+  name, save the new bag and reply with it as JSON wants it.
+
+  What the universe keeps (`Sosh.Universe.save/2`, plus its changed chunks
+  through `Sosh.World`) is saved on going to sleep, every `save_ms` while
+  awake and on shutdown. Cows aren't kept: they respawn on every start.
   """
   use GenServer
   require Logger
 
   import Ecto.Query, only: [from: 2]
 
-  alias Sosh.{Crop, Lobby, Repo, Universe, World}
+  alias Sosh.{Crop, Lobby, Players, Repo, Universe, UniverseRecord, Universes, World}
 
-  @topic "actions:lobby"
   @ripe 3
-  # chunks the cows walk on: x, y in -32..31 covers the plaza; the floor
-  # layer and the one above it
-  @area for cx <- -2..1, cy <- -2..1, cz <- -1..0, do: {cx, cy, cz}
-  @cow_spots [{-6, 5}, {-8, -4}, {4, 9}, {10, 3}, {-3, -10}, {-11, 8}, {2, -12}, {12, -1}]
 
   def ripe, do: @ripe
 
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def child_spec(u), do: %{id: {__MODULE__, u}, start: {__MODULE__, :start_link, [u]}}
+
+  def start_link(u), do: GenServer.start_link(__MODULE__, u, name: via(u))
+
+  defp via(u), do: {:via, Registry, {Sosh.Sims, u}}
+
+  defp call(u, msg), do: GenServer.call(via(u), msg)
+
+  @doc "Start universe `u`'s process if it isn't running. `{:ok, pid}`."
+  def ensure(u) do
+    case Registry.lookup(Sosh.Sims, u) do
+      [{pid, _}] ->
+        {:ok, pid}
+
+      [] ->
+        if Universes.exists?(u) do
+          case DynamicSupervisor.start_child(Sosh.SimSup, {__MODULE__, u}) do
+            {:error, {:already_started, pid}} -> {:ok, pid}
+            other -> other
+          end
+        else
+          {:error, :no_such_universe}
+        end
+    end
+  end
+
+  def running?(u), do: Registry.lookup(Sosh.Sims, u) != []
+
+  @doc "Stop every universe. For tests."
+  def stop_all do
+    for {_, pid, _, _} <- DynamicSupervisor.which_children(Sosh.SimSup),
+        do: DynamicSupervisor.terminate_child(Sosh.SimSup, pid)
+
+    # the registry forgets them a moment after they exit
+    unregistered(100)
+  end
+
+  defp unregistered(0), do: :ok
+
+  defp unregistered(n) do
+    if Registry.count(Sosh.Sims) > 0 do
+      Process.sleep(5)
+      unregistered(n - 1)
+    else
+      :ok
+    end
+  end
+
+  @doc "The grid changed around `u`: recheck which sides are open."
+  def reopen(u), do: if(running?(u), do: GenServer.cast(via(u), :reopen), else: :ok)
 
   @doc """
-  Everything a newcomer needs: `%{cows: [...], crops: [...], held: [carry],
-  carryable: [block_id]}`.
+  Everything a newcomer needs: cows, crops, who holds what, furniture,
+  blueprints, ships, helpers, which sides are open, and what lies below.
   """
-  def snapshot, do: GenServer.call(__MODULE__, :snapshot)
-
-  @doc "The crop's stage at `{x, y, z}`, or nil."
-  def crop(pos), do: GenServer.call(__MODULE__, {:crop, pos})
-
-  @doc "Plant a carrot in the air cell `{x, y, z}`; the soil is the caller's job."
-  def plant(pos), do: GenServer.call(__MODULE__, {:plant, pos})
-
-  @doc "Pick a ripe crop: `{:ok, stage}`, or an error if unripe or absent."
-  def harvest(pos), do: GenServer.call(__MODULE__, {:remove, pos, :ripe})
-
-  @doc "Remove a crop whatever its stage (its soil was dug away)."
-  def uproot(pos), do: GenServer.call(__MODULE__, {:remove, pos, :any})
+  def snapshot(u), do: call(u, :snapshot)
 
   @doc """
-  `user` standing at `at` (`{x, y, z}` feet) picks up `{:block, {x, y, z}}`
-  or `{:cow, id}`. A block leaves the world. `{:ok, %{block: id}}`,
-  `{:ok, %{cow: id}}` or `{:error, reason}`.
+  Where `user` stands on arriving: aboard the ship they flew in on, at `at`
+  if that's ground, or home. `{{x, y, z}, nil | {ship, {x, y, z}}}`: world
+  feet, and the ship and where on it if they're aboard.
   """
-  def pick_up(user, what, at), do: GenServer.call(__MODULE__, {:pick_up, user, what, at})
+  def spawn(u, user, at), do: call(u, {:spawn, user, at})
 
-  @doc "`user` puts what they carry in cell `{x, y, z}`; replies as `pick_up/3`."
-  def put_down(user, pos), do: GenServer.call(__MODULE__, {:put_down, user, pos})
+  @doc "`user`'s feet in the world, where `Sosh.Lobby` predicts them. `{:ok, {x, y, z}}`."
+  def feet(u, user), do: call(u, {:feet, user})
 
-  @doc "`user` left: set down whatever they carried where they last stood."
-  def release(user), do: GenServer.call(__MODULE__, {:release, user})
+  @doc "Is cell `pos` of frame `on` within `reach` of `user`? `:ok` or `{:error, reason}`."
+  def reach(u, user, on, pos, reach), do: call(u, {:reach, user, on, pos, reach})
 
-  @doc "Keep the walking mirror current after a `Sosh.World` edit."
-  def block_changed(pos, id), do: GenServer.cast(__MODULE__, {:block, pos, id})
+  @doc "Chunks run-length encoded, as `%{key, rle}`; keys outside the universe are skipped."
+  def chunks(u, keys), do: call(u, {:chunks, keys})
+
+  def block(u, pos), do: block(u, 0, pos)
+  def block(u, on, pos), do: call(u, {:block, on, pos})
+
+  def crop(u, pos), do: call(u, {:crop, pos})
+
+  @doc "Plant a carrot in the air cell `pos`, over grass (tilled) or dirt."
+  def plant(u, pos), do: call(u, {:plant, pos})
+
+  @doc "Pick the ripe crop at `pos` into `name`'s bag. `{:ok, bag}`."
+  def harvest(u, name, pos), do: call(u, {:bag, name, :harvest, [pos]})
+
+  @doc "Dig the block at `pos` of frame `on` into the bag, breaking furniture or taking scaffolding down."
+  def dig(u, user, name, on, pos), do: call(u, {:bag, name, :dig, [user, on, pos]})
+
+  @doc "Place one `item` from the bag at `pos` of frame `on`, turned `rot`."
+  def place(u, name, on, pos, item, rot), do: call(u, {:bag, name, :place, [on, pos, item, rot]})
+
+  @doc "Lay out blueprint `kind` at `pos` of frame `on`, turned `rot`. `{:ok, site_id}`."
+  def build(u, kind, on, pos, rot), do: call(u, {:build, kind, on, pos, rot})
+
+  @doc "Put ingredients from the bag into the blueprint at `pos` of frame `on`. `{:ok, built_id | nil, bag}`."
+  def deposit(u, name, on, pos), do: call(u, {:deposit, name, on, pos})
+
+  def stash(u, name, at, id, slot), do: call(u, {:bag, name, :stash, [at, id], [slot]})
+
+  def take(u, name, at, id, slot), do: call(u, {:bag, name, :take, [at, id, slot]})
+
+  @doc """
+  `user` standing at `at` picks up `{:cell, on, pos}` (a carryable block, or
+  the furniture there), `{:furniture, id}` or `{:cow, id}`. `{:ok, how, bag}`,
+  `how` being `:block`, `:cow`, `:lifted`, `:gripped` (waiting for a second
+  carrier) or `:pocketed` (packed into the bag).
+  """
+  def pick_up(u, user, name, what, at), do: call(u, {:pick_up, user, name, what, at})
+
+  @doc "`user` puts down what they hold at `pos` of frame `on`, turned `rot`."
+  def put_down(u, user, on, pos, rot \\ 0), do: call(u, {:put_down, user, on, pos, rot})
+
+  @doc "`user` left: set down what they held, leave any helm."
+  def release(u, user), do: call(u, {:release, user})
+
+  @doc """
+  `user` takes the helm they stand at, or lets go of the one they hold.
+  `{:ok, ship_id}` taking it, `{:ok, nil}` letting go.
+  """
+  def helm(u, user), do: call(u, {:helm, user})
+
+  @doc "The pilot asks for `{thrust, turn, lift}`, each -1..1."
+  def steer(u, user, helm), do: call(u, {:steer, user, helm})
+
+  def call_helper(u, user, id), do: call(u, {:call_helper, user, id})
 
   @doc "Advance to `now_ms` and broadcast, as a timer tick does. For tests."
-  def tick(now_ms), do: GenServer.call(__MODULE__, {:tick, now_ms})
+  def tick(u, now_ms), do: call(u, {:tick, now_ms})
 
-  @doc "Start over: reload terrain and crops, respawn cows. For tests."
-  def reset(opts \\ []), do: GenServer.call(__MODULE__, {:reset, opts})
+  @doc "Run the ambient systems as an idle tick does. For tests."
+  def ambient(u, now_ms), do: call(u, {:ambient, now_ms})
+
+  @doc "Save now."
+  def save(u), do: call(u, :save)
+
+  @doc "Start over from the database: terrain, state, fresh cows. For tests."
+  def reset(u, opts \\ []), do: call(u, {:reset, opts})
 
   # -- server
 
   @impl true
-  def init(_opts) do
+  def init(u) do
+    # so terminate/2 runs (and saves) on a normal shutdown
+    Process.flag(:trap_exit, true)
     config = Application.get_env(:sosh, __MODULE__, [])
 
     state = %{
-      universe: nil,
+      u: u,
+      uni: nil,
+      kind: "sea",
       tick_ms: config[:tick_ms],
       stage_ms: config[:stage_ms] || 60_000,
-      cows: config[:cows] || 0
+      cows: config[:cows] || 0,
+      idle_ms: config[:idle_ms] || 2_000,
+      sleep_after_ms: config[:sleep_after_ms] || 10_000,
+      save_ms: config[:save_ms],
+      empty_since: nil,
+      last_ambient: 0,
+      last_save: now_ms()
     }
 
-    if config[:autoload] == false do
-      {:ok, %{state | universe: Universe.bigbang(state.stage_ms, seed())}}
-    else
-      {:ok, state, {:continue, :load}}
-    end
+    state = build(state)
+    schedule(state)
+    {:ok, state}
   end
 
   @impl true
-  def handle_continue(:load, state) do
-    state = build(state)
-    schedule(state)
+  def handle_call(msg, _from, state) do
+    # anything that changes the universe wakes it first, catching up on
+    # the world ticks it slept through
+    if wakes?(msg), do: Universe.wake(state.uni, now_ms())
+    {reply, state} = act(msg, state)
+    {:reply, reply, state}
+  end
+
+  @lookups [:spawn, :chunks, :block, :crop, :ambient, :reset, :feet, :reach]
+  defp wakes?(msg) when is_tuple(msg), do: elem(msg, 0) not in @lookups
+  defp wakes?(_), do: false
+
+  defp act(:snapshot, state) do
+    {gx, gy} = state.u
+    snap = Universe.snapshot(state.uni)
+
+    snap =
+      Map.merge(snap, %{
+        cows: Enum.map(snap.cows, &row/1),
+        universe: [gx, gy],
+        kind: state.kind
+      })
+
+    {snap, state}
+  end
+
+  defp act({:spawn, user, at}, state),
+    do: {Universe.spawn(state.uni, user, floats(at)), state}
+
+  defp act({:chunks, keys}, state) do
+    chunks =
+      for {_, _, _} = key <- keys, rle = Universe.rle(state.uni, key), rle != nil do
+        %{key: Tuple.to_list(key), rle: rle}
+      end
+
+    {chunks, state}
+  end
+
+  defp act({:block, on, pos}, state),
+    do: {Universe.block(state.uni, on, pos), state}
+
+  defp act({:feet, user}, state), do: {feet_of(state, user), state}
+
+  defp act({:reach, user, on, {x, y, z}, reach}, state) do
+    result =
+      with {:ok, {px, py, pz}} <- feet_of(state, user),
+           {cx, cy, cz} <- Universe.world_of(state.uni, on, {x * 1.0, y * 1.0, z + 0.5}) do
+        {dx, dy, dz} = {cx - px, cy - py, cz - pz}
+        if dx * dx + dy * dy + dz * dz <= reach * reach, do: :ok, else: {:error, "out_of_reach"}
+      else
+        nil -> {:error, "no_such_ship"}
+        error -> error
+      end
+
+    {result, state}
+  end
+
+  defp act({:crop, pos}, state),
+    do: {Universe.crop_at(state.uni, pos), state}
+
+  defp act({:plant, pos}, state),
+    do: reply(state, Universe.plant(state.uni, pos))
+
+  # Anything that changes a bag: `fun(universe, ...before, bag, ...after)`.
+  defp act({:bag, name, fun, before}, state),
+    do: act({:bag, name, fun, before, []}, state)
+
+  defp act({:bag, name, fun, before, rest}, state) do
+    args = [state.uni | before] ++ [Players.bag(name) | rest]
+    reply(state, with_bag(name, apply(Universe, fun, args)))
+  end
+
+  defp act({:build, kind, on, pos, rot}, state),
+    do: reply(state, Universe.start_site(state.uni, kind, on, pos, rot))
+
+  defp act({:deposit, name, on, pos}, state) do
+    result =
+      case Universe.site_at(state.uni, on, pos) do
+        nil -> {:error, "no_blueprint_there"}
+        site -> with_bag(name, Universe.deposit(state.uni, site, Players.bag(name)))
+      end
+
+    reply(state, result)
+  end
+
+  defp act({:pick_up, user, name, what, at}, state) do
+    uni = state.uni
+    at = floats(at)
+
+    result =
+      case what do
+        {:cow, id} ->
+          with :ok <- Universe.pick_cow(uni, user, at, id), do: {:ok, :cow, nil}
+
+        {:furniture, id} ->
+          with_bag(name, Universe.grab(uni, user, at, id, Players.bag(name)))
+
+        {:cell, on, pos} ->
+          case Universe.furniture_at(uni, on, pos) do
+            nil ->
+              with {:ok, _} <- Universe.pick_block(uni, user, at, on, pos),
+                   do: {:ok, :block, nil}
+
+            id ->
+              with_bag(name, Universe.grab(uni, user, at, id, Players.bag(name)))
+          end
+      end
+
+    reply(state, result)
+  end
+
+  defp act({:put_down, user, on, pos, rot}, state),
+    do: reply(state, Universe.put_down(state.uni, user, on, pos, rot))
+
+  defp act({:release, user}, state) do
+    Universe.release(state.uni, user)
+    reply(state, :ok)
+  end
+
+  defp act({:helm, user}, state) do
+    result =
+      if Universe.leave_helm(state.uni, user) do
+        {:ok, nil}
+      else
+        with {:ok, at} <- feet_of(state, user), do: Universe.take_helm(state.uni, user, at)
+      end
+
+    reply(state, result)
+  end
+
+  defp act({:steer, user, helm}, state),
+    do: reply(state, Universe.steer(state.uni, user, floats(helm)))
+
+  defp act({:call_helper, user, id}, state),
+    do: reply(state, Universe.call_helper(state.uni, user, id))
+
+  defp act({:tick, now}, state) do
+    step(state, now)
+    {:ok, state}
+  end
+
+  defp act({:ambient, now}, state) do
+    Universe.ambient(state.uni, now)
+    flush(state)
+    {:ok, state}
+  end
+
+  defp act(:save, state), do: {:ok, persist(state)}
+
+  defp act({:reset, opts}, state) do
+    state = build(%{state | cows: Keyword.get(opts, :cows, state.cows)})
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_cast(:reopen, state) do
+    Universe.set_open(state.uni, Universes.open(state.u))
     {:noreply, state}
   end
 
-  @impl true
-  def handle_call(:snapshot, _from, state) do
-    crops = for {pos, stage} <- Universe.crops(state.universe), do: crop_json(pos, stage)
-    cows = Enum.map(Universe.cows(state.universe), &cow_json/1)
-    held = for {user, held} <- Universe.holding(state.universe), do: carry_json(user, held)
-
-    {:reply, %{cows: cows, crops: crops, held: held, carryable: Universe.carryable()}, state}
-  end
-
-  def handle_call({:pick_up, user, {:block, {x, y, z} = pos}, at}, _from, state) do
-    reply =
-      with {:ok, held} <-
-             Universe.pick_block(state.universe, user, floats(at), World.block(x, y, z)) do
-        set_block(state, user, pos, 0)
-        carried(user, held)
-      end
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:pick_up, user, {:cow, id}, at}, _from, state) do
-    reply =
-      with {:ok, held} <- Universe.pick_cow(state.universe, user, floats(at), id),
-           do: carried(user, held)
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:put_down, user, {x, y, z} = pos}, _from, state) do
-    # room for a block: air or water, nothing growing
-    free = World.block(x, y, z) in [0, 6] and Universe.crop(state.universe, pos) == nil
-
-    reply =
-      case Universe.put_down(state.universe, user, pos, free) do
-        {:ok, {:block, id} = held} ->
-          set_block(state, user, pos, id)
-          carried(user, nil)
-          {:ok, held_json(held)}
-
-        {:ok, held} ->
-          carried(user, nil)
-          {:ok, held_json(held)}
-
-        error ->
-          error
-      end
-
-    {:reply, reply, state}
-  end
-
-  def handle_call({:release, user}, _from, state) do
-    case Universe.release(state.universe, user) do
-      nil ->
-        :ok
-
-      {{:block, id}, {x, y, z}} ->
-        # back where they stood, or the first free cell above; else it's lost
-        spot =
-          Enum.find(z..(z + 3), fn z ->
-            World.block(x, y, z) == 0 and Universe.crop(state.universe, {x, y, z}) == nil
-          end)
-
-        if spot, do: set_block(state, user, {x, y, spot}, id)
-        carried(user, nil)
-
-      {{:cow, _}, _} ->
-        carried(user, nil)
-    end
-
-    {:reply, :ok, state}
-  end
-
-  def handle_call({:crop, pos}, _from, state),
-    do: {:reply, Universe.crop(state.universe, pos), state}
-
-  def handle_call({:plant, {x, y, z} = pos}, _from, state) do
-    now = now_ms()
-
-    if Universe.plant(state.universe, pos, now, now) do
-      Repo.insert!(%Crop{x: x, y: y, z: z, planted_ms: now},
-        on_conflict: :replace_all,
-        conflict_target: [:x, :y, :z]
-      )
-
-      broadcast("crop", crop_json(pos, 0))
-      {:reply, :ok, state}
-    else
-      {:reply, {:error, "occupied"}, state}
-    end
-  end
-
-  def handle_call({:remove, {x, y, z} = pos, need}, _from, state) do
-    case Universe.crop(state.universe, pos) do
-      nil ->
-        {:reply, {:error, "nothing_growing"}, state}
-
-      stage when need == :ripe and stage < @ripe ->
-        {:reply, {:error, "not_ripe"}, state}
-
-      stage ->
-        Universe.remove_crop(state.universe, pos)
-        Repo.delete_all(from(c in Crop, where: c.x == ^x and c.y == ^y and c.z == ^z))
-        broadcast("crop", crop_json(pos, nil))
-        {:reply, {:ok, stage}, state}
-    end
-  end
-
-  def handle_call({:tick, now}, _from, state) do
-    step(state, now)
-    {:reply, :ok, state}
-  end
-
-  def handle_call({:reset, opts}, _from, state) do
-    state = build(%{state | cows: Keyword.get(opts, :cows, state.cows)})
-    {:reply, :ok, state}
-  end
-
-  @impl true
-  def handle_cast({:block, pos, id}, state) do
-    Universe.set_block(state.universe, pos, id)
+  def handle_cast({:arrive, cargo, from}, state) do
+    Universe.wake(state.uni, now_ms())
+    {:ok, _} = Universe.arrive(state.uni, cargo, to_string(from))
+    flush(state)
     {:noreply, state}
   end
 
   @impl true
   def handle_info(:tick, state) do
     schedule(state)
-    step(state, now_ms())
-    {:noreply, state}
+    {:noreply, live(state, now_ms())}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  @impl true
+  def terminate(_reason, state) do
+    if state.save_ms && state.uni, do: persist(state)
+    :ok
   end
 
   # -- internals
 
-  defp build(state) do
-    u = Universe.bigbang(state.stage_ms, seed())
-    Enum.each(@area, &Universe.load_chunk(u, &1, World.chunk(&1)))
+  defp build(%{u: {gx, gy} = u} = state) do
+    rec = Universes.get(u) || raise "no universe #{inspect(u)}"
+    uni = Universe.bigbang(gx, gy, rec.seed, state.stage_ms)
+    Enum.each(World.load(u), fn {key, bin} -> Universe.load_chunk(uni, key, bin) end)
 
-    now = now_ms()
+    cond do
+      rec.state ->
+        case Universe.restore(uni, rec.state) do
+          :ok -> :ok
+          {:error, why} -> Logger.error("universe #{inspect(u)}: bad saved state: #{why}")
+        end
 
-    for %Crop{x: x, y: y, z: z, planted_ms: t} <- Repo.all(Crop),
-        do: Universe.plant(u, {x, y, z}, t, now)
+      u == {0, 0} ->
+        # the plaza's crops from before universes, grown by the time since
+        now = now_ms()
 
-    @cow_spots
-    |> Enum.take(state.cows)
-    |> Enum.each(fn {x, y} -> Universe.spawn_cow(u, x * 1.0, y * 1.0) end)
+        for %Crop{x: x, y: y, z: z, planted_ms: t} <- Repo.all(Crop),
+            do: Universe.plant_aged(uni, {x, y, z}, now - t)
 
-    %{state | universe: u}
+      true ->
+        :ok
+    end
+
+    # a new universe's clock starts now; a saved one sleeps until visited
+    if rec.state == nil, do: Universe.wake(uni, now_ms())
+    Universe.spawn_cows(uni, state.cows)
+    Universe.set_open(uni, Universes.open(u))
+    Universe.drain(uni)
+    %{state | uni: uni, kind: rec.kind, empty_since: nil}
   end
 
-  defp step(state, now) do
+  # A timer tick: tick while anyone's here, or for a while after the last
+  # one leaves; then save and sleep, running only the ambient systems.
+  defp live(state, now) do
+    here = players(state)
+
+    state =
+      cond do
+        here != [] ->
+          step(state, now, here)
+          %{state | empty_since: nil}
+
+        Universe.asleep(state.uni) ->
+          if now - state.last_ambient >= state.idle_ms do
+            Universe.ambient(state.uni, now)
+            flush(state)
+            %{state | last_ambient: now}
+          else
+            state
+          end
+
+        state.empty_since == nil ->
+          step(state, now, here)
+          %{state | empty_since: now}
+
+        now - state.empty_since >= state.sleep_after_ms ->
+          Universe.sleep(state.uni, now)
+          persist(state)
+
+        true ->
+          step(state, now, here)
+          state
+      end
+
+    awake = not Universe.asleep(state.uni)
+
+    if (awake and state.save_ms) && now - state.last_save >= state.save_ms,
+      do: persist(state),
+      else: state
+  end
+
+  # Everyone here, `{id, on, {x, y, z}}`: feet in the world or on a ship.
+  defp players(state) do
     t = Lobby.now()
 
-    players =
-      for p <- Lobby.list(),
-          [x, y, z] = Lobby.position(p, t),
-          do: {p.user_id, x * 1.0, y * 1.0, z * 1.0}
+    for p <- Lobby.list(state.u),
+        {on, [x, y, z]} = Lobby.frame(p, t),
+        do: {p.user_id, on, {x * 1.0, y * 1.0, z * 1.0}}
+  end
 
-    {cows, moos, crops} = Universe.tick(state.universe, now, players)
+  # A player's feet in the world, where Sosh.Lobby predicts them.
+  defp feet_of(state, user) do
+    here = state.u
 
-    if cows != [], do: broadcast("cows", %{cows: Enum.map(cows, &cow_json/1)})
-    if moos != [], do: broadcast("moo", %{ids: moos})
-    Enum.each(crops, fn {pos, stage} -> broadcast("crop", crop_json(pos, stage)) end)
+    with %{universe: ^here} = p <- Lobby.get(user),
+         {on, [x, y, z]} = Lobby.frame(p, Lobby.now()),
+         {_, _, _} = at <- Universe.world_of(state.uni, on, {x * 1.0, y * 1.0, z * 1.0}) do
+      {:ok, at}
+    else
+      _ -> {:error, "not_in_world"}
+    end
+  end
+
+  defp step(state, now), do: step(state, now, players(state))
+
+  defp step(state, now, players) do
+    {cows, moos, ships, helpers} = Universe.tick(state.uni, now, players)
+    if cows != [], do: broadcast(state, "cows", %{rows: Enum.map(cows, &row/1)})
+    if moos != [], do: broadcast(state, "moo", %{ids: moos})
+    if ships != [], do: broadcast(state, "ships", %{rows: Enum.map(ships, &ship_row/1)})
+    if helpers != [], do: broadcast(state, "helpers", %{rows: Enum.map(helpers, &row/1)})
+    flush(state)
+  end
+
+  defp persist(state) do
+    chunks = Universe.take_dirty(state.uni)
+    World.store(state.u, chunks)
+    {gx, gy} = state.u
+    json = Universe.save(state.uni, now_ms())
+
+    Repo.update_all(
+      from(r in UniverseRecord, where: r.gx == ^gx and r.gy == ^gy),
+      set: [state: json, updated_at: DateTime.utc_now() |> DateTime.truncate(:second)]
+    )
+
+    %{state | last_save: now_ms()}
   end
 
   defp schedule(%{tick_ms: ms}) when is_integer(ms) and ms > 0,
@@ -276,42 +528,64 @@ defmodule Sosh.Sim do
 
   defp schedule(_), do: :ok
 
-  # The world's block at `pos` becomes `id`, by `user`'s carrying.
-  defp set_block(state, user, {x, y, z} = pos, id) do
-    {:ok, _} = World.put_block(x, y, z, id)
-    Universe.set_block(state.universe, pos, id)
-
-    broadcast("block_changed", %{
-      user_id: user,
-      position: [x, y, z],
-      block: id,
-      block_type: World.block_name(id)
-    })
+  # Reply, after broadcasting whatever the call changed.
+  defp reply(state, result) do
+    flush(state)
+    {result, state}
   end
 
-  # Tell everyone what `user` holds now (nil: nothing); replies as pick_up/3.
-  defp carried(user, held) do
-    broadcast("carry", carry_json(user, held))
-    {:ok, held_json(held)}
+  # Keep a changed bag and reply with it as JSON wants it.
+  defp with_bag(name, {:ok, bag}) when is_list(bag), do: {:ok, keep(name, bag)}
+  defp with_bag(name, {:ok, x, bag}) when is_list(bag), do: {:ok, x, keep(name, bag)}
+  defp with_bag(_name, other), do: other
+
+  defp keep(name, bag) do
+    Players.put_bag(name, bag)
+    Players.bag_json(bag)
   end
 
-  defp carry_json(user, held), do: Map.put(held_json(held), :user_id, user)
+  defp flush(state) do
+    for {event, payload} <- Universe.drain(state.uni), do: emit(state, event, payload)
+    :ok
+  end
 
-  defp held_json({:block, id}), do: %{block: id, cow: nil}
-  defp held_json({:cow, id}), do: %{block: nil, cow: id}
-  defp held_json(nil), do: %{block: nil, cow: nil}
+  defp emit(state, :block_changed, p),
+    do: broadcast(state, "block_changed", Map.put(p, :block_type, World.block_name(p.block)))
 
-  defp floats({x, y, z}), do: {x * 1.0, y * 1.0, z * 1.0}
+  # A ship flew off our edge: it's the neighbour's now, with all aboard.
+  defp emit(state, :departed, %{id: id, cargo: cargo, side: side, riders: riders}) do
+    side = Universes.side(side)
+    to = Universes.beside(state.u, side)
 
-  defp broadcast(event, payload), do: SoshWeb.Endpoint.broadcast(@topic, event, payload)
+    case ensure(to) do
+      {:ok, _} ->
+        GenServer.cast(via(to), {:arrive, cargo, Universes.opposite(side)})
 
-  # stage nil: the crop is gone
-  defp crop_json({x, y, z}, stage), do: %{position: [x, y, z], stage: stage}
+        for user <- riders, p = Lobby.get(user), p != nil do
+          Players.move(p.name, to)
+        end
 
-  defp cow_json({id, x, y, z, h}),
+        {gx, gy} = to
+        broadcast(state, "travel", %{ship: id, users: riders, to: [gx, gy]})
+
+      error ->
+        Logger.error("ship lost flying to #{inspect(to)}: #{inspect(error)}")
+    end
+  end
+
+  defp emit(state, event, payload), do: broadcast(state, to_string(event), payload)
+
+  defp broadcast(state, event, payload),
+    do: SoshWeb.Endpoint.broadcast("actions:" <> Universes.key(state.u), event, payload)
+
+  defp row({id, x, y, z, h}),
     do: [id, Float.round(x, 3), Float.round(y, 3), Float.round(z, 3), Float.round(h, 3)]
 
-  defp now_ms, do: System.os_time(:millisecond)
+  defp ship_row([id | rest]), do: [trunc(id) | Enum.map(rest, &Float.round(&1, 3))]
 
-  defp seed, do: :rand.uniform(4_611_686_018_427_387_903)
+  defp floats(nil), do: nil
+  defp floats({x, y, z}), do: {x * 1.0, y * 1.0, z * 1.0}
+  defp floats([x, y, z]), do: {x * 1.0, y * 1.0, z * 1.0}
+
+  defp now_ms, do: System.os_time(:millisecond)
 end

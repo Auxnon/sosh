@@ -1,60 +1,122 @@
 defmodule SoshWeb.RoomChannel do
   @moduledoc """
-  The plaza. Clients (the Petrichor64 client in `client/`) join `room:lobby`
-  with their name, position, face and pose.
+  A universe's people. Clients (the Petrichor64 client in `client/`) join
+  `room:gx,gy`, universe `{gx, gy}` of the grid (`Sosh.Universes`), with
+  their name, face and pose. A player is in one universe at a time
+  (`Sosh.Players`); joining any other is refused with `reason: "elsewhere"`
+  and the `universe` [gx, gy] they're in. The join reply says where they
+  stand (`at`): where they left off, aboard the ship they flew in on (`on`
+  its id, `local` where on it), or on the home island.
 
   Server -> client events:
     * `snapshot` `%{players: [player]}` - pushed to a newcomer, everyone present
     * `joined` player - someone arrived
     * `left` `%{user_id}` - someone's channel closed
-    * `move` `%{user_id, at, v, to}` - a change in someone's motion: they
-      stand at `at` [x, y, z], moving at `v` [vx, vy] tiles a second, and
-      stop at `to` [x, y] if it isn't nil. Clients send it when their
-      velocity changes (start, stop, turn, blocked) and once a second while
-      moving, and everyone predicts the rest; so does the server, for cows
-      (`Sosh.Lobby.position/2`).
+    * `move` `%{user_id, at, v, to, on, local}` - a change in someone's
+      motion: they stand at `at` [x, y, z], moving at `v` [vx, vy] tiles a
+      second, and stop at `to` [x, y] if it isn't nil. Clients send it when
+      their velocity changes (start, stop, turn, blocked) and once a second
+      while moving, and everyone predicts the rest; so does the server, for
+      cows (`Sosh.Lobby.position/2`). On an airship `on` is its id and
+      `local` [x, y, z] where on it they stand, with `v` and `to` in its
+      frame too (`at` is only roughly where that was in the world); else
+      `on` is 0 and `local` nil.
     * `face` `%{user_id, face}`, `animation` `%{user_id, animation}`
     * `new_msg` `%{user_id, name, body}` - chat, echoed to the sender too
     * `emote` `%{user_id, emote}` - one of wave, dance, jump, cheer
 
-  where a player is `%{user_id, name, vec, v, to, face, animation}`, `vec`
-  being where they are predicted to be now.
+  where a player is `%{user_id, name, vec, v, to, on, local, face,
+  animation}`, `vec` (or, aboard a ship, `local`) being where they are
+  predicted to be now.
   """
   use Phoenix.Channel
 
-  alias Sosh.Lobby
+  alias Sosh.{Lobby, Players, Sim, Universes}
 
   @max_name 16
   @max_body 280
-  @max_coord 100
+  # a universe's cells run -48..47; leave room to stand at its edge
+  @max_coord 49
+  # how far from a ship's middle someone can stand on it
+  @max_local 16
   @max_index 63
   # walking is 4.2 tiles a second
   @max_speed 6.0
   @emotes ~w(wave dance jump cheer)
 
-  def join("room:lobby", params, socket) do
+  def join("room:" <> key, params, socket) do
     user_id = socket.assigns.user_id
+    name = clean_name(params["name"])
 
-    player = %{
-      user_id: user_id,
-      name: clean_name(params["name"]),
-      at: clean_vec(params["vec"]),
-      v: [0, 0],
-      to: nil,
-      t: Lobby.now(),
-      face: clean_index(params["face"]),
-      animation: clean_index(params["animation"])
-    }
+    with {:ok, u} <- here(key, name),
+         {:ok, _} <- Sim.ensure(u) do
+      me = Players.get(name)
+      {{x, y, z}, aboard} = Sim.spawn(u, user_id, me.at)
 
-    Lobby.put(user_id, player)
-    send(self(), {:after_join, player})
-    socket = assign(socket, :name, player.name)
+      {on, local} =
+        case aboard do
+          {ship, {lx, ly, lz}} -> {ship, [lx, ly, lz]}
+          nil -> {0, nil}
+        end
 
-    {:ok, %{connection_id: socket.assigns.connection_id, user_id: user_id}, socket}
+      player = %{
+        user_id: user_id,
+        name: name,
+        universe: u,
+        at: [x, y, z],
+        on: on,
+        local: local,
+        v: [0, 0],
+        to: nil,
+        t: Lobby.now(),
+        face: clean_index(params["face"]),
+        animation: clean_index(params["animation"])
+      }
+
+      Lobby.put(user_id, player)
+      send(self(), {:after_join, player})
+      socket = socket |> assign(:name, name) |> assign(:universe, u)
+      {gx, gy} = u
+
+      {:ok,
+       %{
+         connection_id: socket.assigns.connection_id,
+         user_id: user_id,
+         universe: [gx, gy],
+         at: [x, y, z],
+         on: on,
+         local: local
+       }, socket}
+    else
+      {:error, %{} = why} -> {:error, why}
+      {:error, why} -> {:error, %{reason: to_string(why)}}
+    end
   end
 
-  def join("room:" <> _private_room_id, _params, _socket) do
-    {:error, %{reason: "unauthorized"}}
+  # The universe `key` names, if `name` is in it. Someone whose universe
+  # has gone from the grid is back on the plaza.
+  @doc false
+  def here(key, name) do
+    with {:ok, u} <- Universes.parse(key) do
+      there = Players.get(name).universe
+
+      there =
+        if Universes.exists?(there) do
+          there
+        else
+          Players.move(name, {0, 0})
+          {0, 0}
+        end
+
+      if there == u do
+        {:ok, u}
+      else
+        {gx, gy} = there
+        {:error, %{reason: "elsewhere", universe: [gx, gy]}}
+      end
+    else
+      :error -> {:error, %{reason: "no_such_universe"}}
+    end
   end
 
   def handle_info({:after_join, player}, socket) do
@@ -81,10 +143,14 @@ defmodule SoshWeb.RoomChannel do
   end
 
   def handle_in("move", %{"at" => at} = payload, socket) do
+    {on, local} = clean_aboard(payload["on"], payload["local"])
+
     motion = %{
       at: clean_vec(at),
       v: clean_velocity(payload["v"]),
-      to: clean_to(payload["to"])
+      to: clean_to(payload["to"]),
+      on: on,
+      local: local
     }
 
     Lobby.update(socket.assigns.user_id, Map.put(motion, :t, Lobby.now()))
@@ -118,8 +184,17 @@ defmodule SoshWeb.RoomChannel do
 
   def handle_in(_event, _payload, socket), do: {:noreply, socket}
 
+  # They come back where they stood, unless they've moved on to another
+  # universe meanwhile.
   def terminate(_reason, socket) do
-    if user_id = socket.assigns[:user_id] do
+    user_id = socket.assigns[:user_id]
+
+    if user_id && socket.assigns[:universe] do
+      case Lobby.get(user_id) do
+        %{} = p -> Players.left(p.name, p.universe, List.to_tuple(Lobby.position(p, Lobby.now())))
+        nil -> :ok
+      end
+
       Lobby.delete(user_id)
       SoshWeb.Endpoint.broadcast_from(self(), socket.topic, "left", %{user_id: user_id})
     end
@@ -127,20 +202,29 @@ defmodule SoshWeb.RoomChannel do
     :ok
   end
 
-  defp clean_name(name) when is_binary(name) do
+  @doc false
+  def clean_name(name) when is_binary(name) do
     case name |> String.trim() |> String.slice(0, @max_name) do
       "" -> "guest"
       name -> name
     end
   end
 
-  defp clean_name(_), do: "guest"
+  def clean_name(_), do: "guest"
 
   defp clean_vec([x, y, z]) when is_number(x) and is_number(y) and is_number(z) do
-    Enum.map([x, y, z], &(&1 |> max(-@max_coord) |> min(@max_coord)))
+    [x, y] = Enum.map([x, y], &(&1 |> max(-@max_coord) |> min(@max_coord)))
+    [x, y, z |> max(-32) |> min(32)]
   end
 
   defp clean_vec(_), do: [0, 0, 0]
+
+  defp clean_aboard(on, [x, y, z])
+       when is_integer(on) and on > 0 and is_number(x) and is_number(y) and is_number(z) do
+    {on, Enum.map([x, y, z], &(&1 |> max(-@max_local) |> min(@max_local)))}
+  end
+
+  defp clean_aboard(_, _), do: {0, nil}
 
   defp clean_to([x, y]) when is_number(x) and is_number(y) do
     Enum.map([x, y], &(&1 |> max(-@max_coord) |> min(@max_coord)))
@@ -160,9 +244,15 @@ defmodule SoshWeb.RoomChannel do
   defp clean_velocity(_), do: [0, 0]
 
   defp public(player, now) do
+    {on, at} = Lobby.frame(player, now)
+
     player
     |> Map.take([:user_id, :name, :v, :to, :face, :animation])
-    |> Map.put(:vec, Lobby.position(player, now))
+    |> Map.merge(%{
+      vec: Lobby.position(player, now),
+      on: on,
+      local: if(on == 0, do: nil, else: at)
+    })
   end
 
   defp clean_index(i) when is_integer(i) and i >= 0 and i <= @max_index, do: i

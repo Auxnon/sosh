@@ -13,8 +13,11 @@ defmodule Sosh.Application do
       Sosh.Repo,
       {Phoenix.PubSub, name: Sosh.PubSub},
       Sosh.Lobby,
-      Sosh.World,
-      Sosh.Sim,
+      Sosh.Players,
+      # one Sosh.Sim per universe of the grid, by {gx, gy}
+      {Registry, keys: :unique, name: Sosh.Sims},
+      {DynamicSupervisor, name: Sosh.SimSup, strategy: :one_for_one},
+      {Task, &Sosh.Universes.boot/0},
       # Start the Finch HTTP client for sending emails
       {Finch, name: Sosh.Finch},
       # Start a worker by calling: Sosh.Worker.start_link(arg)

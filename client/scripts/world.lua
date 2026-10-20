@@ -1,7 +1,10 @@
--- world — sky and spawn. The ground itself is server data (blocks.lua).
+-- world — sky, spawn, and what lies far below the islands. The islands
+-- themselves are server data (blocks.lua).
 
 -- Spawn height: the plaza floor's top, before any chunk has arrived.
 GROUND_Z = 0
+-- the sea, or the wild land, far under every island
+BELOW_Z = -44
 
 function world_build()
 	world_sky()
@@ -32,4 +35,18 @@ function world_sky()
 		local y1 = flr((i + 1) * h / steps) + 1
 		sky:rect(0, y0, sky.w, y1 - y0, col)
 	end
+end
+
+-- What lies far below this universe's islands: "sea" or "land" (the join
+-- reply's `kind`).
+function world_below(kind)
+	if BELOW ~= nil then
+		BELOW:kill()
+		BELOW = nil
+	end
+	local model = "sea"
+	if kind == "land" then
+		model = "land"
+	end
+	BELOW = make(model, 0, 0, BELOW_Z, 1)
 end

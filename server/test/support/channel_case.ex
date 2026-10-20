@@ -38,10 +38,15 @@ defmodule SoshWeb.ChannelCase do
   # Setup hooks for channel tests
   setup tags do
     :ok = Application.ensure_started(:sosh)
-    # Sosh.World and Sosh.Lobby are app-wide processes, so the sandbox is shared
-    # and channel tests must not be async.
+    # Universes, Sosh.Lobby and Sosh.Players are app-wide processes, so the
+    # sandbox is shared and channel tests must not be async. Every test
+    # starts with a fresh grid: (0, 0), the plaza, and (1, 0) east of it.
+    Sosh.Sim.stop_all()
     SoshWeb.ChannelCase.setup_sandbox(tags)
-    Sosh.World.reset()
+    Enum.each(Sosh.Lobby.list(), &Sosh.Lobby.delete(&1.user_id))
+    Sosh.Players.reset()
+    Sosh.Universes.create({0, 0}, "sea", 7)
+    Sosh.Universes.create({1, 0}, "land", 7)
     {:ok, socket} = Phoenix.ChannelTest.connect(SoshWeb.UserSocket, %{})
     {:ok, socket: socket}
   end

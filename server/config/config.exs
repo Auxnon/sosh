@@ -11,12 +11,22 @@ config :sosh,
   ecto_repos: [Sosh.Repo],
   generators: [timestamp_type: :utc_datetime]
 
-# How often dirty world chunks are written to Postgres; nil disables autosave.
-config :sosh, Sosh.World, autosave_ms: 30_000
+# Start every universe of the grid on boot (making the first two if there
+# are none).
+config :sosh, Sosh.Universes, boot: true
 
-# The crop and cow simulation: ticks per wall-clock interval, how long each
-# crop growth stage takes (three stages to ripe), and how many cows roam.
-config :sosh, Sosh.Sim, tick_ms: 100, stage_ms: 60_000, cows: 5
+# Each universe: ticks every tick_ms while anyone is in it; a crop growth
+# stage takes stage_ms of world time (three stages to ripe); cows roam its
+# home island. Empty for sleep_after_ms, it saves and sleeps, running
+# ambient systems every idle_ms. Awake, it saves every save_ms (nil: only
+# on sleep and shutdown).
+config :sosh, Sosh.Sim,
+  tick_ms: 100,
+  stage_ms: 60_000,
+  cows: 5,
+  idle_ms: 2_000,
+  sleep_after_ms: 10_000,
+  save_ms: 30_000
 
 # Configures the endpoint
 config :sosh, SoshWeb.Endpoint,
