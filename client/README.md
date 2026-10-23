@@ -30,6 +30,11 @@ just serve         # Phoenix on :4000, in another terminal (container if no loca
 just desktop       # run the client window; join with server ws://localhost:4000
 ```
 
+The recipes run from the repo root or `client/`. Containers use podman if it's
+installed, otherwise docker (`CTR=docker` to choose). On macOS (Docker
+Desktop) the server container publishes :4000 and reaches Postgres at
+`host.docker.internal` instead of sharing the host network.
+
 Web (served by Phoenix from `server/priv/static/`):
 
 ```sh

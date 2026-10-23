@@ -5,7 +5,7 @@ import Config
 config :sosh, Sosh.Repo,
   username: "postgres",
   password: "postgres",
-  hostname: "localhost",
+  hostname: System.get_env("DB_HOST", "localhost"),
   port: String.to_integer(System.get_env("DB_PORT", "5442")),
   database: "sosh_dev",
   stacktrace: true,

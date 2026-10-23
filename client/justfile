@@ -13,6 +13,8 @@ p64 := env_var_or_default("P64", if path_exists(p64_ws) == "true" { p64_ws } els
 # Engine binary for desktop runs and packing; must be built with `ws`.
 chor := env_var_or_default("CHOR", p64 / "target/release/petrichor64")
 server := justfile_directory() / "../server"
+# Container engine: podman if installed, else docker (macOS); or set CTR.
+ctr := env_var_or_default("CTR", `command -v podman >/dev/null 2>&1 && echo podman || echo docker`)
 static := server / "priv/static"
 
 default:
@@ -47,10 +49,17 @@ web-engine:
 # Everything the web client needs: engine + packed game.
 web: web-engine pack
 
-# Start Postgres for world storage on :5442 (podman; docker works the same).
+# Start Postgres for world storage on :5442 (podman or docker).
+# Resumes it if paused, starts it if stopped, makes it if missing.
 db:
-    podman start sosh-pg 2>/dev/null || podman run -d --name sosh-pg -p 5442:5432 \
-        -e POSTGRES_PASSWORD=postgres -v sosh_pgdata:/var/lib/postgresql/data postgres:17
+    #!/usr/bin/env sh
+    case "$({{ctr}} inspect -f '{{{{.State.Status}}' sosh-pg 2>/dev/null)" in
+        running) echo "sosh-pg already running" ;;
+        paused) {{ctr}} unpause sosh-pg ;;
+        "") {{ctr}} run -d --name sosh-pg -p 5442:5432 -e POSTGRES_PASSWORD=postgres \
+                -v sosh_pgdata:/var/lib/postgresql/data postgres:17 ;;
+        *) {{ctr}} start sosh-pg ;;
+    esac
 
 # Start the Phoenix server on :4000 (serves the web client too). Needs `just db`.
 # Uses a local `mix` if there is one, otherwise runs in a container.
@@ -61,9 +70,18 @@ serve:
     if command -v mix >/dev/null; then
         mix ecto.create --quiet && mix ecto.migrate && exec mix phx.server
     fi
-    podman image exists sosh-elixir || podman build -t sosh-elixir -f Containerfile.dev .
-    podman rm -f sosh-dev >/dev/null 2>&1 || true
+    {{ctr}} image inspect sosh-elixir >/dev/null 2>&1 || {{ctr}} build -t sosh-elixir -f Containerfile.dev .
+    {{ctr}} rm -f sosh-dev >/dev/null 2>&1 || true
     tty=; [ -t 0 ] && tty=-t
-    exec podman run --rm -i $tty --name sosh-dev --network host \
-        -v {{server}}:/app:Z -v sosh_deps:/app/deps -v sosh_build_dev:/app/_build \
+    # Linux shares the host's network; Docker Desktop (macOS) can't, so publish
+    # :4000 and reach Postgres through host.docker.internal instead.
+    if [ "$(uname)" = Darwin ]; then
+        net="-p 4000:4000 -e DB_HOST=host.docker.internal"
+    else
+        net="--network host"
+    fi
+    # SELinux (Fedora and the like) needs the source mount relabelled.
+    label=; command -v selinuxenabled >/dev/null && selinuxenabled && label=:Z
+    exec {{ctr}} run --rm -i $tty --name sosh-dev $net \
+        -v {{server}}:/app$label -v sosh_deps:/app/deps -v sosh_build_dev:/app/_build \
         sosh-elixir sh -c 'mix deps.get && mix ecto.create --quiet && mix ecto.migrate && mix phx.server'
