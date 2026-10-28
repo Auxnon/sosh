@@ -44,16 +44,16 @@ function picker_pick(i)
 end
 
 -- Where everything on the HUD goes this frame. The gui can be as small as
--- 320x240, so nothing overlaps there: the button column hangs from the top
--- right, the toolbar sits on the bottom edge (the picker wraps to a row
--- above it when it doesn't fit beside it), the bag panel above those in
--- the middle, and chat stacks above them on the left, clear of the column.
+-- 320x240 (or wide and short, filling a browser window), so nothing
+-- overlaps there: the button column hangs from the top right, wrapping into
+-- a second column when it would reach the toolbar, the toolbar sits on the
+-- bottom edge (the picker wraps to a row above it when it doesn't fit beside
+-- it), the bag panel above those in the middle, and chat stacks above them
+-- on the left, clear of the column.
 function hud_layout()
 	local L = {}
 	L.top_h = LH + PAD * 2
-	L.col_x = gui.w - HUD_BTN_W - PAD * 2
 	L.col_y = L.top_h + PAD * 2
-	L.col_h = (HUD_BTN_H + PAD) * HUD_ROWS
 
 	-- tool buttons narrow (and drop their numbers) on a small gui
 	local nt = #TOOLS
@@ -107,6 +107,17 @@ function hud_layout()
 		end
 	end
 	L.panel_bottom = bottom - PAD
+	local rows = flr((L.panel_bottom - L.col_y + PAD) / (HUD_BTN_H + PAD))
+	if rows < 1 then
+		rows = 1
+	end
+	if rows > HUD_ROWS then
+		rows = HUD_ROWS
+	end
+	local cols = flr((HUD_ROWS + rows - 1) / rows)
+	L.col_rows = rows
+	L.col_x = gui.w - PAD * 2 - HUD_BTN_W * cols - PAD * (cols - 1)
+	L.col_h = (HUD_BTN_H + PAD) * rows
 	L.hint_text = HINT
 	if Ships.piloted_by(APP.my_id) ~= nil then
 		L.hint_text = HINT_HELM
@@ -347,45 +358,56 @@ function draw_toolbar(L)
 	end
 end
 
+-- The next place in the button column: down, then on to the next column.
+function hud_next(L, P)
+	P.row = P.row + 1
+	if P.row >= L.col_rows then
+		P.row = 0
+		P.x = P.x + HUD_BTN_W + PAD
+		P.y = L.col_y
+	else
+		P.y = P.y + HUD_BTN_H + PAD
+	end
+end
+
 function draw_buttons(L)
 	local me = APP.me
-	local x = L.col_x
-	local y = L.col_y
+	local P = { x = L.col_x, y = L.col_y, row = 0 }
 	for i = 1, #EMOTES do
 		local label = EMOTE_KEYS[i] .. " " .. EMOTES[i]
-		if UI.button(label, x, y, HUD_BTN_W, HUD_BTN_H) then
+		if UI.button(label, P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 			do_emote(EMOTES[i])
 		end
-		y = y + HUD_BTN_H + PAD
+		hud_next(L, P)
 	end
-	if UI.button("look", x, y, HUD_BTN_W, HUD_BTN_H) then
+	if UI.button("look", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 		Creator.open()
 	end
-	y = y + HUD_BTN_H + PAD
+	hud_next(L, P)
 	local pose_label = me:anim_name()
 	if Ships.piloted_by(APP.my_id) ~= nil then
 		pose_label = "let go"
 	elseif Carry.of(APP.my_id) ~= nil then
 		pose_label = "put down"
 	end
-	if UI.button(pose_label, x, y, HUD_BTN_W, HUD_BTN_H) then
+	if UI.button(pose_label, P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 		pose_pressed()
 	end
-	y = y + HUD_BTN_H + PAD
-	if UI.button("i bag", x, y, HUD_BTN_W, HUD_BTN_H) then
+	hud_next(L, P)
+	if UI.button("i bag", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 		if Bag.open then
 			Bag.close()
 		else
 			Bag.open = true
 		end
 	end
-	y = y + HUD_BTN_H + PAD
-	if UI.button("chat", x, y, HUD_BTN_W, HUD_BTN_H) then
+	hud_next(L, P)
+	if UI.button("chat", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 		APP.typing = not APP.typing
 		APP.draft.text = ""
 	end
-	y = y + HUD_BTN_H + PAD
-	if UI.button("home", x, y, HUD_BTN_W, HUD_BTN_H) then
+	hud_next(L, P)
+	if UI.button("home", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 		Account.leave_world()
 	end
 end
