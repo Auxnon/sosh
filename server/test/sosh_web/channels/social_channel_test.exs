@@ -41,7 +41,7 @@ defmodule SoshWeb.SocialChannelTest do
 
     {:ok, _, auth} = Phoenix.ChannelTest.subscribe_and_join(s, SoshWeb.AuthChannel, "auth:lobby", %{})
     ref = push(auth, "whoami", %{})
-    assert_reply ref, :ok, %{token: ^token, enter: 42, user: %{handle: "tok"}}
+    assert_reply ref, :ok, %{token: ^token, enter: 42, app: true, user: %{handle: "tok"}}
 
     {:ok, s} = connect(SoshWeb.UserSocket, %{"token" => "nonsense-token-nonsense"})
     assert s.assigns.account == nil

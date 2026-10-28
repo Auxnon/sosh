@@ -3,7 +3,10 @@
 
 HUD_BTN_W = 72
 HUD_BTN_H = 18
-HUD_ROWS = 9 -- right-hand column: 4 emotes, look, pose, bag, chat, home
+-- right-hand column: 4 emotes, look, pose, bag, chat, home (in the app,
+-- whose own screens do chat, looks and going home: the emotes, pose, bag)
+HUD_ROWS = 9
+HUD_ROWS_APP = 6
 HINT = "enter: chat  wasd: walk  1-6: tool  z/x: pick  r: turn  i: bag  b: helm  h: helper  f: look  g: pose/drop  7-0: emote  q/e: look"
 HINT_HELM = "at the helm: w/s ahead/astern  a/d turn  space/c up/down  b: let go"
 TOOL_W = 60
@@ -111,10 +114,14 @@ function hud_layout()
 	if rows < 1 then
 		rows = 1
 	end
-	if rows > HUD_ROWS then
-		rows = HUD_ROWS
+	local count = HUD_ROWS
+	if APP.embedded then
+		count = HUD_ROWS_APP
 	end
-	local cols = flr((HUD_ROWS + rows - 1) / rows)
+	if rows > count then
+		rows = count
+	end
+	local cols = flr((count + rows - 1) / rows)
 	L.col_rows = rows
 	L.col_x = gui.w - PAD * 2 - HUD_BTN_W * cols - PAD * (cols - 1)
 	L.col_h = (HUD_BTN_H + PAD) * rows
@@ -122,7 +129,8 @@ function hud_layout()
 	if Ships.piloted_by(APP.my_id) ~= nil then
 		L.hint_text = HINT_HELM
 	end
-	L.hint = UI.text_w(L.hint_text) <= gui.w - PAD * 4
+	-- key hints mean nothing on a phone
+	L.hint = not APP.embedded and UI.text_w(L.hint_text) <= gui.w - PAD * 4
 	if L.hint then
 		bottom = bottom - LH - PAD
 	end
@@ -263,7 +271,9 @@ function draw_hud()
 		UI.text(edge, ex, L.top_h + PAD * 3, C_ACCENT)
 	end
 
-	draw_chat(L)
+	if not APP.embedded then
+		draw_chat(L)
+	end
 	if APP.me ~= nil then
 		draw_toolbar(L)
 		draw_buttons(L)
@@ -380,10 +390,12 @@ function draw_buttons(L)
 		end
 		hud_next(L, P)
 	end
-	if UI.button("look", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
-		Creator.open()
+	if not APP.embedded then
+		if UI.button("look", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
+			Creator.open()
+		end
+		hud_next(L, P)
 	end
-	hud_next(L, P)
 	local pose_label = me:anim_name()
 	if Ships.piloted_by(APP.my_id) ~= nil then
 		pose_label = "let go"
@@ -400,6 +412,9 @@ function draw_buttons(L)
 		else
 			Bag.open = true
 		end
+	end
+	if APP.embedded then
+		return
 	end
 	hud_next(L, P)
 	if UI.button("chat", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then

@@ -69,7 +69,9 @@ function Account.start(url)
 		PHX:push(AUTH, "whoami", {}, function(status, w)
 			if status == "ok" and w.user ~= nil and w.token ~= nil then
 				APP.enter_id = w.enter
-				APP.embedded = true
+				-- in the app: it has chat, the creator and the way home
+				-- as its own screens, so the HUD leaves them out
+				APP.embedded = w.app == true
 				Account.signed_in(w)
 			end
 		end)

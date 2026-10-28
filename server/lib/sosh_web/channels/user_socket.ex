@@ -4,7 +4,9 @@ defmodule SoshWeb.UserSocket do
   the `token` socket param, or, for the Android app's embedded world view,
   `sosh-token/<token>` in its user agent (a web view can't add socket
   params the game didn't write), with `sosh-enter/<server id>` for the
-  server to open (`auth:lobby` `whoami` hands both to the game). Without one the connection can only use
+  server to open (`auth:lobby` `whoami` hands both to the game, and that
+  it's in the app, `app`, so it leaves the chat to the app's own). Without
+  one the connection can only use
   `auth:lobby`, to sign in or up and get a token to reconnect with.
 
   Every connection also gets a fresh `user_id`: who it is in a universe
@@ -32,6 +34,7 @@ defmodule SoshWeb.UserSocket do
       |> assign(:token, user && token)
       |> assign(:caller, caller(connect_info[:peer_data]))
       |> assign(:enter, ua_enter(connect_info[:user_agent]))
+      |> assign(:app, ua_token(connect_info[:user_agent]) != nil)
 
     {:ok, socket}
   end
