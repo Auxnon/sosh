@@ -95,6 +95,29 @@ android:
 android-install:
     cd {{justfile_directory()}}/../android && ./gradlew installDebug
 
+# Install the Android app on the phone plugged in over USB (or a running
+# emulator), then say which server address to give it.
+install:
+    #!/usr/bin/env sh
+    set -e
+    command -v adb >/dev/null || { echo "adb not found: install Android platform-tools"; exit 1; }
+    adb start-server >/dev/null 2>&1
+    devices=$(adb devices | awk 'NR>1 && $2=="device"' | wc -l)
+    if [ "$devices" -eq 0 ]; then
+        adb devices | awk 'NR>1 && $2=="unauthorized" {f=1} END {exit !f}' \
+            && echo "Accept the \"Allow USB debugging?\" prompt on the phone, then run this again." \
+            || echo "No phone found: plug it in with USB debugging on (Settings > About phone > tap Build number 7 times, then Developer options > USB debugging)."
+        exit 1
+    fi
+    cd {{justfile_directory()}}/../android && ./gradlew installDebug
+    adb shell monkey -p app.sosh -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+    ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}')
+    [ -n "$ip" ] || ip=$(ipconfig getifaddr en0 2>/dev/null || true)
+    echo
+    echo "Installed. With \`just serve\` running, tap the server address under the"
+    echo "sign-in form and enter: http://${ip:-<this computer's LAN address>}:4000"
+    echo "(an emulator can keep the default, http://10.0.2.2:4000)"
+
 # The Android app's tests: its network code and models against the dev
 # server (`just serve` first; they're skipped without one).
 android-test:

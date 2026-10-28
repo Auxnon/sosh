@@ -33,5 +33,8 @@ android:
 android-install:
     just -f client/justfile android-install
 
+install:
+    just -f client/justfile install
+
 android-test:
     just -f client/justfile android-test
