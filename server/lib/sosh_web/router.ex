@@ -69,23 +69,6 @@ defmodule SoshWeb.Router do
     get "/hello", PageController, :api_hello
   end
 
-  scope "/", SoshWeb do
-    pipe_through :browser
-    # get "/assets/*path", :not_found
-    get "/*path", PageController, :index
-  end
-
-  # scope "/", SoshWeb do
-  #   pipe_through :browser
-  #
-  #   get "/", PageController, :home
-  # end
-
-  # Other scopes may use custom stacks.
-  # scope "/api", SoshWeb do
-  #   pipe_through :api
-  # end
-
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:sosh, :dev_routes) do
     # If you want to use the LiveDashboard in production, you should put
@@ -102,4 +85,23 @@ defmodule SoshWeb.Router do
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
   end
+
+  # Everything else is the game (the dev routes go above it, or it would
+  # catch /dev too)
+  scope "/", SoshWeb do
+    pipe_through :browser
+    # get "/assets/*path", :not_found
+    get "/*path", PageController, :index
+  end
+
+  # scope "/", SoshWeb do
+  #   pipe_through :browser
+  #
+  #   get "/", PageController, :home
+  # end
+
+  # Other scopes may use custom stacks.
+  # scope "/api", SoshWeb do
+  #   pipe_through :api
+  # end
 end
