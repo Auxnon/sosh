@@ -117,8 +117,29 @@ anything farther.
 ## Protocol
 
 `phx.lua` speaks Phoenix Channels (V2 JSON serializer) over the engine's
-websocket, with reply callbacks for request/response pushes. The client
-joins two channels for the universe it's in, both with its `name`:
+websocket, with reply callbacks for request/response pushes.
+
+The socket starts signed out (account.lua). It can only join
+**`auth:lobby`**: `login`, `register` (the server emails a 6-digit code),
+`confirm`, `resend`, `forgot` and `reset`, each answering a session `token`
+once you're signed in, plus `whoami` (the Android app's world view is already
+signed in by its user agent). The client connects again with
+`&token=<token>` and joins:
+
+- **`user:<id>`**: your own channel. The join reply has everything: you, your
+  bag, the servers and your place in each, friends, conversations, the
+  character catalog. Requests: `enter` (go to a server's universe),
+  `join_server`, `leave_server`, `friend_add`/`friend_accept`/`friend_remove`,
+  `character`, `dm_post`, `claim`/`cancel` (open or take back a gift),
+  `members`, `member` (moderation), `invite`, `server_update`. Events tell you
+  when servers, friends, your bag or your character change, and about DMs
+  and gifts. See `SoshWeb.UserChannel`.
+- **`server:<id>`**: a server's chat, for its members. `post` (`body`, and
+  optionally `gift: {item, count, to}`) and `history`; `message`, `gift`,
+  `deleted` and `members` come in. Gifts go out wrapped: who they're for,
+  not what's in them. **`dm:<id>`** is the same for a conversation.
+
+Inside a server, the client also joins two channels for its universe:
 
 - **`room:gx,gy`**: presence, movement, faces, poses, emotes and chat. The
   join reply says where you stand (`at`, and if that's on a ship, `on` its

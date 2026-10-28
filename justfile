@@ -26,3 +26,12 @@ desktop:
 
 assets:
     just -f client/justfile assets
+
+android:
+    just -f client/justfile android
+
+android-install:
+    just -f client/justfile android-install
+
+android-test:
+    just -f client/justfile android-test

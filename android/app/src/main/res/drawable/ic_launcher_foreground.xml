@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A floating island: grass on top, rock tapering below. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FF86603E" android:pathData="M30,52 L78,52 L66,70 L58,82 L50,82 L42,70 Z" />
+    <path android:fillColor="#FF70A860" android:pathData="M28,46 L80,46 L80,54 L28,54 Z" />
+    <path android:fillColor="#FFF4F0E6" android:pathData="M48,30 L60,30 L60,46 L48,46 Z" />
+    <path android:fillColor="#FFE8B796" android:pathData="M49,22 L59,22 L59,31 L49,31 Z" />
+</vector>
