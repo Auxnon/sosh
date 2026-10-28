@@ -76,7 +76,7 @@ function world_keys(me)
 		end
 	end
 	if key("f", true) then
-		change_face(1)
+		Creator.open()
 	end
 	if key("g", true) then
 		pose_pressed()
@@ -717,7 +717,9 @@ function chat_typing()
 	elseif res == "enter" then
 		local body = U.trim(APP.draft.text)
 		APP.typing = false
-		if body ~= "" then
+		if body:sub(1, 1) == "/" then
+			Account.command(body)
+		elseif body ~= "" then
 			local payload = {}
 			payload.body = body
 			if not PHX:push(LOBBY, "new_msg", payload) then

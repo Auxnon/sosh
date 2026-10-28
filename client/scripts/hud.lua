@@ -3,8 +3,8 @@
 
 HUD_BTN_W = 72
 HUD_BTN_H = 18
-HUD_ROWS = 8 -- right-hand column: 4 emotes, face, pose, bag, chat
-HINT = "enter: chat  wasd: walk  1-6: tool  z/x: pick  r: turn  i: bag  b: helm  h: helper  f: face  g: pose/drop  7-0: emote  q/e: look"
+HUD_ROWS = 9 -- right-hand column: 4 emotes, look, pose, bag, chat, home
+HINT = "enter: chat  wasd: walk  1-6: tool  z/x: pick  r: turn  i: bag  b: helm  h: helper  f: look  g: pose/drop  7-0: emote  q/e: look"
 HINT_HELM = "at the helm: w/s ahead/astern  a/d turn  space/c up/down  b: let go"
 TOOL_W = 60
 PICK_W = 72
@@ -358,9 +358,8 @@ function draw_buttons(L)
 		end
 		y = y + HUD_BTN_H + PAD
 	end
-	local face_label = "face " .. tostring(me.face + 1) .. "/" .. tostring(FACE_COUNT)
-	if UI.button(face_label, x, y, HUD_BTN_W, HUD_BTN_H) then
-		change_face(1)
+	if UI.button("look", x, y, HUD_BTN_W, HUD_BTN_H) then
+		Creator.open()
 	end
 	y = y + HUD_BTN_H + PAD
 	local pose_label = me:anim_name()
@@ -384,6 +383,10 @@ function draw_buttons(L)
 	if UI.button("chat", x, y, HUD_BTN_W, HUD_BTN_H) then
 		APP.typing = not APP.typing
 		APP.draft.text = ""
+	end
+	y = y + HUD_BTN_H + PAD
+	if UI.button("home", x, y, HUD_BTN_W, HUD_BTN_H) then
+		Account.leave_world()
 	end
 end
 

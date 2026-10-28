@@ -43,7 +43,7 @@ EMOTE_SAY = { wave = "*waves*", dance = "*dances*", jump = "*jumps*", cheer = "*
 BUBBLE_FRAMES = 480
 BUBBLE_MAX = 3
 
-function Avatar.new(id, name, x, y, z, face, anim)
+function Avatar.new(id, name, x, y, z, face, anim, character)
 	local a = setmetatable({}, Avatar)
 	a.id = id
 	a.name = name
@@ -74,29 +74,32 @@ function Avatar.new(id, name, x, y, z, face, anim)
 	a.wait = nil
 	a.clip = nil -- the clip the model is playing
 	a.hex = U.hex_for(id)
+	a.character = character
 	a:spawn()
 	return a
 end
 
 function Avatar:spawn()
-	self.body = make("player", self.x, self.y, self.z, 1)
-	self.head = make("face" .. self.face, self.x, self.y, self.z, 1)
+	self.char = Character.new(self.character, self.x, self.y, self.z)
 	self:pose()
 end
 
 function Avatar:remove()
-	self.body:kill()
-	self.head:kill()
+	self.char:kill()
 end
 
+-- The old face index: kept on the wire, but looks are characters now.
 function Avatar:set_face(face)
-	face = face % FACE_COUNT
-	if face == self.face then
+	self.face = face % FACE_COUNT
+end
+
+-- A new look (character.lua): rebuilt where it stands.
+function Avatar:set_character(spec)
+	if spec == nil then
 		return
 	end
-	self.face = face
-	self.head:kill()
-	self.head = make("face" .. face, self.x, self.y, self.z, 1)
+	self.character = spec
+	self.char:restyle(spec)
 	self:pose()
 end
 
@@ -520,32 +523,17 @@ function Avatar:pose()
 		end
 	end
 
-	local body = self.body
-	if clip ~= self.clip then
-		self.clip = clip
-		body:anim(clip)
-	end
-	local facing = h + twist
-	body.x = self.x
-	body.y = self.y
-	body.z = self.z + bob
-	body.rz = facing
-	body:bone("shoulder.l", { 0, fl, 0 })
-	body:bone("shoulder.r", { 0, fr, 0 })
-	body:bone("arm.l", { 0, 0, ll })
-	body:bone("arm.r", { 0, 0, lr })
-	body:bone("waist.l", { 0, -swing, 0 })
-	body:bone("waist.r", { 0, -swing, 0 })
-
-	-- the face model's origin is the head bone's
-	local head = self.head
-	local hb = body:bone("head")
-	if hb ~= nil then
-		head.x = hb.x
-		head.y = hb.y
-		head.z = hb.z
-	end
-	head.rz = facing
+	-- the clip, with arms and legs turned on top of it (character.lua
+	-- applies them to the body and every piece of clothing alike)
+	local turns = {}
+	turns["shoulder.l"] = { 0, fl, 0 }
+	turns["shoulder.r"] = { 0, fr, 0 }
+	turns["arm.l"] = { 0, 0, ll }
+	turns["arm.r"] = { 0, 0, lr }
+	turns["waist.l"] = { 0, -swing, 0 }
+	turns["waist.r"] = { 0, -swing, 0 }
+	self.clip = clip
+	self.char:pose(self.x, self.y, self.z + bob, h + twist, clip, turns)
 
 	local hold = { self.x, self.y, self.z + bob + CARRY_Z, h }
 	self.hold = hold
@@ -554,7 +542,7 @@ end
 -- Point above the head where the name tag sits, as {x, y, z}; above what
 -- they carry, if anything.
 function Avatar:top()
-	local z = self.body.z + AV_HEIGHT + 0.15
+	local z = self.z + AV_HEIGHT * self.char.k + self.char.lift + 0.15
 	local held = Carry.height(self.id)
 	if held > 0 and self.hold ~= nil then
 		z = self.hold[3] + held + 0.15

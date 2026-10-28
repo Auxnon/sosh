@@ -151,4 +151,24 @@ defmodule SoshWeb.SocialChannelTest do
     {:ok, "pending"} = Servers.join(user, s.id)
     refute Servers.may_enter?({1, 0}, user.id)
   end
+
+  test "entering a server moves you to its universe; DMs arrive with their text" do
+    {sa, ann} = signed_in("enterer")
+    {sb, bob} = signed_in("pen_pal")
+    {:ok, _, ua} = Phoenix.ChannelTest.subscribe_and_join(sa, SoshWeb.UserChannel, "user:#{ann.id}", %{})
+    {:ok, _, _ub} = Phoenix.ChannelTest.subscribe_and_join(sb, SoshWeb.UserChannel, "user:#{bob.id}", %{})
+
+    far = Servers.at({3, 0})
+    ref = push(ua, "enter", %{"id" => far.id})
+    assert_reply ref, :error, %{reason: "forbidden"}
+
+    {:ok, "member"} = Servers.join(ann, far.id)
+    ref = push(ua, "enter", %{"id" => far.id})
+    assert_reply ref, :ok, %{universe: [3, 0]}
+    assert Sosh.Players.get("enterer").universe == {3, 0}
+
+    ref = push(ua, "dm_post", %{"handle" => "pen_pal", "body" => "hi there"})
+    assert_reply ref, :ok, %{message: %{body: "hi there"}}
+    assert_push "dm", %{from: %{handle: "enterer"}, message: %{body: "hi there"}}
+  end
 end

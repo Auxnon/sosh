@@ -40,8 +40,7 @@ function main()
 	APP = {}
 	APP.screen = "connect"
 	APP.focus = 1
-	APP.name = UI.field("", 16)
-	APP.server = UI.field(DEFAULT_SERVER, 64)
+	APP.server_field = UI.field(DEFAULT_SERVER, 64)
 	APP.status = ""
 	APP.web = detect_web()
 	APP.players = {}
@@ -84,6 +83,11 @@ function main()
 	Helpers.init()
 	Bag.init()
 	world_below("sea")
+	Account.init()
+	-- on the web the page's own server is ours: straight to signing in
+	if APP.web then
+		Account.start(SOCKET_PATH)
+	end
 
 	-- something to look at behind the connect screen
 	CAM.az = 0.6
@@ -106,6 +110,12 @@ function loop()
 	UI.begin()
 	if APP.screen == "connect" then
 		connect_screen()
+	elseif APP.screen == "auth" then
+		auth_screen()
+	elseif APP.screen == "home" then
+		home_screen()
+	elseif APP.screen == "creator" then
+		creator_screen()
 	else
 		world_frame()
 	end
@@ -116,16 +126,14 @@ function draw() end
 -- ---------------------------------------------------------------------------
 -- connect screen
 
+-- Desktop only: which server. The web build's server is the page's.
 function connect_screen()
 	-- slow orbit of the empty plaza
 	CAM.az = CAM.az + 0.0015
 	place_camera(0, 0, GROUND_Z)
 
 	local w = 260
-	local h = 150
-	if APP.web then
-		h = 112
-	end
+	local h = 112
 	local x = flr((gui.w - w) / 2)
 	local y = flr((gui.h - h) / 2)
 	UI.panel(x, y, w, h)
@@ -135,68 +143,25 @@ function connect_screen()
 	local fx = x + PAD * 3
 	local fw = w - PAD * 6
 	local fy = y + 40
-	if UI.draw_field("your name", APP.name, fx, fy, fw, APP.focus == 1) then
-		APP.focus = 1
-	end
-	if not APP.web then
-		if UI.draw_field("server", APP.server, fx, fy + 38, fw, APP.focus == 2) then
-			APP.focus = 2
-		end
-	end
-
-	local go = UI.button("join", x + w - PAD * 3 - 64, y + h - PAD * 3 - 18, 64, 18)
+	UI.draw_field("server", APP.server_field, fx, fy, fw, true)
+	local go = UI.button("connect", x + w - PAD * 3 - 64, y + h - PAD * 3 - 18, 64, 18)
 	if APP.status ~= "" then
 		UI.text(APP.status, fx, y + h - PAD * 3 - 13, C_BAD)
 	end
-
-	local f = APP.name
-	if APP.focus == 2 then
-		f = APP.server
-	end
-	local res = UI.type_into(f)
-	if key("tab", true) and not APP.web then
-		APP.focus = 3 - APP.focus
-	end
+	local res = UI.type_into(APP.server_field)
 	if res == "enter" then
 		go = true
 	end
 	if go then
-		start_session()
-	end
-end
-
-function start_session()
-	local name = U.trim(APP.name.text)
-	if name == "" then
-		APP.status = "pick a name first"
-		APP.focus = 1
-		return
-	end
-	local url = SOCKET_PATH
-	if not APP.web then
-		local server = U.trim(APP.server.text)
+		local server = U.trim(APP.server_field.text)
 		if server:sub(#server) == "/" then
 			server = server:sub(1, #server - 1)
 		end
 		if server:sub(1, 5) ~= "ws://" and server:sub(1, 6) ~= "wss://" then
 			server = "ws://" .. server
 		end
-		url = server .. SOCKET_PATH
-	end
-	APP.status = ""
-	APP.my_name = name
-
-	PHX = Phx.new(url)
-	-- the server says which universe we're in (and where we stand) on join
-	enter_universe(APP.universe)
-	PHX:connect()
-
-	APP.screen = "world"
-	CAM.az = 0.6
-	if APP.web then
-		add_chat(nil, "connecting...", C_DIM)
-	else
-		add_chat(nil, "connecting to " .. url, C_DIM)
+		APP.status = ""
+		Account.start(server .. SOCKET_PATH)
 	end
 end
 
@@ -219,8 +184,8 @@ function enter_universe(u)
 	clear_world()
 	APP.universe = u
 	local key = universe_key(u)
+	APP.my_name = APP.account.handle
 	local params = {}
-	params.name = APP.my_name
 	params.face = 0
 	params.animation = 0
 	if APP.me ~= nil then
@@ -230,7 +195,6 @@ function enter_universe(u)
 	LOBBY = PHX:channel("room:" .. key, params)
 	bind_lobby(LOBBY)
 	local ap = {}
-	ap.name = APP.my_name
 	ACTIONS = PHX:channel("actions:" .. key, ap)
 	bind_actions(ACTIONS)
 	PHX:open(LOBBY)
@@ -262,7 +226,8 @@ function bind_lobby(ch)
 			at = { 0, 0, GROUND_Z }
 		end
 		if APP.me == nil then
-			APP.me = Avatar.new(reply.user_id, APP.my_name, at[1], at[2], at[3], 0, 0)
+			local look = APP.account.character
+			APP.me = Avatar.new(reply.user_id, APP.my_name, at[1], at[2], at[3], 0, 0, look)
 		else
 			-- rejoined (a drop, another universe): new id, same body
 			APP.me.id = reply.user_id
@@ -276,7 +241,9 @@ function bind_lobby(ch)
 		end
 		APP.sent_on = nil
 		APP.sent_at = 0
-		add_chat(nil, "in universe " .. universe_key(APP.universe), C_OK)
+		if APP.server == nil then
+			add_chat(nil, "in universe " .. universe_key(APP.universe), C_OK)
+		end
 	end
 	ch.on_error = function(reply)
 		if reply ~= nil and reply.reason == "elsewhere" and reply.universe ~= nil then
@@ -366,11 +333,20 @@ function bind_lobby(ch)
 			name = av.name
 			av:say(p.body)
 		end
-		local hex = C_TEXT
-		if p.user_id ~= nil then
-			hex = U.hex_for(p.user_id)
+		-- in a server's universe the log has it already (account.lua)
+		if APP.server == nil then
+			local hex = C_TEXT
+			if p.user_id ~= nil then
+				hex = U.hex_for(p.user_id)
+			end
+			add_chat(name, p.body, hex)
 		end
-		add_chat(name, p.body, hex)
+	end
+	ch.on["character"] = function(p)
+		local av = avatar_of(p.user_id)
+		if av ~= nil then
+			av:set_character(p.character)
+		end
 	end
 end
 
@@ -452,6 +428,13 @@ function bind_actions(ch)
 	end
 	-- a ship flew off the edge into the next universe; if we're aboard,
 	-- so do we
+	-- the ship flew into a server we aren't in: we stay, on the home island
+	ch.on["stranded"] = function(p)
+		if p.user_id == APP.my_id and APP.me ~= nil then
+			APP.me:teleport(p.at[1], p.at[2], p.at[3])
+			add_chat(nil, "you're not a member there: set down on the home island", C_BAD)
+		end
+	end
 	ch.on["travel"] = function(p)
 		Ships.remove(p.ship)
 		local users = p.users
@@ -504,7 +487,8 @@ function upsert_player(p, snap)
 	end
 	local av = APP.players[p.user_id]
 	if av == nil then
-		av = Avatar.new(p.user_id, p.name or "guest", x, y, z, p.face or 0, p.animation or 0)
+		local look = p.character
+		av = Avatar.new(p.user_id, p.name or "guest", x, y, z, p.face or 0, p.animation or 0, look)
 		APP.players[p.user_id] = av
 		table.insert(APP.order, p.user_id)
 	else

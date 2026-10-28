@@ -5,7 +5,7 @@ defmodule SoshWeb.UserChannel do
 
   Server -> client (no payload unless given; refetch what changed):
     * `friends`, `servers` - lists changed
-    * `dm` `%{conversation_id, from}` - a direct message
+    * `dm` `%{conversation_id, from, message}` - a direct message
     * `gift` `%{message_id, from}` - items were sent to you
     * `bag` `%{bag}`, `character` `%{character}`
     * `removed` `%{server_id, universe}` - kicked or banned from a server
@@ -16,7 +16,9 @@ defmodule SoshWeb.UserChannel do
   `members` {id}, `member` {id, handle, action, role?} (approve, reject,
   kick, ban, unban, role), `invite` {id, handle}, `server_update` {id, name?,
   description?, policy?}, `dm_open` {handle} -> {conversation_id,
-  messages}, `claim` / `cancel` / `delete` {id} (a message), `logout`.
+  messages}, `dm_post` {handle, body, gift?}, `enter` {id} (go to that
+  server's universe) -> {universe, server}, `claim` / `cancel` / `delete`
+  {id} (a message), `logout`.
   """
   use Phoenix.Channel
 
@@ -84,6 +86,25 @@ defmodule SoshWeb.UserChannel do
   defp answer("dm_open", %{"handle" => h}, me, _) do
     case SoshWeb.Api.ChatController.conversation(me, h) do
       {:ok, c} -> {:ok, %{conversation_id: c.id, messages: Chat.dm_history(c.id, me)}}
+      {:error, why} -> {:error, %{reason: to_string(why)}}
+    end
+  end
+
+  # Go to a server's universe (on its home island, unless already there).
+  defp answer("enter", %{"id" => id}, me, _) do
+    with %{} = s <- Servers.get(id) || {:error, :no_such_server},
+         true <- Servers.can?(s, me.id, :enter) || {:error, :forbidden} do
+      u = {s.gx, s.gy}
+      if Sosh.Players.get(me.handle).universe != u, do: Sosh.Players.move(me.handle, u)
+      {:ok, %{universe: [s.gx, s.gy], server: Servers.public(s)}}
+    else
+      {:error, why} -> {:error, %{reason: to_string(why)}}
+    end
+  end
+
+  defp answer("dm_post", %{"handle" => h} = p, me, _) do
+    case SoshWeb.Api.ChatController.conversation(me, h) do
+      {:ok, c} -> wrap(Chat.post(me, {:dm, c.id}, p), &%{message: &1})
       {:error, why} -> {:error, %{reason: to_string(why)}}
     end
   end

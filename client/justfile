@@ -5,9 +5,9 @@
 # build of the engine. Networking needs an engine built with the `ws` feature
 # (the web build always has it).
 
-# Petrichor64 checkout to build the engine from. The client needs the engine's
-# feat/tilesets branch (main plus tileset()), checked out as the
-# petrichor64-ws worktree until it's merged; then drop the worktree default.
+# Petrichor64 checkout to build the engine from. The client needs feat/polish
+# or newer (tilesets, and Tab and punctuation keys for typing emails), which
+# the petrichor64-ws worktree has checked out; without it, ~/projects/petrichor64.
 p64_ws := home_directory() / "projects/petrichor64-ws"
 p64 := env_var_or_default("P64", if path_exists(p64_ws) == "true" { p64_ws } else { home_directory() / "projects/petrichor64" })
 # Engine binary for desktop runs and packing; must be built with `ws`.

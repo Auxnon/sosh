@@ -253,7 +253,11 @@ defmodule Sosh.Chat do
 
       c = elem(place, 1)
       for id <- [c.a_id, c.b_id], id != me.id do
-        SoshWeb.Endpoint.broadcast("user:#{id}", "dm", %{conversation_id: c.id, from: User.public(me)})
+        SoshWeb.Endpoint.broadcast("user:#{id}", "dm", %{
+          conversation_id: c.id,
+          from: User.public(me),
+          message: view(%{m | author: me, recipient: recipient}, nil)
+        })
       end
     end
 

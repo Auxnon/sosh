@@ -114,6 +114,40 @@ end
 
 -- Word-wrap into lines of at most `width` characters. Words longer than a
 -- line are hard-split.
+-- A deep copy of a table of plain values.
+function U.copy(t)
+	if type(t) ~= "table" then
+		return t
+	end
+	local out = {}
+	for k, v in pairs(t) do
+		local c = U.copy(v)
+		out[k] = c
+	end
+	return out
+end
+
+-- Split on spaces.
+function U.words(text)
+	local words = {}
+	local word = ""
+	for i = 1, #text do
+		local c = text:sub(i, i)
+		if c == " " then
+			if word ~= "" then
+				table.insert(words, word)
+			end
+			word = ""
+		else
+			word = word .. c
+		end
+	end
+	if word ~= "" then
+		table.insert(words, word)
+	end
+	return words
+end
+
 function U.wrap(text, width)
 	local lines = {}
 	local line = ""
