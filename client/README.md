@@ -107,9 +107,14 @@ fit in your bag is left in a sack.
 - **7–0**: emote (wave, dance, jump, cheer). The buttons on the right do the
   same.
 - **Enter**: chat (Enter sends, Esc cancels)
-- **F**: next face. **G**: put down what you carry (one cell ahead), let
-  go of the helm, or sit and stand.
-- **Q/E, right-drag**: orbit the camera. **Scroll**: zoom.
+- **F**: your look (the character creator). **G**: put down what you
+  carry (one cell ahead), let go of the helm, or sit and stand.
+- **Q/E, right-drag, or drag the world**: orbit the camera. **Scroll**: zoom.
+  Clicks on the world act when let go, so a drag never digs or walks.
+- **A controller** (`client/web/gamepad.js` in the browser, natively in the
+  app): left stick or d-pad walk, right stick and the bumpers turn the
+  camera, A takes the helm or lets go, B closes the bag, X is pose (G),
+  Y the bag, the triggers climb and sink at a helm, and back asks a helper.
 
 Everything reaches about 7 blocks. The server enforces this and refuses
 anything farther.

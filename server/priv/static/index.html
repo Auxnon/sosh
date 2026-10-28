@@ -66,5 +66,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
   <body>
     <!-- The engine (main-thread wasm) now spawns and drives the VM worker
          itself (§4d) — see about_to_wait in lib.rs. No JS spawner needed. -->
+    <script src="/gamepad.js"></script>
   </body>
 </html>
