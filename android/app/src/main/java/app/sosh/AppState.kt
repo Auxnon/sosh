@@ -30,6 +30,12 @@ sealed class Place {
 }
 
 /**
+ * How much of a server's world shows over its chat: none, the two side by
+ * side (stacked, held upright), or all world with the chat over it.
+ */
+enum class Pane { Chat, Both, World }
+
+/**
  * Everything the app knows and does. The REST API (`Api`) signs in and
  * manages things; the socket (`PhoenixSocket`) brings everything live:
  * `user:<id>` for our own changes, and one chat channel at a time
@@ -62,6 +68,8 @@ class AppState(context: Context, private val scope: CoroutineScope) {
     var place: Place? by mutableStateOf(null)
         private set
     val messages = mutableStateListOf<Message>()
+    /** In a server: how much of its world is showing. */
+    var pane by mutableStateOf(Pane.Chat)
     val members = mutableStateListOf<Member>()
     var loadingOlder by mutableStateOf(false)
         private set

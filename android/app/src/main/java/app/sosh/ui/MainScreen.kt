@@ -1,10 +1,16 @@
 package app.sosh.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +35,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.material.icons.filled.VerticalSplit
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Inventory2
@@ -49,6 +57,9 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,6 +71,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,23 +88,25 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.sosh.AppState
+import app.sosh.Pane
 import app.sosh.Place
 import app.sosh.data.Message
 import app.sosh.data.Server
 import kotlinx.coroutines.launch
 
-enum class Screen { Chat, Explore, Friends, Bag, Creator, World, Members }
+enum class Screen { Chat, Explore, Friends, Bag, Creator, Members }
 
 /**
  * The app once signed in: a drawer with the server rail (Discord style)
  * and what's in the selected place, and the chat pane.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(app: AppState, go: (Screen) -> Unit) {
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var giftOpen by remember { mutableStateOf(false) }
+    BackHandler(enabled = app.place is Place.InServer && app.pane != Pane.Chat) { app.pane = Pane.Chat }
 
     ModalNavigationDrawer(
         drawerState = drawer,
@@ -113,7 +127,6 @@ fun ChatScreen(app: AppState, go: (Screen) -> Unit) {
                         val p = app.place
                         if (p is Place.InServer) {
                             IconButton({ go(Screen.Members) }) { Icon(Icons.Filled.Group, "members") }
-                            IconButton({ go(Screen.World) }) { Icon(Icons.Filled.Public, "enter the world") }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Panel),
@@ -122,18 +135,108 @@ fun ChatScreen(app: AppState, go: (Screen) -> Unit) {
             containerColor = Night,
         ) { pad ->
             Column(Modifier.fillMaxSize().padding(pad).imePadding()) {
-                if (app.place == null) {
-                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                when (val p = app.place) {
+                    null -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Text("Pick a server or a friend from the menu.", color = TextDim)
                     }
-                } else {
-                    Messages(app, Modifier.weight(1f))
-                    Composer(app) { giftOpen = true }
+                    is Place.InServer -> {
+                        ServerView(app, p.id, Modifier.weight(1f))
+                        Composer(app) { giftOpen = true }
+                        if (!WindowInsets.isImeVisible) PaneBar(app)
+                    }
+                    is Place.WithPerson -> {
+                        Messages(app, Modifier.weight(1f))
+                        Composer(app) { giftOpen = true }
+                    }
                 }
             }
         }
     }
     if (giftOpen) GiftDialog(app) { giftOpen = false }
+}
+
+/**
+ * A server: its chat, its world, or both. The world slides down over the
+ * chat (in from the side, with the phone on its side) and back out. Once
+ * opened it stays loaded, only paused while it's away, until we leave
+ * the server.
+ */
+@Composable
+private fun ServerView(app: AppState, serverId: Long, modifier: Modifier) {
+    var started by remember(serverId) { mutableStateOf(false) }
+    LaunchedEffect(serverId, app.pane) { if (app.pane != Pane.Chat) started = true }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val w = maxWidth
+        val h = maxHeight
+        val wide = w > h
+        val target = when (app.pane) {
+            Pane.Chat -> 0f
+            Pane.Both -> if (wide) 0.6f else 0.5f
+            Pane.World -> 1f
+        }
+        val share by animateFloatAsState(target, label = "world")
+        val world: @Composable (Modifier) -> Unit = { m ->
+            if (started) key(serverId) { WorldPane(app, serverId, app.pane != Pane.Chat, m) }
+        }
+        if (wide) {
+            Row(Modifier.fillMaxSize()) {
+                world(Modifier.fillMaxHeight().width(w * share))
+                if (share < 1f) Messages(app, Modifier.weight(1f))
+            }
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                world(Modifier.fillMaxWidth().height(h * share))
+                if (share < 1f) Messages(app, Modifier.weight(1f))
+            }
+        }
+        if (app.pane == Pane.World && share == 1f) Overlay(app, Modifier.align(Alignment.BottomStart))
+    }
+}
+
+/**
+ * All world: the latest few lines over it, as the game's own chat log was.
+ * Tapping them brings the chat back beside it.
+ */
+@Composable
+private fun Overlay(app: AppState, modifier: Modifier) {
+    Column(
+        modifier.fillMaxWidth(0.8f).padding(8.dp).clickable { app.pane = Pane.Both },
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        for (m in app.messages.takeLast(4)) {
+            val who = m.author?.handle ?: "someone"
+            val line = buildAnnotatedString {
+                withStyle(SpanStyle(color = handleColor(who), fontWeight = FontWeight.Bold)) { append(who) }
+                append("  ")
+                val g = m.gift
+                if (g != null) append("a gift for @${g.to?.handle ?: "someone"}") else append(mentions(m.body, app.me?.handle))
+            }
+            Text(
+                line, color = TextMain, fontSize = 13.sp, maxLines = 2,
+                modifier = Modifier.background(Night.copy(alpha = 0.6f), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+/** Chat, both, or the world: one tap between them. */
+@Composable
+private fun PaneBar(app: AppState) {
+    val options = listOf(
+        Triple(Pane.Chat, "Chat", Icons.Filled.ChatBubble),
+        Triple(Pane.Both, "Both", Icons.Filled.VerticalSplit),
+        Triple(Pane.World, "World", Icons.Filled.Public),
+    )
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 8.dp, vertical = 4.dp)) {
+        options.forEachIndexed { i, (pane, label, icon) ->
+            SegmentedButton(
+                selected = app.pane == pane,
+                onClick = { app.pane = pane },
+                shape = SegmentedButtonDefaults.itemShape(i, options.size),
+                icon = { Icon(icon, null, Modifier.size(18.dp)) },
+            ) { Text(label) }
+        }
+    }
 }
 
 @Composable
@@ -203,7 +306,7 @@ private fun Drawer(app: AppState, go: (Screen) -> Unit, close: () -> Unit) {
                     Text("universe ${s.universe.first},${s.universe.second} · ${s.policy}", color = TextDim, fontSize = 12.sp)
                     Text("you: ${s.role ?: "member"}", color = TextDim, fontSize = 12.sp)
                     Spacer(Modifier.height(12.dp))
-                    Button({ go(Screen.World); close() }, Modifier.fillMaxWidth()) { Text("Enter the world") }
+                    Button({ app.pane = Pane.World; close() }, Modifier.fillMaxWidth()) { Text("Enter the world") }
                     OutlinedButton({ go(Screen.Members); close() }, Modifier.fillMaxWidth()) { Text("Members") }
                 } else {
                     Text("Servers", style = MaterialTheme.typography.titleMedium)

@@ -36,7 +36,7 @@ release builds only allow https.
 | `ui/MainScreen.kt` | the server rail and drawer, the chat pane with @mentions and gift cards, the composer, sending gifts |
 | `ui/Screens.kt` | server list (join or ask), friends, the bag, members and moderation, server settings |
 | `ui/CreatorScreen.kt` | the character creator: a front view drawn on a canvas, face sprites dragged into place |
-| `ui/WorldScreen.kt` | the world: the web game in a web view, with native chat and controls over it |
+| `ui/WorldPane.kt` | the world: the web game in a web view, and `Gamepad`, which hands a controller's buttons and sticks to it |
 
 ## How it fits the server
 
@@ -54,9 +54,16 @@ release builds only allow https.
   items leave your bag straight away. Everyone in the chat sees it wrapped,
   and only that person can open it into their bag. You can take it back
   until they do.
-- **The world** is `WorldScreen`: a web view of the server's own page (the
-  web game). Its user agent carries `sosh-token/<token> sosh-enter/<id>`;
-  the socket signs in by it, and the game skips its own sign-in and opens
-  that server. The chat bar posts to the server's chat. The pad and buttons
-  press the game's keys (WASD, Q/E to look, B helm, G pose, I bag, 7/8
-  emotes); tapping the world walks there.
+- **The world** is part of a server's chat: the bar under the composer
+  slides it in and out (**Chat**, **Both**, **World**). In Both it shares
+  the screen with the chat, stacked upright or side by side on its side;
+  in World it fills it, with the latest lines over it (tap them for Both).
+  Once opened it stays loaded, paused while slid away, until you leave the
+  server. It's `WorldPane`: a web view of the server's own page (the web
+  game). Its user agent carries `sosh-token/<token> sosh-enter/<id>`; the
+  socket signs in by it, and the game skips its own sign-in, opens that
+  server and, told it's in the app, leaves chat, looks and the way home
+  to the app. Tap the world to walk there (or act with the tool), drag it
+  to turn the camera. A controller works too: the activity hands its
+  events to `Gamepad`, which presses the game's keys (the mapping is in
+  `client/README.md`).

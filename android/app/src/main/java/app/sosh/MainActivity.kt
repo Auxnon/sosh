@@ -1,6 +1,8 @@
 package app.sosh
 
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -27,10 +29,10 @@ import app.sosh.ui.ChatScreen
 import app.sosh.ui.CreatorScreen
 import app.sosh.ui.ExploreScreen
 import app.sosh.ui.FriendsScreen
+import app.sosh.ui.Gamepad
 import app.sosh.ui.MembersScreen
 import app.sosh.ui.Screen
 import app.sosh.ui.SoshTheme
-import app.sosh.ui.WorldScreen
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -55,7 +57,6 @@ class MainActivity : ComponentActivity() {
                             Screen.Friends -> FriendsScreen(app, back) { h -> app.open(Place.WithPerson(h)); back() }
                             Screen.Bag -> BagScreen(app, back)
                             Screen.Creator -> CreatorScreen(app, back)
-                            Screen.World -> WorldScreen(app, back)
                             Screen.Members -> MembersScreen(app, back)
                         }
                     }
@@ -70,4 +71,10 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    // a controller drives the world that's showing, if one is
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean = Gamepad.key(event) || super.dispatchKeyEvent(event)
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
+        Gamepad.motion(event) || super.dispatchGenericMotionEvent(event)
 }
