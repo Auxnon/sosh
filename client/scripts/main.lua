@@ -55,7 +55,8 @@ function main()
 	APP.sent_vx = 0
 	APP.sent_vy = 0
 	APP.sent_to = nil
-	APP.drag = false
+	-- whether the press now down began on the world (not the HUD)
+	APP.press_world = false
 	-- "walk", "dig", "build", "plant", "carry" or "craft"
 	APP.tool = "walk"
 	-- what the build tool places (an item in the bag), and the blueprint

@@ -11,6 +11,7 @@ UI = {}
 CH = 8 -- glyph advance
 LH = 10 -- line height
 PAD = 4
+DRAG_PX = 6 -- gui pixels a press moves before it is a drag, not a tap
 
 C_TEXT = "F4F0E6"
 C_DIM = "A8B0BC"
@@ -36,6 +37,14 @@ function UI.init()
 	UI.mouse = mus()
 	UI.prev_m1 = false
 	UI.clicked = false
+	UI.tapped = false
+	UI.dragging = false
+	UI.press_x = 0
+	UI.press_y = 0
+	UI.last_x = 0
+	UI.last_y = 0
+	UI.move_x = 0
+	UI.move_y = 0
 	UI.hot = false
 	UI.blink = 0
 	UI.back_held = 0
@@ -94,8 +103,27 @@ function UI.begin()
 	UI.mouse = m
 	UI.mx = flr(m.x * gui.w)
 	UI.my = flr(m.y * gui.h)
+	-- how far the pointer moved since last frame, as a share of the screen
+	-- (from positions: the browser only reports motion deltas when locked)
+	UI.move_x = m.x - UI.last_x
+	UI.move_y = m.y - UI.last_y
+	UI.last_x = m.x
+	UI.last_y = m.y
 	UI.clicked = m.m1 and not UI.prev_m1
+	local released = UI.prev_m1 and not m.m1
 	UI.prev_m1 = m.m1
+	-- a press that moves far enough is a drag (orbiting, with a finger),
+	-- and one let go without dragging is a tap: what the world acts on
+	if UI.clicked then
+		UI.press_x = UI.mx
+		UI.press_y = UI.my
+		UI.dragging = false
+	elseif m.m1 and not UI.dragging then
+		if math.abs(UI.mx - UI.press_x) + math.abs(UI.my - UI.press_y) > DRAG_PX then
+			UI.dragging = true
+		end
+	end
+	UI.tapped = released and not UI.dragging
 	-- set by buttons/panels under the pointer, so world clicks can be ignored
 	UI.hot = false
 	UI.blink = (UI.blink + 1) % 60

@@ -26,6 +26,8 @@ TOOLS = { "walk", "dig", "build", "plant", "carry", "craft" }
 EMOTE_KEYS = { "7", "8", "9", "0" }
 STEER_HEARTBEAT = 1 -- seconds; restate the wanted velocity this often
 CAM_TURN = 1.8 -- radians a second, Q/E
+DRAG_TURN = 4 -- radians for a drag across the whole screen
+DRAG_TILT = 2
 
 -- WASD / arrows walk relative to the camera (or, at a helm, steer); Q/E
 -- turn it; F/G cycle face and pose (G puts down what we carry); 1-6 pick
@@ -245,12 +247,21 @@ end
 
 -- What a click would do, worked out every frame from the tool and what's
 -- under the pointer: `cell` gets the cursor, `ghost` the green outline of
--- a footprint. Right-drag orbits; scroll zooms.
+-- a footprint. Right-drag, or dragging the world with a finger, orbits;
+-- scroll zooms. A tap (a click let go without dragging) acts.
 function world_pointer(me)
 	local m = UI.mouse
+	-- buttons are drawn after this runs, so hit-test the HUD region directly
+	local over_hud = hud_hit(UI.mx, UI.my)
+	if UI.clicked then
+		APP.press_world = not over_hud
+	end
 	if m.m2 then
 		CAM.az = CAM.az - m.dx * 4
 		CAM.alt = U.clamp(CAM.alt + m.dy * 2, -1.3, -0.15)
+	elseif m.m1 and UI.dragging and APP.press_world then
+		CAM.az = CAM.az - UI.move_x * DRAG_TURN
+		CAM.alt = U.clamp(CAM.alt + UI.move_y * DRAG_TILT, -1.3, -0.15)
 	end
 	if m.scroll ~= 0 then
 		CAM.dist = U.clamp(CAM.dist - m.scroll * 1.5, 4, 22)
@@ -261,8 +272,6 @@ function world_pointer(me)
 	local hit = nil
 	local cow = nil
 	local helper = nil
-	-- Buttons are drawn after this runs, so hit-test the HUD region directly.
-	local over_hud = hud_hit(UI.mx, UI.my)
 	if not over_hud then
 		hit = Blocks.raycast(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, 64)
 		local d = 64
@@ -357,7 +366,7 @@ function world_pointer(me)
 	end
 	Furn.show_ghost(ghost, on)
 
-	if not UI.clicked or over_hud then
+	if not UI.tapped or over_hud or not APP.press_world then
 		return
 	end
 	if helper ~= nil then
