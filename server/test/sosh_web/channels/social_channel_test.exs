@@ -33,6 +33,16 @@ defmodule SoshWeb.SocialChannelTest do
 
     assert s.assigns.account.id == user.id
 
+    # the app's world view: signed in by its user agent, and sent to a server
+    {:ok, s} =
+      connect(SoshWeb.UserSocket, %{},
+        connect_info: %{user_agent: "Mozilla/5.0 sosh-token/#{token} sosh-enter/42"}
+      )
+
+    {:ok, _, auth} = Phoenix.ChannelTest.subscribe_and_join(s, SoshWeb.AuthChannel, "auth:lobby", %{})
+    ref = push(auth, "whoami", %{})
+    assert_reply ref, :ok, %{token: ^token, enter: 42, user: %{handle: "tok"}}
+
     {:ok, s} = connect(SoshWeb.UserSocket, %{"token" => "nonsense-token-nonsense"})
     assert s.assigns.account == nil
   end

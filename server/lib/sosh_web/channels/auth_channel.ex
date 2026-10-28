@@ -22,7 +22,7 @@ defmodule SoshWeb.AuthChannel do
   def handle_in("whoami", _, socket) do
     case socket.assigns[:account] do
       nil -> {:reply, {:ok, %{user: nil}}, socket}
-      u -> {:reply, {:ok, Me.session(u, socket.assigns.token)}, socket}
+      u -> {:reply, {:ok, Map.put(Me.session(u, socket.assigns.token), :enter, socket.assigns[:enter])}, socket}
     end
   end
 

@@ -3,7 +3,8 @@ defmodule SoshWeb.UserSocket do
   One connection. It's signed in by a session token (`Sosh.Accounts`):
   the `token` socket param, or, for the Android app's embedded world view,
   `sosh-token/<token>` in its user agent (a web view can't add socket
-  params the game didn't write). Without one the connection can only use
+  params the game didn't write), with `sosh-enter/<server id>` for the
+  server to open (`auth:lobby` `whoami` hands both to the game). Without one the connection can only use
   `auth:lobby`, to sign in or up and get a token to reconnect with.
 
   Every connection also gets a fresh `user_id`: who it is in a universe
@@ -30,6 +31,7 @@ defmodule SoshWeb.UserSocket do
       |> assign(:account, user)
       |> assign(:token, user && token)
       |> assign(:caller, caller(connect_info[:peer_data]))
+      |> assign(:enter, ua_enter(connect_info[:user_agent]))
 
     {:ok, socket}
   end
@@ -42,6 +44,16 @@ defmodule SoshWeb.UserSocket do
   end
 
   defp ua_token(_), do: nil
+
+  # The app's world view also says which server to open: `sosh-enter/<id>`.
+  defp ua_enter(ua) when is_binary(ua) do
+    case Regex.run(~r/sosh-enter\/(\d{1,12})/, ua) do
+      [_, id] -> String.to_integer(id)
+      _ -> nil
+    end
+  end
+
+  defp ua_enter(_), do: nil
 
   defp caller(%{address: a}), do: a |> :inet.ntoa() |> to_string()
   defp caller(_), do: "socket"

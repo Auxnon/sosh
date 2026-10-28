@@ -63,6 +63,17 @@ function Account.start(url)
 	APP.url = url
 	PHX = Phx.new(url)
 	AUTH = PHX:channel("auth:lobby", {})
+	-- already signed in? (the Android app's world view signs its socket in
+	-- by user agent, and says which server to open)
+	AUTH.on_join = function(r)
+		PHX:push(AUTH, "whoami", {}, function(status, w)
+			if status == "ok" and w.user ~= nil and w.token ~= nil then
+				APP.enter_id = w.enter
+				APP.embedded = true
+				Account.signed_in(w)
+			end
+		end)
+	end
 	PHX:connect()
 	APP.screen = "auth"
 end
@@ -112,6 +123,16 @@ function Account.bind_user(ch)
 		APP.home_status = ""
 		if APP.me ~= nil then
 			APP.me:set_character(r.user.character)
+		end
+		-- the app asked for a server: straight in
+		if APP.enter_id ~= nil and APP.screen == "home" then
+			local want = APP.enter_id
+			APP.enter_id = nil
+			for i = 1, #APP.servers do
+				if APP.servers[i].id == want then
+					server_clicked(APP.servers[i])
+				end
+			end
 		end
 	end
 	ch.on_error = function(r)
