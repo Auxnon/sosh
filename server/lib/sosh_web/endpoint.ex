@@ -20,7 +20,7 @@ defmodule SoshWeb.Endpoint do
   #   longpoll: [connect_info: [session: @session_options]]
 
   socket "/socket", SoshWeb.UserSocket,
-    websocket: true,
+    websocket: [connect_info: [:user_agent, :peer_data]],
     longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.

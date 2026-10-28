@@ -561,12 +561,27 @@ defmodule Sosh.Sim do
       {:ok, _} ->
         GenServer.cast(via(to), {:arrive, cargo, Universes.opposite(side)})
 
-        for user <- riders, p = Lobby.get(user), p != nil do
+        # Only members of the server there go along; anyone else is set
+        # down on this universe's home island instead.
+        {going, staying} =
+          Enum.split_with(riders, fn user ->
+            case Lobby.get(user) do
+              %{account_id: a} when a != nil -> Sosh.Servers.may_enter?(to, a)
+              _ -> true
+            end
+          end)
+
+        for user <- going, p = Lobby.get(user), p != nil do
           Players.move(p.name, to)
         end
 
         {gx, gy} = to
-        broadcast(state, "travel", %{ship: id, users: riders, to: [gx, gy]})
+        broadcast(state, "travel", %{ship: id, users: going, to: [gx, gy]})
+
+        for user <- staying do
+          {{x, y, z}, _} = Universe.spawn(state.uni, user, nil)
+          broadcast(state, "stranded", %{user_id: user, at: [x, y, z], reason: "not_a_member"})
+        end
 
       error ->
         Logger.error("ship lost flying to #{inspect(to)}: #{inspect(error)}")

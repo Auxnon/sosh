@@ -46,9 +46,10 @@ defmodule SoshWeb.RoomChannel do
 
   def join("room:" <> key, params, socket) do
     user_id = socket.assigns.user_id
-    name = clean_name(params["name"])
 
-    with {:ok, u} <- here(key, name),
+    with %{} = account <- socket.assigns[:account] || {:error, :signed_out},
+         name = account.handle,
+         {:ok, u} <- here(key, name, account.id),
          {:ok, _} <- Sim.ensure(u) do
       me = Players.get(name)
       {{x, y, z}, aboard} = Sim.spawn(u, user_id, me.at)
@@ -61,6 +62,8 @@ defmodule SoshWeb.RoomChannel do
 
       player = %{
         user_id: user_id,
+        account_id: account.id,
+        character: Sosh.Character.clean(account.character),
         name: name,
         universe: u,
         at: [x, y, z],
@@ -94,14 +97,15 @@ defmodule SoshWeb.RoomChannel do
   end
 
   # The universe `key` names, if `name` is in it. Someone whose universe
-  # has gone from the grid is back on the plaza.
+  # has gone from the grid, or who's no longer a member of its server, is
+  # back on the plaza.
   @doc false
-  def here(key, name) do
+  def here(key, name, account_id) do
     with {:ok, u} <- Universes.parse(key) do
       there = Players.get(name).universe
 
       there =
-        if Universes.exists?(there) do
+        if Universes.exists?(there) and Sosh.Servers.may_enter?(there, account_id) do
           there
         else
           Players.move(name, {0, 0})
@@ -132,11 +136,19 @@ defmodule SoshWeb.RoomChannel do
         {:noreply, socket}
 
       body ->
-        broadcast!(socket, "new_msg", %{
-          body: body,
-          user_id: socket.assigns.user_id,
-          name: socket.assigns.name
-        })
+        # Said in the world, it's said in the server's chat (which puts it
+        # over our head too); a universe with no server just shows it.
+        case Sosh.Servers.at(socket.assigns.universe) do
+          nil ->
+            broadcast!(socket, "new_msg", %{
+              body: body,
+              user_id: socket.assigns.user_id,
+              name: socket.assigns.name
+            })
+
+          server ->
+            Sosh.Chat.post(socket.assigns.account, {:server, server.id}, %{"body" => body})
+        end
 
         {:noreply, socket}
     end
@@ -247,7 +259,7 @@ defmodule SoshWeb.RoomChannel do
     {on, at} = Lobby.frame(player, now)
 
     player
-    |> Map.take([:user_id, :name, :v, :to, :face, :animation])
+    |> Map.take([:user_id, :name, :v, :to, :face, :animation, :character])
     |> Map.merge(%{
       vec: Lobby.position(player, now),
       on: on,

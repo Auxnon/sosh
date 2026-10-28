@@ -12,6 +12,7 @@ defmodule Sosh.Application do
       {DNSCluster, query: Application.get_env(:sosh, :dns_cluster_query) || :ignore},
       Sosh.Repo,
       {Phoenix.PubSub, name: Sosh.PubSub},
+      Sosh.RateLimit,
       Sosh.Lobby,
       Sosh.Players,
       # one Sosh.Sim per universe of the grid, by {gx, gy}

@@ -23,6 +23,13 @@ defmodule Sosh.Players do
 
   def put_bag(name, bag), do: GenServer.call(__MODULE__, {:update, name, %{bag: bag}})
 
+  @doc """
+  Change a bag in one step, so nothing else changes it in between: `fun`
+  gets the bag and returns `{:ok, bag}` to keep or anything else to leave
+  it as it was (and that's returned).
+  """
+  def update_bag(name, fun), do: GenServer.call(__MODULE__, {:update_bag, name, fun})
+
   @doc "They're in universe `u` now, standing at `at` (nil: anywhere)."
   def move(name, u, at \\ nil),
     do: GenServer.call(__MODULE__, {:update, name, %{universe: u, at: at}})
@@ -60,6 +67,20 @@ defmodule Sosh.Players do
     p = Map.merge(p, changes)
     store(p)
     {:reply, :ok, Map.put(state, name, p)}
+  end
+
+  def handle_call({:update_bag, name, fun}, _from, state) do
+    {p, state} = fetch(state, name)
+
+    case fun.(p.bag) do
+      {:ok, bag} ->
+        p = %{p | bag: bag}
+        store(p)
+        {:reply, {:ok, bag}, Map.put(state, name, p)}
+
+      other ->
+        {:reply, other, state}
+    end
   end
 
   def handle_call({:left, name, u, at}, _from, state) do

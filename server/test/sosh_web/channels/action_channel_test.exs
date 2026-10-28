@@ -35,10 +35,10 @@ defmodule SoshWeb.ActionChannelTest do
   # Where to stand to steer the standard ship: astern of its helm.
   @at_helm [-4.0, 0.0, 0.0]
 
-  test "rejects join without user_id" do
-    socket = Phoenix.Socket.assign(%Phoenix.Socket{}, :user_id, nil)
+  test "rejects a socket that isn't signed in" do
+    socket = Phoenix.Socket.assign(%Phoenix.Socket{}, :user_id, "x")
 
-    assert {:error, %{reason: "not_authenticated"}} =
+    assert {:error, %{reason: "signed_out"}} =
              SoshWeb.ActionChannel.join("actions:0,0", %{}, socket)
   end
 

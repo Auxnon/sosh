@@ -2,3 +2,11 @@
 resolver = "2"
 
 members = ["native/universe"]
+
+# Password hashing is slow on purpose, and unoptimised it's ~30x slower
+# still: dev and test builds of the NIF optimise these crates anyway.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

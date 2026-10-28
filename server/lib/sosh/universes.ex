@@ -80,6 +80,8 @@ defmodule Sosh.Universes do
   def boot do
     if Application.get_env(:sosh, __MODULE__, [])[:boot] != false do
       if list() == [], do: Enum.each(@defaults, fn {u, kind} -> create(u, kind) end)
+      # the ten seeded servers, each a universe
+      Sosh.Servers.seed()
       us = list()
       Enum.each(us, &Sim.ensure/1)
       Logger.info("universes: #{length(us)} running")

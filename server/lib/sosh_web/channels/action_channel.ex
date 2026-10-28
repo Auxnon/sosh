@@ -21,11 +21,10 @@ defmodule SoshWeb.ActionChannel do
   @max_chunks_per_request 48
   @max_rot 3
 
-  def join("actions:" <> key, params, socket) do
-    name = SoshWeb.RoomChannel.clean_name(params["name"])
-
-    with true <- socket.assigns[:user_id] != nil || {:error, %{reason: "not_authenticated"}},
-         {:ok, u} <- SoshWeb.RoomChannel.here(key, name),
+  def join("actions:" <> key, _params, socket) do
+    with %{} = account <- socket.assigns[:account] || {:error, %{reason: "signed_out"}},
+         name = account.handle,
+         {:ok, u} <- SoshWeb.RoomChannel.here(key, name, account.id),
          {:ok, _} <- Sim.ensure(u) do
       reply =
         Sim.snapshot(u)

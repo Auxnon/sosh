@@ -56,6 +56,13 @@ defmodule Sosh.Universe do
   def catalog, do: err()
   def starter_bag, do: err()
   def bag_add(_bag, _item, _n), do: err()
+  def bag_take(_bag, _item, _n), do: err()
+  def bag_give(_bag, _item, _n), do: err()
+
+  # Passwords (Argon2id, on dirty CPU schedulers): see `Sosh.Accounts`.
+  def hash_password(_password), do: err()
+  def verify_password(_password, _hash), do: err()
+  def no_user_verify(_password), do: err()
 
   defp err, do: :erlang.nif_error(:nif_not_loaded)
 end

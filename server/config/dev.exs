@@ -86,3 +86,6 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# Emailed codes also go to the log, and emails to /dev/mailbox.
+config :sosh, log_codes: true

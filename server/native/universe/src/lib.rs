@@ -14,6 +14,7 @@ use rustler::{
 
 mod furniture;
 mod items;
+mod secret;
 mod ships;
 mod sim;
 mod terrain;
@@ -740,6 +741,56 @@ fn bag_add(bag: BagTerm, item: String, n: u16) -> (BagTerm, u16) {
     let mut b = bag_in(bag);
     let left = items::add(&mut b, &item, n);
     (bag_out(b), left)
+}
+
+/// Take `n` of `item` from a bag, all or nothing: `{:ok, bag}` or
+/// `{:error, "not_enough"}`. Unknown items are `"no_such_item"`.
+#[rustler::nif]
+fn bag_take<'a>(env: Env<'a>, bag: BagTerm, item: String, n: u16) -> Term<'a> {
+    if items::info(&item).is_none() {
+        return fail(env, "no_such_item");
+    }
+    let mut b = bag_in(bag);
+    if n == 0 || !items::take(&mut b, &item, n) {
+        return fail(env, "not_enough");
+    }
+    (ok(), bag_out(b)).encode(env)
+}
+
+/// Put `n` of `item` in a bag, all or nothing: `{:ok, bag}` or
+/// `{:error, "no_room"}`.
+#[rustler::nif]
+fn bag_give<'a>(env: Env<'a>, bag: BagTerm, item: String, n: u16) -> Term<'a> {
+    if items::info(&item).is_none() {
+        return fail(env, "no_such_item");
+    }
+    let mut b = bag_in(bag);
+    if items::room_for(&b, &item) < n as u32 {
+        return fail(env, "no_room");
+    }
+    items::add(&mut b, &item, n);
+    (ok(), bag_out(b)).encode(env)
+}
+
+/// An Argon2id PHC string for `password`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn hash_password<'a>(env: Env<'a>, password: String) -> Term<'a> {
+    match secret::hash(&password) {
+        Ok(h) => (ok(), h).encode(env),
+        Err(e) => fail(env, &e),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn verify_password(password: String, hash: String) -> bool {
+    secret::verify(&password, &hash)
+}
+
+/// As long as a verify takes, for no account at all.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn no_user_verify(password: String) -> bool {
+    secret::waste_time(&password);
+    false
 }
 
 rustler::init!("Elixir.Sosh.Universe");
