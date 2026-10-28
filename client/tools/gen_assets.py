@@ -686,6 +686,10 @@ def main():
     faces = Image.open(FACES).convert("RGBA")
     count = faces.width // 64
     head_pos, front = player_model(PLAYER, ASSETS / "player.glb")
+    # the character creator's parts, cut from that rig
+    import gen_character
+
+    gen_character.build(Glb, ASSETS, ROOT / "scripts")
     pos, uvs, idx = face_quad(head_pos, front)
     for i in range(count):
         face = faces.crop((i * 64, 0, i * 64 + 64, 64))
