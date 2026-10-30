@@ -40,6 +40,29 @@ defmodule Sosh.Me do
 
   def bag(%User{handle: h}), do: Players.bag_json(Players.bag(h))
 
+  @doc """
+  Swap two slots of the bag (sorting it): `{:ok, bag}` as clients want it,
+  also told to every client of the account (`user:<id>` `bag`).
+  """
+  def bag_swap(%User{handle: h, id: id}, a, b) when is_integer(a) and is_integer(b) do
+    swapped =
+      Players.update_bag(h, fn bag ->
+        last = length(bag) - 1
+
+        if a in 0..last//1 and b in 0..last//1,
+          do: {:ok, bag |> List.replace_at(a, Enum.at(bag, b)) |> List.replace_at(b, Enum.at(bag, a))},
+          else: {:error, :no_such_slot}
+      end)
+
+    with {:ok, bag} <- swapped do
+      json = Players.bag_json(bag)
+      SoshWeb.Endpoint.broadcast("user:#{id}", "bag", %{bag: json})
+      {:ok, json}
+    end
+  end
+
+  def bag_swap(_, _, _), do: {:error, :no_such_slot}
+
   def universe(%User{handle: h}) do
     {gx, gy} = Players.get(h).universe
     [gx, gy]

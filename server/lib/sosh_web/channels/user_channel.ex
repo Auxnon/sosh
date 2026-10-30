@@ -18,7 +18,7 @@ defmodule SoshWeb.UserChannel do
   description?, policy?}, `dm_open` {handle} -> {conversation_id,
   messages}, `dm_post` {handle, body, gift?}, `enter` {id} (go to that
   server's universe) -> {universe, server}, `claim` / `cancel` / `delete`
-  {id} (a message), `logout`.
+  {id} (a message), `bag_swap` {a, b} (two slot indexes) -> {bag}, `logout`.
   """
   use Phoenix.Channel
 
@@ -108,6 +108,8 @@ defmodule SoshWeb.UserChannel do
       {:error, why} -> {:error, %{reason: to_string(why)}}
     end
   end
+
+  defp answer("bag_swap", %{"a" => a, "b" => b}, me, _), do: wrap(Me.bag_swap(me, a, b), &%{bag: &1})
 
   defp answer("conversations", _, me, _), do: {:ok, %{conversations: Chat.conversations(me)}}
   defp answer("claim", %{"id" => id}, me, _), do: wrap(Chat.claim(me, id), &%{message: &1})

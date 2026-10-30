@@ -92,6 +92,19 @@ defmodule SoshWeb.SocialChannelTest do
     assert_push "character", %{character: %{"head" => "bean"}}
   end
 
+  test "bag_swap sorts the bag and tells every client of the account" do
+    {socket, me} = signed_in("sorter")
+    {:ok, %{bag: [first, second | _] = bag}, ch} =
+      Phoenix.ChannelTest.subscribe_and_join(socket, SoshWeb.UserChannel, "user:#{me.id}", %{})
+
+    ref = push(ch, "bag_swap", %{"a" => 0, "b" => 1})
+    assert_reply ref, :ok, %{bag: [^second, ^first | _]}
+    assert_push "bag", %{bag: [^second, ^first | _]}
+
+    ref = push(ch, "bag_swap", %{"a" => 0, "b" => length(bag)})
+    assert_reply ref, :error, %{reason: "no_such_slot"}
+  end
+
   test "server chat over the socket: gifts go out sealed, and the recipient opens them" do
     {sa, _ann} = signed_in("ann")
     {sb, ben} = signed_in("ben")
