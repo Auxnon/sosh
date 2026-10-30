@@ -1,5 +1,13 @@
 package app.sosh.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -52,19 +60,21 @@ import app.sosh.Place
 import app.sosh.data.Member
 import app.sosh.data.Server
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** A page behind the rail: the plastic bar with the way back, then its content. */
 @Composable
 fun Page(title: String, back: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                navigationIcon = { IconButton(back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back") } },
-                title = { Text(title) },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Panel),
-            )
-        },
-        containerColor = Night,
-    ) { pad -> Column(Modifier.fillMaxSize().padding(pad)) { content() } }
+    Column(Modifier.fillMaxSize().ground().systemBarsPadding().imePadding().padding(start = 10.dp, end = 10.dp, top = 8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().height(60.dp).plastic().padding(horizontal = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            PlasticButton(back, Modifier.size(46.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "back", Modifier.size(22.dp)) }
+            Text(title, color = TextMain, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+        }
+        Spacer(Modifier.height(6.dp))
+        content()
+    }
 }
 
 /** Every server: enter the ones we're in, ask to join the rest. */
@@ -155,29 +165,23 @@ private fun PersonRow(handle: String, actions: @Composable () -> Unit) {
  * (everyone sees the gift, only they can open it) or straight to a friend.
  */
 @Composable
-fun BagScreen(app: AppState, back: () -> Unit) = Page("Bag", back) {
+fun BagScreen(app: AppState, back: () -> Unit) = Page("Pockets", back) {
     var picked by remember { mutableStateOf<String?>(null) }
     var toFriend by remember { mutableStateOf<String?>(null) }
     Text(
-        "Tap something to send it to someone. They open it from the chat.",
+        "Drag to sort your pockets. Tap something to send it to someone: they open it from the chat.",
         color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(12.dp),
     )
-    LazyVerticalGrid(GridCells.Fixed(4), Modifier.padding(horizontal = 12.dp)) {
-        itemsIndexed(app.bag) { _, slot ->
-            Surface(
-                onClick = { if (slot != null) picked = slot.item },
-                color = if (slot != null) PanelHi else Panel,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.padding(4.dp).aspectRatio(1f),
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    if (slot != null) {
-                        Text(slot.item, fontSize = 12.sp)
-                        Text("×${slot.count}", color = TextDim, fontSize = 12.sp)
-                    }
-                }
+    val drag = remember { PocketDrag() }
+    drag.onDrop = { from, to -> if (to is PocketDrag.Target.Pocket) app.bagSwap(from, to.i) }
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned { origin = it.positionInRoot() }) {
+        Box(Modifier.padding(4.dp).fillMaxWidth().paper().padding(12.dp)) {
+            Box(Modifier.background(PaperDeep, RoundedCornerShape(18.dp)).padding(horizontal = 6.dp, vertical = 12.dp)) {
+                PocketGrid(app.bag, drag, null, { i -> app.bag.getOrNull(i)?.let { picked = it.item } })
             }
         }
+        DragGhost(app.bag, drag, origin)
     }
     picked?.let { item ->
         AlertDialog(
@@ -215,10 +219,10 @@ fun BagScreen(app: AppState, back: () -> Unit) = Page("Bag", back) {
             picked = null
         }
     }
-    giftHere?.let { item -> GiftDialog(app, item) { giftHere = null; back() } }
+    giftHere?.let { item -> GiftSheet(app, item) { giftHere = null; back() } }
 }
 
-// which item the bag is sending into the open chat (GiftDialog takes over)
+// which item the bag is sending into the open chat (GiftSheet takes over)
 private var giftHere by mutableStateOf<String?>(null)
 
 @Composable

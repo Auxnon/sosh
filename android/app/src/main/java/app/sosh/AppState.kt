@@ -447,6 +447,25 @@ class AppState(context: Context, private val scope: CoroutineScope) {
 
     // -- you
 
+    /**
+     * Swap two bag slots (sorting it): straight away here, then for real on
+     * the server, which tells the game too; put back if it says no.
+     */
+    fun bagSwap(a: Int, b: Int) {
+        val before = bag
+        if (a == b || a !in before.indices || b !in before.indices) return
+        bag = before.toMutableList().also { it[a] = before[b]; it[b] = before[a] }
+        val u = user ?: return
+        u.push("bag_swap", JSONObject().put("a", a).put("b", b)) { status, r ->
+            if (status == "ok") {
+                bag = bag(r.optJSONArray("bag"))
+            } else {
+                bag = before
+                notice = Api.describe(r.optString("reason"))
+            }
+        }
+    }
+
     fun saveCharacter(c: JSONObject, done: () -> Unit) = scope.launch {
         attempt {
             val r = api.put("/me/character", JSONObject().put("character", c))

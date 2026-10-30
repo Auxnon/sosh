@@ -33,10 +33,16 @@ release builds only allow https.
 | `data/Models.kt` | the server's JSON as data classes |
 | `data/SessionStore.kt` | the token, sealed with an Android Keystore AES-GCM key |
 | `ui/AuthScreen.kt` | sign in, sign up, confirm the emailed code, forgot/reset password, server address |
-| `ui/MainScreen.kt` | the server rail and drawer, the chat pane with @mentions and gift cards, the composer, sending gifts |
-| `ui/Screens.kt` | server list (join or ask), friends, the bag, members and moderation, server settings |
+| `ui/Theme.kt`, `ui/Kit.kt` | the look: console plastic around cozy paper (indigo, cream, leaf green, orange; M PLUS Rounded 1c and Michroma, subset to Latin in `res/font`), and its pieces: plastic buttons, paper cards, name tags, item icons |
+| `ui/MainScreen.kt` | the server rail (memory-card slots) and drawer, the chat as speech bubbles with @mentions and presents, the message tray and Chat / Both / World, wrapping a present |
+| `ui/Pockets.kt` | the pockets over the world, dragging to sort them or onto the chat (`PocketDrag`) |
+| `ui/Screens.kt` | server list (join or ask), friends, the pockets page, members and moderation, server settings |
 | `ui/CreatorScreen.kt` | the character creator: a front view drawn on a canvas, face sprites dragged into place |
 | `ui/WorldPane.kt` | the world: the web game in a web view, and `Gamepad`, which hands a controller's buttons and sticks to it |
+
+Item icons (`res/drawable-nodpi/item_*.png`) are the game's own block
+textures plus a few drawn to match: `python3 android/tools/item_icons.py`.
+The fonts are under the SIL Open Font License (`FONTS.md`).
 
 ## How it fits the server
 
@@ -50,10 +56,15 @@ release builds only allow https.
   shows roles and lets you moderate as far as your role allows.
 - **Chat** is `server:<id>` or `dm:<id>` on the socket, with history over
   the API. Saying something in the world puts it in the server's chat too.
-- **Gifts**: the gift button, or the bag, sends items to an @someone. Its
-  items leave your bag straight away. Everyone in the chat sees it wrapped,
-  and only that person can open it into their bag. You can take it back
-  until they do.
+- **Pockets** are your bag. In a server, the backpack in the corner of
+  the world opens them over it (tap it, or drag it up); the rail's
+  backpack opens them as a page. Drag a pocket onto another to swap them
+  (`bag_swap` on `user:<id>`, which tells the game too), or out onto the
+  chat to wrap it as a present.
+- **Presents**: dropping a pocket on the chat, the present button, or the
+  pockets page sends items to an @someone. They leave your bag straight
+  away. Everyone in the chat sees it wrapped, and only that person can
+  open it into their bag. You can take it back until they do.
 - **The world** is part of a server's chat: the bar under the composer
   slides it in and out (**Chat**, **Both**, **World**). In Both it shares
   the screen with the chat, stacked upright or side by side on its side;
