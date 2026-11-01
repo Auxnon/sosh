@@ -33,6 +33,7 @@ import app.sosh.ui.Gamepad
 import app.sosh.ui.MembersScreen
 import app.sosh.ui.Screen
 import app.sosh.ui.SoshTheme
+import app.sosh.ui.retro
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -47,7 +48,7 @@ class MainActivity : ComponentActivity() {
                 var screen by remember { mutableStateOf(Screen.Chat) }
                 val back = { screen = Screen.Chat }
                 BackHandler(enabled = screen != Screen.Chat) { back() }
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize().retro(app.look)) {
                     when {
                         app.me == null && app.restoring -> Centered("signing in...")
                         app.me == null -> AuthScreen(app)

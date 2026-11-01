@@ -11,7 +11,8 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * What survives a restart: the server's address and the session token. The
+ * What survives a restart: the server's address, the screen's look and the
+ * session token. The
  * token is sealed with an AES-GCM key that lives in the Android Keystore
  * (never in the app's files), so a copy of the app's storage alone signs no
  * one in.
@@ -23,6 +24,10 @@ class SessionStore(context: Context) {
     var server: String?
         get() = prefs.getString("server", null)
         set(v) = prefs.edit().putString("server", v).apply()
+
+    var look: String?
+        get() = prefs.getString("look", null)
+        set(v) = prefs.edit().putString("look", v).apply()
 
     var token: String?
         get() = prefs.getString("token", null)?.let { open(it) }

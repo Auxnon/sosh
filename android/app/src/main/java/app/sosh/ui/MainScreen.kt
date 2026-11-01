@@ -431,6 +431,7 @@ private fun Drawer(app: AppState, go: (Screen) -> Unit, close: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(me.handle, color = handleInk(me.handle), fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                    TextButton({ app.nextLook() }) { Text("screen: ${app.look.label}", color = InkLink, fontWeight = FontWeight.Bold) }
                     TextButton({ app.logout() }) { Text("Sign out", color = InkLink, fontWeight = FontWeight.Bold) }
                 }
             }

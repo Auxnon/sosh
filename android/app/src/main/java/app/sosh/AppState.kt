@@ -18,6 +18,7 @@ import app.sosh.data.bag
 import app.sosh.net.Api
 import app.sosh.net.ApiError
 import app.sosh.net.PhoenixSocket
+import app.sosh.ui.Look
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -103,6 +104,15 @@ class AppState(context: Context, private val scope: CoroutineScope) {
                 }
             }
         }
+    }
+
+    /** How the screen is drawn: clean, or at a console's resolution. */
+    var look by mutableStateOf(Look.entries.firstOrNull { it.name == store.look } ?: Look.Clean)
+        private set
+
+    fun nextLook() {
+        look = Look.entries[(look.ordinal + 1) % Look.entries.size]
+        store.look = look.name
     }
 
     fun setServer(url: String) {
