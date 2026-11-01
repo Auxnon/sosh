@@ -33,7 +33,9 @@ MOVE_HEARTBEAT = 1
 CAM = { x = 0, y = 0, z = 0, az = 0, alt = -0.55, dist = 9 }
 
 function main()
-	attr({ title = "sosh", modernize = true })
+	-- a gui pixel is two CSS pixels (dp in the app): finer than 320x240 on a
+	-- big window, so the HUD meets the app's look halfway
+	attr({ title = "sosh", modernize = true, gui_px = 2 })
 	UI.init()
 	world_build()
 
