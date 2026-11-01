@@ -62,6 +62,9 @@ class AppState(context: Context, private val scope: CoroutineScope) {
     val conversations = mutableStateListOf<Conversation>()
     var bag by mutableStateOf<List<Slot?>>(emptyList())
         private set
+    /** The item in hand in the world: chosen here or in the game (`hold`). */
+    var held by mutableStateOf<String?>(null)
+        private set
     var catalog by mutableStateOf(Catalog.default)
         private set
 
@@ -213,6 +216,7 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         u.on("servers") { refreshServers() }
         u.on("friends") { refreshFriends() }
         u.on("bag") { bag = bag(it.optJSONArray("bag")) }
+        u.on("hold") { held = if (it.isNull("item")) null else it.optString("item") }
         u.on("character") { c -> me = me?.copy(character = c.optJSONObject("character") ?: JSONObject()) }
         u.on("dm") { refreshConversations() }
         u.on("gift") { p ->
@@ -464,6 +468,12 @@ class AppState(context: Context, private val scope: CoroutineScope) {
                 notice = Api.describe(r.optString("reason"))
             }
         }
+    }
+
+    /** Put `item` in hand in the world; the game says back what it took. */
+    fun hold(item: String) {
+        held = item
+        user?.push("hold", JSONObject().put("item", item))
     }
 
     fun saveCharacter(c: JSONObject, done: () -> Unit) = scope.launch {

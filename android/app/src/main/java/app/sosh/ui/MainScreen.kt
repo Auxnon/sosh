@@ -244,7 +244,7 @@ private fun ServerView(app: AppState, serverId: Long, drag: PocketDrag, modifier
                                 Overlay(app, Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 10.dp, end = 76.dp))
                             }
                             BackpackButton(app.bag.count { it != null }, { pockets = true }, Modifier.align(Alignment.BottomEnd).padding(10.dp))
-                            PocketsPanel(app.bag, drag, pockets, { pockets = false }, Modifier.align(Alignment.BottomCenter))
+                            PocketsPanel(app.bag, drag, app.held, app::hold, pockets, { pockets = false }, Modifier.align(Alignment.BottomCenter))
                         }
                     }
                 }

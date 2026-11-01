@@ -178,7 +178,7 @@ fun BagScreen(app: AppState, back: () -> Unit) = Page("Pockets", back) {
     Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned { origin = it.positionInRoot() }) {
         Box(Modifier.padding(4.dp).fillMaxWidth().paper().padding(12.dp)) {
             Box(Modifier.background(PaperDeep, RoundedCornerShape(18.dp)).padding(horizontal = 6.dp, vertical = 12.dp)) {
-                PocketGrid(app.bag, drag, null, { i -> app.bag.getOrNull(i)?.let { picked = it.item } })
+                PocketGrid(app.bag, drag, app.held, { i -> app.bag.getOrNull(i)?.let { picked = it.item } })
             }
         }
         DragGhost(app.bag, drag, origin)

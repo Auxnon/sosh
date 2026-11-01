@@ -28,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -113,10 +112,11 @@ fun Modifier.chatTarget(drag: PocketDrag, key: String): Modifier = composed {
 /**
  * The bag's slots as round pockets, eight to a row when they fit (as the
  * game lays them out), else four. Drag one onto another to swap them, or
- * out onto the chat; tap one to pick it.
+ * out onto the chat; tap one to pick it. Pockets of the item in hand
+ * (`held`) are ringed.
  */
 @Composable
-fun PocketGrid(bag: List<Slot?>, drag: PocketDrag, picked: Int?, onTap: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun PocketGrid(bag: List<Slot?>, drag: PocketDrag, held: String?, onTap: (Int) -> Unit, modifier: Modifier = Modifier) {
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val gap = 6.dp
         val cols = if ((maxWidth - gap * 7) / 8 >= 36.dp) 8 else 4
@@ -124,7 +124,7 @@ fun PocketGrid(bag: List<Slot?>, drag: PocketDrag, picked: Int?, onTap: (Int) ->
         Column(verticalArrangement = Arrangement.spacedBy(gap + 2.dp)) {
             bag.indices.chunked(cols).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap, Alignment.CenterHorizontally)) {
-                    row.forEach { i -> Pocket(i, bag[i], size, drag, picked == i, onTap) }
+                    row.forEach { i -> Pocket(i, bag[i], size, drag, held != null && bag[i]?.item == held, onTap) }
                 }
             }
         }
@@ -181,12 +181,15 @@ private fun Pocket(i: Int, slot: Slot?, size: Dp, drag: PocketDrag, picked: Bool
 }
 
 /**
- * The pockets, slid up over the bottom of the world from its backpack.
- * Tapping a pocket says what's in it; dragging sorts them or gifts.
+ * The pockets, slid up over the bottom of the world from its backpack: the
+ * world's bag. Tapping a pocket puts what's in it in hand; dragging sorts
+ * them or gifts.
  */
 @Composable
-fun PocketsPanel(bag: List<Slot?>, drag: PocketDrag, open: Boolean, onClose: () -> Unit, modifier: Modifier = Modifier) {
-    var picked by remember { mutableStateOf<Int?>(null) }
+fun PocketsPanel(
+    bag: List<Slot?>, drag: PocketDrag, held: String?, onHold: (String) -> Unit,
+    open: Boolean, onClose: () -> Unit, modifier: Modifier = Modifier,
+) {
     AnimatedVisibility(open, modifier, enter = slideInVertically { it + 40 }, exit = slideOutVertically { it + 40 }) {
         Column(
             Modifier.fillMaxWidth().padding(8.dp).paper(drop = 4.dp).padding(12.dp),
@@ -195,9 +198,9 @@ fun PocketsPanel(bag: List<Slot?>, drag: PocketDrag, open: Boolean, onClose: () 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Label("pockets ${bag.count { it != null }}/${bag.size}", color = InkFaint)
-                    val s = picked?.let { bag.getOrNull(it) }
+                    val n = held?.let { h -> bag.sumOf { if (it?.item == h) it.count else 0 } } ?: 0
                     Text(
-                        if (s != null) "${s.item} ×${s.count}" else "Drag to sort, or into the chat to gift",
+                        if (n > 0) "In hand: $held ×$n" else "Tap to hold, drag to sort, or into the chat to gift",
                         color = Ink, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -206,7 +209,7 @@ fun PocketsPanel(bag: List<Slot?>, drag: PocketDrag, open: Boolean, onClose: () 
                 }
             }
             Box(Modifier.background(PaperDeep, RoundedCornerShape(18.dp)).padding(horizontal = 6.dp, vertical = 10.dp)) {
-                PocketGrid(bag, drag, picked, { picked = it })
+                PocketGrid(bag, drag, held, { i -> bag.getOrNull(i)?.let { onHold(it.item) } })
             }
         }
     }
