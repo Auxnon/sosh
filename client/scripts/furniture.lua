@@ -453,6 +453,9 @@ function Furn.show_ghost(cells, on)
 		local g = Furn.ghosts[i]
 		if i <= n then
 			Furn.put(g, on, cells[i], 0)
+			if g.z > -1000 then
+				g.z = g.z + OUTLINE_DZ
+			end
 		else
 			g.z = -1000
 		end

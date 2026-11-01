@@ -688,6 +688,10 @@ function in_reach(me, cell, on)
 	return dx * dx + dy * dy + dz * dz <= REACH * REACH
 end
 
+-- The outline models (cursor.glb, ghost.glb) span a cell from its base, but
+-- blocks draw centred on it, so the outlines sit this much lower to match.
+OUTLINE_DZ = -0.5
+
 -- The outline cube around the targeted cell (of the world, or ship `on`'s),
 -- parked far away when there is none (only transforms sync on the web, so
 -- it's moved, never re-made).
@@ -707,7 +711,7 @@ function show_cursor(cell, on)
 	end
 	c.x = x
 	c.y = y
-	c.z = z
+	c.z = z + OUTLINE_DZ
 	c.rz = rz
 end
 
