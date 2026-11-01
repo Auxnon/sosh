@@ -13,15 +13,37 @@ LH = 10 -- line height
 PAD = 4
 DRAG_PX = 6 -- gui pixels a press moves before it is a drag, not a tap
 
-C_TEXT = "F4F0E6"
-C_DIM = "A8B0BC"
-C_PANEL = "141A26C8"
-C_PANEL_HI = "26304AE0"
-C_ACCENT = "F2B84B"
-C_OK = "7BD389"
+-- The Android app's look (android/.../ui/Theme.kt): a console's indigo
+-- plastic around cozy cream paper, with leaf green and orange.
+C_TEXT = "F2EFFF" -- on plastic
+C_DIM = "C3BCF5"
+C_PANEL = "3B3380E8" -- plastic panels
+C_PANEL_HI = "4D44A0" -- plastic buttons
+C_PANEL_LIT = "5A50B8" -- a button under the pointer
+C_EDGE = "1A1540" -- the solid shadow under plastic and paper
+C_SHINE = "FFFFFF40" -- the light along plastic's top edge
+C_GLASS = "241E4EB8" -- see-through indigo: the chat log, small labels
+C_ACCENT = "F7A531" -- orange: the thing to press, and highlights
+C_ACCENT_EDGE = "B86F12"
+C_ON_ACCENT = "3A2410"
+C_OK = "5DBB46" -- leaf green: what's selected
+C_OK_EDGE = "2F7A22"
+C_ON_OK = "16300C"
 C_BAD = "F07167"
-C_BUBBLE = "FFFDF6F0"
-C_BUBBLE_TEXT = "222034"
+C_PAPER = "FFF4D6"
+C_PAPER_EDGE = "C9A86A"
+C_INK = "4A3B2A" -- on paper
+C_INK_DIM = "8A7458"
+C_TAG_INK = "3A2C1C" -- on a name tag
+C_BUBBLE = "FFF4D6F4"
+C_BUBBLE_TEXT = C_INK
+
+-- Button tones: body, its edge, its text.
+TONES = {
+	plastic = { C_PANEL_HI, C_EDGE, C_TEXT },
+	on = { C_OK, C_OK_EDGE, C_ON_OK },
+	go = { C_ACCENT, C_ACCENT_EDGE, C_ON_ACCENT },
+}
 
 -- Keyboard text entry. cin() only reports unshifted characters, so shifted
 -- symbols are mapped here.
@@ -133,9 +155,28 @@ function UI.inside(x, y, w, h)
 	return UI.mx >= x and UI.mx < x + w and UI.my >= y and UI.my < y + h
 end
 
--- Panels claim the pointer so clicks on them don't walk the avatar.
+-- Plastic: `body` with a light line along the top and a solid `edge`
+-- under it.
+function UI.plastic(x, y, w, h, r, body, edge)
+	gui:rrect(x, y + 2, w, h, r, edge or C_EDGE)
+	gui:rrect(x, y, w, h, r, body or C_PANEL)
+	gui:rect(x + r, y, w - r * 2, 1, C_SHINE)
+end
+
+-- Paper: a cream card with its shadow.
+function UI.paper(x, y, w, h, r)
+	gui:rrect(x, y + 2, w, h, r, C_PAPER_EDGE)
+	gui:rrect(x, y, w, h, r, C_PAPER)
+end
+
+-- Panels claim the pointer so clicks on them don't walk the avatar. Plastic
+-- unless given a flat colour.
 function UI.panel(x, y, w, h, col)
-	gui:rect(x, y, w, h, col or C_PANEL)
+	if col ~= nil then
+		gui:rect(x, y, w, h, col)
+	else
+		UI.plastic(x, y, w, h, 5)
+	end
 	if UI.inside(x, y, w, h) then
 		UI.hot = true
 	end
@@ -153,19 +194,30 @@ function UI.text_w(s)
 	return #s * CH
 end
 
--- Returns true on the frame it's clicked.
-function UI.button(label, x, y, w, h)
+-- A plastic button; `tone` "on" (green: selected) or "go" (orange: the
+-- thing to do). Held down it sinks onto its edge. True on the frame it's
+-- clicked.
+function UI.button(label, x, y, w, h, tone)
 	local over = UI.inside(x, y, w, h)
-	local bg = C_PANEL
+	local t = TONES[tone or "plastic"]
+	local body = t[1]
 	if over then
-		bg = C_PANEL_HI
 		UI.hot = true
+		if tone == nil then
+			body = C_PANEL_LIT
+		end
 	end
-	gui:rrect(x, y, w, h, 3, bg)
+	local dy = 0
+	if over and UI.mouse.m1 then
+		dy = 1
+	end
+	gui:rrect(x, y + 2, w, h, 4, t[2])
+	gui:rrect(x, y + dy, w, h, 4, body)
+	gui:rect(x + 4, y + dy, w - 8, 1, C_SHINE)
 	local tw = UI.text_w(label)
 	local lx = x + flr((w - tw) / 2)
-	local ly = y + flr((h - CH) / 2) + 1
-	UI.text(label, lx, ly, C_TEXT)
+	local ly = y + dy + flr((h - CH) / 2) + 1
+	UI.text(label, lx, ly, t[3])
 	return over and UI.clicked
 end
 
@@ -173,11 +225,10 @@ function UI.draw_field(label, f, x, y, w, focused)
 	UI.text(label, x, y, C_DIM)
 	local by = y + LH + 2
 	local bh = LH + PAD * 2
-	local col = C_PANEL
 	if focused then
-		col = C_PANEL_HI
+		gui:rrect(x - 1, by - 1, w + 2, bh + 2, 4, C_ACCENT)
 	end
-	gui:rrect(x, by, w, bh, 3, col)
+	UI.paper(x, by, w, bh, 4)
 	-- show the tail if it doesn't fit
 	local fit = flr((w - PAD * 2) / CH) - 1
 	local shown = f.text
@@ -187,10 +238,7 @@ function UI.draw_field(label, f, x, y, w, focused)
 	if focused and UI.blink < 30 then
 		shown = shown .. "_"
 	end
-	UI.text(shown, x + PAD, by + PAD + 1, C_TEXT)
-	if focused then
-		gui:rect(x, by + bh - 2, w, 2, C_ACCENT)
-	end
+	UI.text(shown, x + PAD, by + PAD + 1, C_INK)
 	return UI.inside(x, by, w, bh) and UI.clicked
 end
 
@@ -242,10 +290,11 @@ function UI.avatar_overlay(av, is_me, p)
 	if is_me then
 		name = name .. " (you)"
 	end
+	-- the speaker's colour as a name tag, dark ink on it
 	local nw = UI.text_w(name) + PAD * 2
 	local nx = x - flr(nw / 2)
-	gui:rrect(nx, y - LH - 2, nw, LH + 2, 2, "0009")
-	UI.text(name, nx + PAD, y - LH, av.hex)
+	gui:rrect(nx, y - LH - 2, nw, LH + 2, 3, av.hex)
+	UI.text(name, nx + PAD, y - LH, C_TAG_INK)
 
 	-- newest bubble lowest, nearest the head
 	local by = y - LH - 6
@@ -263,6 +312,7 @@ function UI.avatar_overlay(av, is_me, p)
 		local bh = #lines * LH + PAD * 2 - 2
 		local bx = x - flr(bw / 2)
 		by = by - bh
+		gui:rrect(bx, by + 2, bw, bh, 4, C_PAPER_EDGE)
 		gui:rrect(bx, by, bw, bh, 4, C_BUBBLE)
 		if i == #av.bubbles then
 			-- little tail pointing at the speaker

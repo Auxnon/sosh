@@ -130,7 +130,7 @@ end
 -- One grid of slots; returns the index clicked, or nil.
 function Bag.grid(title, slots, x, y, w, h)
 	UI.panel(x, y, w, h)
-	UI.text(title, x + PAD, y + PAD, C_ACCENT)
+	UI.text(title, x + PAD, y + PAD, C_TEXT)
 	local clicked = nil
 	local gy = y + LH + PAD * 2
 	for i = 1, #slots do
@@ -139,12 +139,12 @@ function Bag.grid(title, slots, x, y, w, h)
 		local sx = x + PAD + col * SLOT_W
 		local sy = gy + row * SLOT_H
 		local over = UI.inside(sx, sy, SLOT_W - 2, SLOT_H - 2)
-		local bg = "0A0E1680"
+		-- a paper pocket, ringed in orange under the pointer
 		if over then
-			bg = C_PANEL_HI
 			UI.hot = true
+			gui:rrect(sx - 1, sy - 1, SLOT_W, SLOT_H, 4, C_ACCENT)
 		end
-		gui:rrect(sx, sy, SLOT_W - 2, SLOT_H - 2, 2, bg)
+		UI.paper(sx, sy, SLOT_W - 2, SLOT_H - 4, 4)
 		local s = slots[i]
 		if s[1] ~= nil then
 			local c = ITEM_COLORS[s[1]] or "DDDDDD"
@@ -152,7 +152,7 @@ function Bag.grid(title, slots, x, y, w, h)
 			local n = tostring(s[2])
 			-- calls hoisted out of argument lists (petrichor64 SILT-BUGS.md #1)
 			local nw = UI.text_w(n)
-			UI.text(n, sx + SLOT_W - 3 - nw, sy + SLOT_H - LH - 1, C_TEXT)
+			UI.text(n, sx + SLOT_W - 3 - nw, sy + SLOT_H - LH - 3, C_INK)
 			if over then
 				Bag.tip = s[1] .. " x" .. n
 			end

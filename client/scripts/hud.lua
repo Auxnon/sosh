@@ -3,10 +3,11 @@
 
 HUD_BTN_W = 72
 HUD_BTN_H = 18
--- right-hand column: 4 emotes, look, pose, bag, chat, home (in the app,
--- whose own screens do chat, looks and going home: the emotes, pose, bag)
-HUD_ROWS = 9
-HUD_ROWS_APP = 6
+-- right-hand column: emote (a dropdown of them), look, pose, bag, chat,
+-- home (in the app, whose own screens do chat, looks and going home: emote,
+-- pose, bag)
+HUD_ROWS = 6
+HUD_ROWS_APP = 3
 HINT = "enter: chat  wasd: walk  1-6: tool  z/x: pick  r: turn  i: bag  b: helm  h: helper  f: look  g: pose/drop  7-0: emote  q/e: look"
 HINT_HELM = "at the helm: w/s ahead/astern  a/d turn  space/c up/down  b: let go"
 TOOL_W = 60
@@ -125,6 +126,10 @@ function hud_layout()
 	L.col_rows = rows
 	L.col_x = gui.w - PAD * 2 - HUD_BTN_W * cols - PAD * (cols - 1)
 	L.col_h = (HUD_BTN_H + PAD) * rows
+	-- the emote dropdown opens to the left of its button, the column's first
+	L.emotes_x = L.col_x - HUD_BTN_W - PAD
+	L.emotes_y = L.col_y
+	L.emotes_h = (HUD_BTN_H + PAD) * #EMOTES
 	L.hint_text = HINT
 	if Ships.piloted_by(APP.my_id) ~= nil then
 		L.hint_text = HINT_HELM
@@ -153,6 +158,9 @@ function hud_hit(x, y)
 		return true
 	end
 	if x >= L.col_x and y >= L.col_y and y < L.col_y + L.col_h then
+		return true
+	end
+	if APP.emotes_open and x >= L.emotes_x and x < L.col_x and y >= L.emotes_y and y < L.emotes_y + L.emotes_h then
 		return true
 	end
 	if y >= L.tb_y and x >= L.tb_x and x < L.tb_x + L.tb_w then
@@ -233,7 +241,7 @@ end
 function draw_tag(text, p, col)
 	local w = UI.text_w(text) + PAD * 2
 	local x = p[1] - flr(w / 2)
-	gui:rrect(x, p[2] - LH - 2, w, LH + 2, 2, "0009")
+	gui:rrect(x, p[2] - LH - 2, w, LH + 2, 3, C_GLASS)
 	UI.text(text, x + PAD, p[2] - LH, col)
 end
 
@@ -247,7 +255,10 @@ function draw_hud()
 	if APP.me ~= nil then
 		online = online + 1
 	end
-	UI.panel(0, 0, gui.w, L.top_h, "0A0E16B0")
+	UI.plastic(0, 0, gui.w, L.top_h, 0)
+	if UI.inside(0, 0, gui.w, L.top_h) then
+		UI.hot = true
+	end
 	local st = PHX.state
 	local label = "connecting..."
 	local col = C_ACCENT
@@ -267,7 +278,7 @@ function draw_hud()
 	if edge ~= nil then
 		local ew = UI.text_w(edge)
 		local ex = flr((gui.w - ew) / 2)
-		gui:rrect(ex - PAD, L.top_h + PAD * 2, ew + PAD * 2, LH + PAD, 3, "0A0E16C0")
+		gui:rrect(ex - PAD, L.top_h + PAD * 2, ew + PAD * 2, LH + PAD, 3, C_GLASS)
 		UI.text(edge, ex, L.top_h + PAD * 3, C_ACCENT)
 	end
 
@@ -324,10 +335,11 @@ function draw_toolbar(L)
 		if L.tool_w >= TOOL_W then
 			label = tostring(i) .. " " .. name
 		end
+		local tone = nil
 		if APP.tool == name then
-			gui:rrect(x - 1, y - 1, L.tool_w + 2, HUD_BTN_H + 2, 3, C_ACCENT)
+			tone = "on"
 		end
-		if UI.button(label, x, y, L.tool_w, HUD_BTN_H) then
+		if UI.button(label, x, y, L.tool_w, HUD_BTN_H, tone) then
 			APP.tool = name
 		end
 		x = x + L.tool_w + PAD
@@ -340,7 +352,7 @@ function draw_toolbar(L)
 	y = L.pick_y
 	if L.compact then
 		local label = "< " .. (items[chosen] or "") .. " >"
-		if UI.button(label, x, y, L.pick_bw, HUD_BTN_H) then
+		if UI.button(label, x, y, L.pick_bw, HUD_BTN_H, "go") then
 			if UI.mx < x + L.pick_bw / 2 then
 				cycle_pick(-1)
 			else
@@ -350,10 +362,11 @@ function draw_toolbar(L)
 		items = {}
 	end
 	for i = 1, #items do
+		local tone = nil
 		if chosen == i then
-			gui:rrect(x - 1, y - 1, L.pick_bw + 2, HUD_BTN_H + 2, 3, C_OK)
+			tone = "go"
 		end
-		if UI.button(items[i], x, y, L.pick_bw, HUD_BTN_H) then
+		if UI.button(items[i], x, y, L.pick_bw, HUD_BTN_H, tone) then
 			picker_pick(i)
 		end
 		x = x + L.pick_bw + PAD
@@ -383,13 +396,19 @@ end
 function draw_buttons(L)
 	local me = APP.me
 	local P = { x = L.col_x, y = L.col_y, row = 0 }
-	for i = 1, #EMOTES do
-		local label = EMOTE_KEYS[i] .. " " .. EMOTES[i]
-		if UI.button(label, P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
-			do_emote(EMOTES[i])
-		end
-		hud_next(L, P)
+	-- one button for the emotes, opening the list of them (for now)
+	local etone = nil
+	local elabel = "emote v"
+	if APP.emotes_open then
+		etone = "on"
+		elabel = "emote ^"
 	end
+	if UI.button(elabel, P.x, P.y, HUD_BTN_W, HUD_BTN_H, etone) then
+		APP.emotes_open = not APP.emotes_open
+	elseif UI.clicked and APP.emotes_open and not UI.inside(L.emotes_x, L.emotes_y, HUD_BTN_W, L.emotes_h) then
+		APP.emotes_open = false
+	end
+	hud_next(L, P)
 	if not APP.embedded then
 		if UI.button("look", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 			Creator.open()
@@ -406,24 +425,48 @@ function draw_buttons(L)
 		pose_pressed()
 	end
 	hud_next(L, P)
-	if UI.button("i bag", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
+	local btone = nil
+	if Bag.open then
+		btone = "on"
+	end
+	if UI.button("i bag", P.x, P.y, HUD_BTN_W, HUD_BTN_H, btone) then
 		if Bag.open then
 			Bag.close()
 		else
 			Bag.open = true
 		end
 	end
-	if APP.embedded then
-		return
+	if not APP.embedded then
+		hud_next(L, P)
+		local ctone = nil
+		if APP.typing then
+			ctone = "on"
+		end
+		if UI.button("chat", P.x, P.y, HUD_BTN_W, HUD_BTN_H, ctone) then
+			APP.typing = not APP.typing
+			APP.draft.text = ""
+		end
+		hud_next(L, P)
+		if UI.button("home", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
+			Account.leave_world()
+		end
 	end
-	hud_next(L, P)
-	if UI.button("chat", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
-		APP.typing = not APP.typing
-		APP.draft.text = ""
+	if APP.emotes_open then
+		draw_emotes(L)
 	end
-	hud_next(L, P)
-	if UI.button("home", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
-		Account.leave_world()
+end
+
+-- The emotes, in a list beside their button; picking one plays it and
+-- closes the list. (Keys 7-0 still play them directly.)
+function draw_emotes(L)
+	local y = L.emotes_y
+	for i = 1, #EMOTES do
+		local label = EMOTE_KEYS[i] .. " " .. EMOTES[i]
+		if UI.button(label, L.emotes_x, y, HUD_BTN_W, HUD_BTN_H) then
+			do_emote(EMOTES[i])
+			APP.emotes_open = false
+		end
+		y = y + HUD_BTN_H + PAD
 	end
 end
 
@@ -472,7 +515,7 @@ function draw_chat(L)
 
 	if #rows > 0 then
 		local h = #rows * LH + PAD * 2
-		gui:rrect(PAD, bottom - h, w, h, 3, "0A0E1690")
+		gui:rrect(PAD, bottom - h, w, h, 4, C_GLASS)
 		for r = 1, #rows do
 			UI.text(rows[r].text, PAD * 2, bottom - PAD - r * LH + 1, rows[r].col)
 		end
@@ -480,7 +523,10 @@ function draw_chat(L)
 
 	if APP.typing then
 		local y = L.chat_bottom - LH - PAD * 2
-		UI.panel(PAD, y, w, LH + PAD * 2, C_PANEL_HI)
+		UI.paper(PAD, y, w, LH + PAD * 2, 4)
+		if UI.inside(PAD, y, w, LH + PAD * 2) then
+			UI.hot = true
+		end
 		local shown = "> " .. APP.draft.text
 		if #shown > cols - 1 then
 			shown = shown:sub(#shown - cols + 2)
@@ -488,6 +534,6 @@ function draw_chat(L)
 		if UI.blink < 30 then
 			shown = shown .. "_"
 		end
-		UI.text(shown, PAD * 2, y + PAD + 1, C_TEXT)
+		UI.text(shown, PAD * 2, y + PAD + 1, C_INK)
 	end
 end
