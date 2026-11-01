@@ -3,9 +3,10 @@
 
 Run from anywhere: `python3 android/tools/item_icons.py`. Needs Pillow.
 
-Blocks use the game's own 16x16 textures (client/assets, made by
-client/tools/gen_assets.py); the rest (pot, carrot, drawer, stool) are
-drawn here at the same size, so the app shows them pixelated like the game.
+Blocks use the game's own 32x32 tiles (client/assets, made by
+client/tools/gen_blocks.py); the rest (pot, carrot, drawer, stool) are
+drawn here at 16x16, as the game's models are, so the app shows them
+pixelated like the game.
 The app falls back to a lettered tile for anything without an icon.
 """
 

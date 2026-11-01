@@ -395,53 +395,6 @@ def scaffold_model():
     write_glb(ASSETS / "scaffold.glb", pos, uvs, idx, png_bytes(im))
 
 
-def ship_textures():
-    """The tiles airships are built of (scripts/ships.lua), each a block:
-    deck planks, a dark hull, balloon canvas with a red band, a rail and the
-    helm's wheel."""
-    deck = tile_texture((196, 150, 98, 255), (178, 134, 86, 255), 31)
-    for y in (0, 4, 8, 12):
-        for x in range(16):
-            deck.putpixel((x, y), (150, 108, 64, 255))
-    for y0, x in ((1, 5), (5, 11), (9, 3), (13, 9)):
-        for y in range(y0, y0 + 3):
-            deck.putpixel((x, y), (150, 108, 64, 255))
-    deck.save(ASSETS / "deck.png")
-
-    hull = tile_texture((112, 78, 52, 255), (96, 66, 44, 255), 37)
-    for y in (0, 5, 10, 15):
-        for x in range(16):
-            hull.putpixel((x, y), (74, 50, 34, 255))
-    for x in (2, 9):
-        for y in (2, 7, 12):
-            hull.putpixel((x, y), (190, 170, 120, 255))
-    hull.save(ASSETS / "hull.png")
-
-    balloon = tile_texture((232, 222, 200, 255), (214, 202, 178, 255), 41)
-    for y in range(6, 10):
-        for x in range(16):
-            balloon.putpixel((x, y), (200, 80, 64, 255) if y in (7, 8) else (176, 64, 52, 255))
-    balloon.save(ASSETS / "balloon.png")
-
-    rail = tile_texture((168, 120, 72, 255), (146, 102, 60, 255), 43)
-    for y in range(16):
-        for x in range(16):
-            if y < 3 or x in (0, 15, 7, 8):
-                rail.putpixel((x, y), (120, 84, 48, 255))
-            elif y > 12:
-                rail.putpixel((x, y), (146, 102, 60, 255))
-    rail.save(ASSETS / "rail.png")
-
-    helm = tile_texture((168, 120, 72, 255), (146, 102, 60, 255), 47)
-    gold = (214, 178, 92, 255)
-    for y in range(16):
-        for x in range(16):
-            d = ((x - 7.5) ** 2 + (y - 7.5) ** 2) ** 0.5
-            if 4.5 <= d <= 6.2 or (d < 6.2 and (abs(x - 7.5) < 1 or abs(y - 7.5) < 1)):
-                helm.putpixel((x, y), gold if d > 1.5 else (120, 84, 48, 255))
-    helm.save(ASSETS / "helm.png")
-
-
 def below_model(name, base, speckle, seed):
     """What lies far below the islands: a wide flat grid at z = 0, its
     texture repeated once a cell (the engine has no wrapping UVs)."""
@@ -697,16 +650,10 @@ def main():
 
     whole = lambda n: (0.0, 0.0, 1.0, 1.0)
 
-    tile_texture((112, 168, 96, 255), (92, 146, 80, 255), 7).save(ASSETS / "grass.png")
-    tile_texture((196, 178, 140, 255), (176, 158, 120, 255), 3).save(ASSETS / "path.png")
-    tile_texture((120, 124, 136, 255), (100, 104, 116, 255), 11).save(ASSETS / "stone.png")
-    tile_texture((86, 140, 196, 255), (110, 160, 210, 255), 5).save(ASSETS / "water.png")
-    tile_texture((134, 96, 66, 255), (112, 78, 52, 255), 13).save(ASSETS / "dirt.png")
-    wood = tile_texture((168, 120, 72, 255), (146, 102, 60, 255), 17)
-    for y in (0, 5, 10, 15):
-        for x in range(16):
-            wood.putpixel((x, y), (120, 84, 48, 255))
-    wood.save(ASSETS / "wood.png")
+    # the block tiles, ships' included (32x32)
+    import gen_blocks
+
+    gen_blocks.build(ASSETS)
 
     # Block cursor: an outline cube a touch larger than a block, so it shows
     # around the hovered block. Spans a block placed at (x, y, z): x/y centred,
@@ -728,7 +675,6 @@ def main():
 
     furniture_models()
     scaffold_model()
-    ship_textures()
     below_model("sea", (54, 104, 160, 255), (78, 128, 184, 255), 23)
     below_model("land", (88, 120, 70, 255), (70, 98, 56, 255), 29)
 
