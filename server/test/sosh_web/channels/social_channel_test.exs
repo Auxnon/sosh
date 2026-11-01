@@ -105,6 +105,22 @@ defmodule SoshWeb.SocialChannelTest do
     assert_reply ref, :error, %{reason: "no_such_slot"}
   end
 
+  test "hold passes the item in hand to every client of the account" do
+    {socket, me} = signed_in("holder")
+    {:ok, _, ch} = Phoenix.ChannelTest.subscribe_and_join(socket, SoshWeb.UserChannel, "user:#{me.id}", %{})
+
+    ref = push(ch, "hold", %{"item" => "stone"})
+    assert_reply ref, :ok, %{}
+    assert_broadcast "hold", %{item: "stone"}
+
+    ref = push(ch, "hold", %{"item" => nil})
+    assert_reply ref, :ok, %{}
+    assert_broadcast "hold", %{item: nil}
+
+    ref = push(ch, "hold", %{"item" => 5})
+    assert_reply ref, :error, %{reason: "bad_request"}
+  end
+
   test "server chat over the socket: gifts go out sealed, and the recipient opens them" do
     {sa, _ann} = signed_in("ann")
     {sb, ben} = signed_in("ben")

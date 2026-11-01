@@ -138,10 +138,11 @@ looks and the way home, which the app has as its own screens). The client connec
   character catalog. Requests: `enter` (go to a server's universe),
   `join_server`, `leave_server`, `friend_add`/`friend_accept`/`friend_remove`,
   `character`, `dm_post`, `claim`/`cancel` (open or take back a gift),
-  `bag_swap` (`a`, `b`: sort the bag by swapping two slots), `members`,
+  `bag_swap` (`a`, `b`: sort the bag by swapping two slots), `hold`
+  (`item`: the item in hand, passed on to your other clients), `members`,
   `member` (moderation), `invite`, `server_update`. Events tell you
-  when servers, friends, your bag or your character change, and about DMs
-  and gifts. See `SoshWeb.UserChannel`.
+  when servers, friends, your bag, the item in hand or your character
+  change, and about DMs and gifts. See `SoshWeb.UserChannel`.
 - **`server:<id>`**: a server's chat, for its members. `post` (`body`, and
   optionally `gift: {item, count, to}`) and `history`; `message`, `gift`,
   `deleted` and `members` come in. Gifts go out wrapped: who they're for,
