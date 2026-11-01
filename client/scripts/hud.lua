@@ -4,10 +4,10 @@
 HUD_BTN_W = 72
 HUD_BTN_H = 18
 -- right-hand column: emote (a dropdown of them), look, pose, bag, chat,
--- home (in the app, whose own screens do chat, looks and going home: emote,
--- pose, bag)
+-- home (in the app, whose own screens do chat, looks, the bag and going
+-- home: emote, pose)
 HUD_ROWS = 6
-HUD_ROWS_APP = 3
+HUD_ROWS_APP = 2
 HINT = "enter: chat  wasd: walk  1-6: tool  z/x: pick  r: turn  i: bag  b: helm  h: helper  f: look  g: pose/drop  7-0: emote  q/e: look"
 HINT_HELM = "at the helm: w/s ahead/astern  a/d turn  space/c up/down  b: let go"
 TOOL_W = 60
@@ -424,19 +424,19 @@ function draw_buttons(L)
 	if UI.button(pose_label, P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 		pose_pressed()
 	end
-	hud_next(L, P)
-	local btone = nil
-	if Bag.open then
-		btone = "on"
-	end
-	if UI.button("i bag", P.x, P.y, HUD_BTN_W, HUD_BTN_H, btone) then
-		if Bag.open then
-			Bag.close()
-		else
-			Bag.open = true
-		end
-	end
 	if not APP.embedded then
+		hud_next(L, P)
+		local btone = nil
+		if Bag.open then
+			btone = "on"
+		end
+		if UI.button("i bag", P.x, P.y, HUD_BTN_W, HUD_BTN_H, btone) then
+			if Bag.open then
+				Bag.close()
+			else
+				Bag.open = true
+			end
+		end
 		hud_next(L, P)
 		local ctone = nil
 		if APP.typing then

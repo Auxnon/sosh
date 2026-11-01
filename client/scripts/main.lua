@@ -109,6 +109,7 @@ end
 function loop()
 	U.tick()
 	UI.begin()
+	tell_hold()
 	if APP.screen == "connect" then
 		connect_screen()
 	elseif APP.screen == "auth" then
@@ -123,6 +124,18 @@ function loop()
 end
 
 function draw() end
+
+-- Tell our other clients (the app's pockets) when the item in hand changes
+-- here; what they choose comes back as `hold` (account.lua).
+function tell_hold()
+	if USER == nil or APP.build_item == nil or APP.build_item == APP.held_sent then
+		return
+	end
+	local item = APP.build_item
+	if PHX:push(USER, "hold", { item = item }) then
+		APP.held_sent = item
+	end
+end
 
 -- ---------------------------------------------------------------------------
 -- connect screen

@@ -9,6 +9,9 @@
 -- furniture open (click it with the walk tool) its slots show above: click a
 -- bag slot to put that stack in, a furniture slot to take it out. Without
 -- one open, clicking a slot picks that item to build with.
+--
+-- In the Android app its pockets are the bag (they pick what's in hand,
+-- passed on by `hold`), so the panel only shows beside an open box.
 
 Bag = {}
 

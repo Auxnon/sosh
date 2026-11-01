@@ -130,7 +130,7 @@ The socket starts signed out (account.lua). It can only join
 once you're signed in, plus `whoami` (the Android app's world view is already
 signed in by its user agent; `whoami` also says which server to open,
 `enter`, and that it's in the app, `app`, where the HUD leaves out chat,
-looks and the way home, which the app has as its own screens). The client connects again with
+looks, the way home and the bag, which the app has as its own screens). The client connects again with
 `&token=<token>` and joins:
 
 - **`user:<id>`**: your own channel. The join reply has everything: you, your

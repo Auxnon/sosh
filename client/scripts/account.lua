@@ -152,6 +152,13 @@ function Account.bind_user(ch)
 	ch.on["bag"] = function(p)
 		Bag.set(p.bag)
 	end
+	-- the item in hand, chosen in another of our clients (the app's pockets)
+	ch.on["hold"] = function(p)
+		APP.held_sent = p.item
+		if p.item ~= nil then
+			pick_build_item(p.item)
+		end
+	end
 	ch.on["character"] = function(p)
 		APP.account.character = p.character
 		if APP.me ~= nil then

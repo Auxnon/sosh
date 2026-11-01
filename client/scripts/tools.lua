@@ -56,7 +56,7 @@ function world_keys(me)
 	if key("r", true) then
 		APP.rot = (APP.rot + 1) % 4
 	end
-	if key("i", true) then
+	if key("i", true) and not APP.embedded then
 		if Bag.open then
 			Bag.close()
 		else
