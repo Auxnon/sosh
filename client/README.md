@@ -27,7 +27,8 @@ Needs a Petrichor64 engine with the **`ws`** feature, which provides
 just engine        # desktop engine with websockets (once)
 just db            # Postgres for the world, on :5442
 just serve         # Phoenix on :4000, in another terminal (container if no local mix)
-just desktop       # run the client window; join with server ws://localhost:4000
+just desktop       # run the client window; it starts on wss://sosh.makeavoy.com,
+                   # type localhost:4000 for yours
 ```
 
 The recipes run from the repo root or `client/`. Containers use podman if it's

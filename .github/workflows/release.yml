@@ -1,0 +1,207 @@
+# The client, for a v* tag: a Windows exe and a Linux AppImage (the
+# Petrichor64 engine with the game baked in) and the Android APK, all pointed
+# at https://sosh.makeavoy.com, attached to a GitHub release. Run it by hand
+# (workflow_dispatch) to get the files as workflow artifacts without a release.
+#
+# Android signing secrets (optional, but without them every release is signed
+# with a throwaway debug key and won't install over the last one):
+#   ANDROID_KEYSTORE_BASE64   base64 of the .jks
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD      (if it differs from the keystore's)
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # The engine the client is known to work with; keep in step with the
+  # Containerfile's P64_REF. (It takes silt-lua from silt-lua's GitHub main.)
+  P64_REPO: Auxnon/Petrichor64
+  P64_REF: f412dabbf139939003978830381877d0dff2e936
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.v.outputs.name }}
+    steps:
+      - id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-${GITHUB_SHA::7}"; fi
+          echo "name=$v" >> "$GITHUB_OUTPUT"
+
+  # The game, packed into one .game.png by the engine (any build of it packs).
+  pack:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.P64_REPO }}
+          ref: ${{ env.P64_REF }}
+          path: p64
+      - name: engine build deps
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libudev-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: p64
+          shared-key: p64-linux
+      - run: cargo build --release --bin chor --features ws
+        working-directory: p64
+      - run: p64/target/release/chor pack client game.game.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: game
+          path: game.game.png
+
+  linux:
+    needs: [version, pack]
+    # the oldest supported runner, for the oldest glibc the AppImage needs
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.P64_REPO }}
+          ref: ${{ env.P64_REF }}
+          path: p64
+      - uses: actions/download-artifact@v4
+        with:
+          name: game
+      - name: engine build deps
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libudev-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libfuse2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: p64
+          shared-key: p64-linux
+      - name: engine with the game baked in
+        run: |
+          cp game.game.png p64/auto.game.png
+          cd p64 && cargo build --release --bin chor --features ws,include_auto
+      - name: AppImage
+        env:
+          VERSION: ${{ needs.version.outputs.name }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp p64/target/release/chor AppDir/usr/bin/sosh
+          cp client/icon.png AppDir/sosh.png
+          cat > AppDir/sosh.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=sosh
+          Comment=Floating islands to hang out on together
+          Exec=sosh
+          Icon=sosh
+          Categories=Game;
+          EOF
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          here="$(dirname "$(readlink -f "$0")")"
+          exec "$here/usr/bin/sosh" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+          curl -fsSLo appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool AppDir "sosh-${VERSION}-x86_64.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: sosh-*.AppImage
+
+  windows:
+    needs: [version, pack]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.P64_REPO }}
+          ref: ${{ env.P64_REF }}
+          path: p64
+      - uses: actions/download-artifact@v4
+        with:
+          name: game
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: p64
+      - name: engine with the game baked in
+        shell: bash
+        # A windowed app, with no console window behind the game: link flags
+        # for the final binary only (cargo rustc), not build scripts or proc
+        # macros as RUSTFLAGS would.
+        run: |
+          cp game.game.png p64/auto.game.png
+          cd p64 && cargo rustc --release --bin chor --features ws,include_auto -- \
+            -C link-arg=/SUBSYSTEM:WINDOWS -C link-arg=/ENTRY:mainCRTStartup
+      - shell: bash
+        run: cp p64/target/release/chor.exe "sosh-${{ needs.version.outputs.name }}-windows.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: sosh-*.exe
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: keystore
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "SOSH_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: the APK is signed with a debug key"
+          fi
+      - name: build
+        env:
+          SOSH_VERSION_NAME: ${{ needs.version.outputs.name }}
+          SOSH_VERSION_CODE: ${{ github.run_number }}
+          SOSH_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SOSH_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SOSH_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk "../sosh-${SOSH_VERSION_NAME}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: sosh-*.apk
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [linux, windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            sosh-*.AppImage
+            sosh-*.exe
+            sosh-*.apk

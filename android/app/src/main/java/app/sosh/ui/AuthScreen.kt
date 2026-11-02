@@ -1,5 +1,6 @@
 package app.sosh.ui
 
+import app.sosh.BuildConfig
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -87,7 +88,9 @@ fun AuthScreen(app: AppState) {
             )
             if (mode == Mode.Server) {
                 Field("server address", server, { server = it }, KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done))
-                Text("The emulator reaches your computer at http://10.0.2.2:4000", color = InkDim, fontSize = 12.sp)
+                if (BuildConfig.DEBUG) {
+                    Text("The emulator reaches your computer at http://10.0.2.2:4000", color = InkDim, fontSize = 12.sp)
+                }
                 PlasticButton({ app.setServer(server); mode = Mode.Login }, Modifier.fillMaxWidth().height(52.dp), tone = Tone.Green) {
                     Text("Use it", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
                 }

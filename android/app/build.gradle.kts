@@ -3,6 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release signing from the environment (the release workflow decodes the
+// keystore from secrets): SOSH_KEYSTORE, SOSH_KEYSTORE_PASSWORD, SOSH_KEY_ALIAS,
+// SOSH_KEY_PASSWORD. Without them, release builds use the debug key, which is
+// fine for trying one out but can't update an install signed by another key.
+val releaseKeystore = System.getenv("SOSH_KEYSTORE")?.takeIf { it.isNotBlank() && file(it).exists() }
+
 android {
     namespace = "app.sosh"
     compileSdk = 37
@@ -12,23 +18,36 @@ android {
         applicationId = "app.sosh"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI sets these from the tag (v1.2.3) and the run number
+        versionCode = System.getenv("SOSH_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("SOSH_VERSION_NAME") ?: "0.1.0"
         // The server the app talks to until it's changed on the sign-in
-        // screen: the host machine, from the Android emulator.
-        buildConfigField("String", "DEFAULT_SERVER", "\"http://10.0.2.2:4000\"")
+        // screen: the real one in release builds (below).
+        buildConfigField("String", "DEFAULT_SERVER", "\"https://sosh.makeavoy.com\"")
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("SOSH_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SOSH_KEY_ALIAS")
+                keyPassword = System.getenv("SOSH_KEY_PASSWORD") ?: System.getenv("SOSH_KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         debug {
             manifestPlaceholders["cleartext"] = "true"
+            // the host machine, from the Android emulator
+            buildConfigField("String", "DEFAULT_SERVER", "\"http://10.0.2.2:4000\"")
         }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Sign with the debug key so `assembleRelease` produces an installable APK out of the box.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

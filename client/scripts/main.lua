@@ -17,7 +17,9 @@
 -- server address.
 
 SOCKET_PATH = "/socket/websocket?vsn=2.0.0"
-DEFAULT_SERVER = "ws://localhost:4000"
+-- what the desktop build connects to unless told otherwise (for a local
+-- server, type localhost:4000)
+DEFAULT_SERVER = "wss://sosh.makeavoy.com"
 CHAT_MAX = 280
 CHAT_LOG_MAX = 50
 CHAT_SHOWN = 8
@@ -172,6 +174,11 @@ function connect_screen()
 		local server = U.trim(APP.server_field.text)
 		if server:sub(#server) == "/" then
 			server = server:sub(1, #server - 1)
+		end
+		if server:sub(1, 8) == "https://" then
+			server = "wss://" .. server:sub(9)
+		elseif server:sub(1, 7) == "http://" then
+			server = "ws://" .. server:sub(8)
 		end
 		if server:sub(1, 5) ~= "ws://" and server:sub(1, 6) ~= "wss://" then
 			server = "ws://" .. server
