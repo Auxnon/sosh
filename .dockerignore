@@ -1,0 +1,13 @@
+# Keep the build context small: only what the Containerfile copies.
+**/.git
+android
+front
+archive*
+server/_build
+server/deps
+server/target
+server/priv/native
+server/priv/static
+server/test
+client/tools/__pycache__
+**/node_modules
