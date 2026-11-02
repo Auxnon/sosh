@@ -32,7 +32,7 @@ defmodule SoshWeb.UserSocket do
       |> assign(:user_id, UUID.uuid4())
       |> assign(:account, user)
       |> assign(:token, user && token)
-      |> assign(:caller, caller(connect_info[:peer_data]))
+      |> assign(:caller, SoshWeb.ClientIP.from_connect_info(connect_info))
       |> assign(:enter, ua_enter(connect_info[:user_agent]))
       |> assign(:app, ua_token(connect_info[:user_agent]) != nil)
 
@@ -57,9 +57,6 @@ defmodule SoshWeb.UserSocket do
   end
 
   defp ua_enter(_), do: nil
-
-  defp caller(%{address: a}), do: a |> :inet.ntoa() |> to_string()
-  defp caller(_), do: "socket"
 
   # Signed-in sockets are `account:<id>`, so signing out everywhere
   # (`SoshWeb.Endpoint.broadcast("account:<id>", "disconnect", %{})`) closes them.

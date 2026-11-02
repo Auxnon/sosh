@@ -30,6 +30,6 @@ defmodule SoshWeb.Api.AuthPlug do
     end
   end
 
-  @doc "Who's asking, for rate limits: their address."
-  def caller(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
+  @doc "Who's asking, for rate limits: their address (`SoshWeb.ClientIP`)."
+  def caller(conn), do: SoshWeb.ClientIP.from_conn(conn)
 end

@@ -9,7 +9,6 @@ defmodule Sosh.Accounts.Notifier do
 
   alias Sosh.Mailer
 
-  @from {"sosh", "no-reply@sosh.local"}
 
   def confirm(email, handle, code) do
     deliver(email, "Your sosh code: #{code}", """
@@ -37,7 +36,7 @@ defmodule Sosh.Accounts.Notifier do
   end
 
   defp deliver(to, subject, body) do
-    email = new() |> to(to) |> from(@from) |> subject(subject) |> text_body(body)
+    email = new() |> to(to) |> from(Application.get_env(:sosh, :mail_from, {"sosh", "no-reply@sosh.local"})) |> subject(subject) |> text_body(body)
 
     if Application.get_env(:sosh, :log_codes, false),
       do: Logger.info("email to #{to}: #{subject}")

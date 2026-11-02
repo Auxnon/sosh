@@ -25,7 +25,7 @@ defmodule SoshWeb do
       ~w(assets fonts images favicon.ico robots.txt models
          Petrichor64.js Petrichor64_bg.wasm worker.js
          synth-worklet.js worklet-polyfill.js petrichor_synth.js petrichor_synth_bg.wasm
-         game.game.png)
+         gamepad.js game.game.png)
 
   def router do
     quote do

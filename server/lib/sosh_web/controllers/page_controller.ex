@@ -9,7 +9,7 @@ defmodule SoshWeb.PageController do
 
   def index(conn, _params) do
     # render(conn, :index, layout: false)
-    html(conn, File.read!("priv/static/index.html"))
+    html(conn, File.read!(Application.app_dir(:sosh, "priv/static/index.html")))
   end
 
   def api_hello(conn, _params) do

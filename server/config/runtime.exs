@@ -21,16 +21,27 @@ if System.get_env("PHX_SERVER") do
 end
 
 if config_env() == :prod do
-  database_url =
-    System.get_env("DATABASE_URL") ||
-      raise """
-      environment variable DATABASE_URL is missing.
-      For example: ecto://USER:PASS@HOST/DATABASE
-      """
+  # The database: DATABASE_URL (ecto://USER:PASS@HOST/DATABASE), or its parts,
+  # which is what the NixOS deploy passes (no URL-escaping the password).
+  repo =
+    case System.get_env("DATABASE_URL") do
+      nil ->
+        [
+          hostname: System.get_env("DB_HOST") || "localhost",
+          port: String.to_integer(System.get_env("DB_PORT") || "5432"),
+          username: System.get_env("DB_USER") || "sosh",
+          password:
+            System.get_env("DB_PASSWORD") || System.get_env("POSTGRES_PASSWORD") ||
+              raise("set DATABASE_URL, or DB_PASSWORD (and DB_HOST, DB_USER, DB_NAME)"),
+          database: System.get_env("DB_NAME") || "sosh"
+        ]
+
+      url ->
+        [url: url]
+    end
 
   config :sosh, Sosh.Repo,
-    url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
+         repo ++ [pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")]
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
@@ -44,24 +55,59 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
-  host = System.get_env("PHX_HOST") || "example.com"
-  IO.puts(host)
-  IO.inspect({:test_host, host})
+  host = System.get_env("PHX_HOST") || "sosh.makeavoy.com"
   port = String.to_integer(System.get_env("PORT") || "4000")
+
+  # Where to listen: every interface by default (inside a container the
+  # deploy publishes it on 127.0.0.1 only); PHX_IP=127.0.0.1 to keep it local.
+  ip =
+    case :inet.parse_address(String.to_charlist(System.get_env("PHX_IP") || "::")) do
+      {:ok, ip} -> ip
+      _ -> raise "PHX_IP is not an IP address"
+    end
 
   config :sosh, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
+  # Behind a reverse proxy (site-delta, Cloudflare) rate limits go by the
+  # address it passes in x-real-ip (SoshWeb.ClientIP).
+  config :sosh, :trust_proxy, System.get_env("TRUST_PROXY") in ~w(1 true yes)
+
   config :sosh, SoshWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
-    http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0},
-      port: port
-    ],
+    http: [ip: ip, port: port],
     secret_key_base: secret_key_base
+
+  # Email (sign-up and password codes). With SMTP_HOST it goes out by SMTP;
+  # without, it's only logged, codes included, so a fresh deploy can still
+  # confirm accounts from `journalctl -u podman-sosh`.
+  config :sosh,
+         :mail_from,
+         {System.get_env("MAIL_FROM_NAME") || "sosh",
+          System.get_env("MAIL_FROM") || "no-reply@#{host}"}
+
+  if smtp = System.get_env("SMTP_HOST") do
+    smtp_port = String.to_integer(System.get_env("SMTP_PORT") || "587")
+
+    config :sosh, Sosh.Mailer,
+      adapter: Swoosh.Adapters.SMTP,
+      relay: smtp,
+      port: smtp_port,
+      username: System.get_env("SMTP_USERNAME"),
+      password: System.get_env("SMTP_PASSWORD"),
+      auth: if(System.get_env("SMTP_USERNAME"), do: :always, else: :never),
+      # 465 is TLS from the start; anything else upgrades with STARTTLS
+      ssl: smtp_port == 465,
+      tls: if(smtp_port == 465, do: :never, else: :always),
+      tls_options: [
+        verify: :verify_peer,
+        cacerts: :public_key.cacerts_get(),
+        server_name_indication: String.to_charlist(smtp),
+        depth: 99
+      ],
+      retries: 2
+  else
+    config :sosh, Sosh.Mailer, adapter: Swoosh.Adapters.Logger, level: :info, log_full_email: true
+  end
 
   # ## SSL Support
   #
