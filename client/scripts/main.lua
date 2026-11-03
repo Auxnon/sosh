@@ -40,6 +40,7 @@ function main()
 	attr({ title = "sosh", modernize = true, gui_px = 2 })
 	UI.init()
 	Voice.init()
+	Marker.init()
 	world_build()
 
 	APP = {}
@@ -699,6 +700,7 @@ function world_frame()
 	Herd.update(me)
 	Carry.update()
 	Dust.update(U.dt)
+	Marker.update(U.dt, me)
 	Voice.update(U.dt)
 	Furn.update()
 

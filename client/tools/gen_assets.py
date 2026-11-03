@@ -317,6 +317,44 @@ def faced(front, rest):
     return lambda n: front(n) if n == "right" else rest(n)
 
 
+def ring_texture(size, r0, r1, colour, dashes=0, dot=0.0):
+    """A ring between radii r0 and r1 (shares of the half-size), cut out of
+    clear: `dashes` gaps around it if any, and a centre dot of radius `dot`."""
+    import math
+
+    im = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    c = (size - 1) / 2
+    for y in range(size):
+        for x in range(size):
+            dx = (x - c) / (size / 2)
+            dy = (y - c) / (size / 2)
+            r = math.hypot(dx, dy)
+            on = r0 <= r <= r1 or r <= dot
+            if on and dashes and r > dot:
+                a = (math.atan2(dy, dx) / (2 * math.pi)) % 1
+                on = (a * dashes) % 1 < 0.6
+            if on:
+                im.putpixel((x, y), colour)
+    return im
+
+
+def marker_models():
+    """The walk tool's ground markers, flat at their origin (so scaling
+    keeps them on the ground): `hover`, a dashed ring where a click would
+    walk to, and `ping`, a solid ring with a dot where it was clicked
+    (scripts/marker.lua places and animates both)."""
+    h = 0.5
+    z = 0.0
+    pos = [(-h, -h, z), (h, -h, z), (h, h, z), (-h, h, z)]
+    uvs = [(0, 1), (1, 1), (1, 0), (0, 0)]
+    # both windings: seen from above whichever way the engine culls
+    idx = [0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2]
+    hover = ring_texture(32, 0.72, 0.9, (255, 236, 160, 255), dashes=8)
+    write_glb(ASSETS / "hover.glb", pos, uvs, idx, png_bytes(hover))
+    ping = ring_texture(32, 0.7, 0.92, (255, 255, 255, 255), dot=0.16)
+    write_glb(ASSETS / "ping.glb", pos, uvs, idx, png_bytes(ping))
+
+
 def furniture_models():
     """Each piece drawn from its origin cell's centre at its base, along +x
     (width) and +y (depth), front facing -y: Sosh's footprint convention,
@@ -673,6 +711,7 @@ def main():
             ghost.putpixel((t, i), (140, 236, 150, 255))
     write_glb(ASSETS / "ghost.glb", pos, uvs, idx, png_bytes(ghost))
 
+    marker_models()
     furniture_models()
     scaffold_model()
     below_model("sea", (54, 104, 160, 255), (78, 128, 184, 255), 23)

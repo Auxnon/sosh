@@ -85,9 +85,10 @@ fit in your bag is left in a sack.
 
 ## Controls
 
-- **1–6**: tool. **Walk** clicks a block to walk onto it, furniture to
-  open it, and a ship's helm to take it. **Dig** digs into your bag, breaks
-  furniture, and takes scaffolding down (everything put in comes back).
+- **1–6**: tool. **Walk** clicks a block to walk onto it (a dashed ring
+  shows where under the pointer; a click drops a ring that stays until you
+  get there), furniture to open it, and a ship's helm to take it. **Dig**
+  digs into your bag, breaks furniture, and takes scaffolding down (everything put in comes back).
   **Build** places what's picked from the bag on the outlined face.
   **Plant** plants carrots on grass or dirt, or picks them once ripe.
   **Carry** lifts a pot, a cow or furniture over your head and puts it

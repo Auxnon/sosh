@@ -359,6 +359,9 @@ function world_pointer(me)
 		cell = nil
 	end
 	APP.target = cell
+	-- hoisted: a call in the first argument miscompiles (SILT-BUGS.md #1)
+	local spot, spot_on = walk_spot(me, tool, hit, on, box, helm)
+	Marker.hover(spot, spot_on)
 	if ghost ~= nil then
 		show_cursor(nil)
 	else
@@ -400,6 +403,7 @@ function world_pointer(me)
 				change_anim(1)
 			end
 			me:walk_to(h[1], h[2], on)
+			Marker.sent(h, on)
 		end
 	elseif cell == nil then
 		return
@@ -414,6 +418,24 @@ function world_pointer(me)
 	else
 		dig_action(cell, on)
 	end
+end
+
+-- The block a walk-tool click would walk onto (`hit`, in frame `on`), for
+-- the hover marker: one with room to stand on it, and not a box or the helm
+-- (those open or steer). nil if a click wouldn't walk.
+function walk_spot(me, tool, hit, on, box, helm)
+	if tool ~= "walk" or hit == nil or box ~= nil or helm then
+		return nil
+	end
+	if Ships.piloted_by(APP.my_id) ~= nil then
+		return nil
+	end
+	local h = hit.hit
+	local frame = Ships.get(on)
+	if Blocks.get_in(frame, h[1], h[2], h[3] + 1) ~= 0 then
+		return nil
+	end
+	return h, on
 end
 
 -- The plant tool works on the cell above the soil under the pointer: harvest
@@ -689,8 +711,9 @@ function in_reach(me, cell, on)
 end
 
 -- The outline models (cursor.glb, ghost.glb) span a cell from its base, but
--- blocks draw centred on it, so the outlines sit this much lower to match.
-OUTLINE_DZ = -0.5
+-- blocks draw centred on it, so the outlines sit this much lower to match,
+-- and a hair higher than that so their bottom doesn't z-fight the ground.
+OUTLINE_DZ = -0.5 + 0.0001
 
 -- The outline cube around the targeted cell (of the world, or ship `on`'s),
 -- parked far away when there is none (only transforms sync on the web, so
