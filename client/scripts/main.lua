@@ -39,6 +39,7 @@ function main()
 	-- big window, so the HUD meets the app's look halfway
 	attr({ title = "sosh", modernize = true, gui_px = 2 })
 	UI.init()
+	Voice.init()
 	world_build()
 
 	APP = {}
@@ -355,6 +356,7 @@ function bind_lobby(ch)
 		if av ~= nil then
 			name = av.name
 			av:say(p.body)
+			Voice.say(av, p.body)
 		end
 		-- in a server's universe the log has it already (account.lua)
 		if APP.server == nil then
@@ -697,6 +699,7 @@ function world_frame()
 	Herd.update(me)
 	Carry.update()
 	Dust.update(U.dt)
+	Voice.update(U.dt)
 	Furn.update()
 
 	if me ~= nil then

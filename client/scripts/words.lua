@@ -1,0 +1,32 @@
+-- From sound-chor (scripts/words.lua at d393db3); see speech.lua.
+-- Words speech.lua's spelling rules get wrong, respelled by hand in the voice's
+-- spelling (see guide/sing.md): "word:syl syl|word:syl". One string, so the
+-- list costs a single chunk constant however long it grows (SILT-BUGS.md #6).
+-- Add a word here when respell("...") prints something that sings wrong.
+WORDS_SRC = "a:uh|the:thuh|of:uhv|to:too|do:doo|you:yoo|your:yor|i:ai|is:ihz|"
+	.. "are:ar|was:wuhz|were:wer|one:wuhn|two:too|once:wuhns|love:luhv|"
+	.. "come:kuhm|some:suhm|done:duhn|none:nuhn|gone:gahn|give:gihv|live:lihv|"
+	.. "have:haev|there:thehr|where:wehr|here:heer|they:thei|what:wuht|"
+	.. "who:hoo|why:wai|my:mai|by:bai|eye:ai|said:sehd|says:sehz|again:uh gehn|"
+	.. "people:pee puhl|every:eh vree|very:veh ree|been:bihn|would:wood|"
+	.. "could:kood|should:shood|good:good|look:look|book:book|took:took|"
+	.. "friend:frehnd|island:ai luhnd|today:too dei|tomorrow:too mah ro|"
+	.. "hello:heh lo|world:werld|okay:o kei|ok:o kei|yeah:yeh|oh:o|"
+	.. "music:myoo zihk|jungle:juhng guhl|bass:beis|moving:moo vihng|"
+	.. "over:o ver|into:ihn too|town:taun|night:nait|light:lait|rain:rein|"
+	.. "down:daun|don't:dont|dont:dont|can't:kaent|cant:kaent|won't:wont|"
+	.. "wont:wont|it's:ihts|its:ihts|i'm:aim|im:aim|welcome:wehl kuhm|"
+	.. "sound:saund|break:breik|great:greit|heart:hart|from:fruhm|"
+	.. "does:duhz|any:eh nee|many:meh nee|only:on lee|also:ahl so|"
+	.. "there's:thehrz|theres:thehrz|we:wee|me:mee|he:hee|she:shee|be:bee|"
+	.. "hey:hei|hi:hai|bye:bai|thanks:thaenks|thank:thaenk|nice:nais|"
+	.. "fruit:froot|fish:fihsh|bug:buhg|bugs:buhgz|shop:shahp|hear:heer|"
+	.. "that:thaet|this:thihs|with:wihth|and:aend|for:for|not:naht|"
+	.. "feel:feel|keep:keep|chor:kor|petrichor:peh trih kor|amen:ah mehn|"
+	.. "beat:beet|beats:beets|dance:daens|baby:bei bee|forever:for eh ver|"
+	.. "together:too geh ther|sky:skai|fly:flai|try:trai|cry:krai|high:hai|"
+	.. "all:ahl|call:kahl|small:smahl|fall:fahl|walk:wahk|talk:tahk|"
+	.. "water:wah ter|after:aef ter|little:lih tuhl|about:uh baut|"
+	.. "because:bee kuhz|know:no|now:nau|how:hau|new:noo|through:throo|"
+	.. "thought:thaht|our:aur|hour:aur|did:dihd|play:plei|plays:pleiz|"
+	.. "rolls:rolz|roll:rol|line:lain|deep:deep|slices:slai sihz|chopped:chahpt"

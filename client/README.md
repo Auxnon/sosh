@@ -107,7 +107,10 @@ fit in your bag is left in a sack.
 - **WASD / arrows**: walk. One block is a step up, two is a wall.
 - **7–0**: emote (wave, dance, jump, cheer). The buttons on the right do the
   same.
-- **Enter**: chat (Enter sends, Esc cancels)
+- **Enter**: chat (Enter sends, Esc cancels). What's said in the world is a
+  bubble over the speaker and is read out in their voice, Animal Crossing
+  style, to anyone within 16 blocks, louder the nearer (`scripts/voice.lua`,
+  on sound-chor's `speech.lua`).
 - **F**: your look (the character creator). **G**: put down what you
   carry (one cell ahead), let go of the helm, or sit and stand.
 - **Q/E, right-drag, or drag the world**: orbit the camera. **Scroll**: zoom.
