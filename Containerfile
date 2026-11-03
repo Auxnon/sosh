@@ -12,7 +12,8 @@ ARG P64_REPO=https://github.com/Auxnon/Petrichor64.git
 ARG P64_REF=b7c976c3bc4ce4af5e96f2f1853a81ede74ee834
 
 # --- 1. web engine + game.game.png ------------------------------------------
-FROM docker.io/library/rust:1-bookworm AS web
+# trixie: trunk's prebuilt arm64 wasm-bindgen needs glibc 2.38+ (bookworm has 2.36)
+FROM docker.io/library/rust:1-trixie AS web
 RUN apt-get update && apt-get install -y --no-install-recommends \
       pkg-config libasound2-dev libudev-dev perl \
  && rm -rf /var/lib/apt/lists/*
