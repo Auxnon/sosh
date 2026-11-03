@@ -112,6 +112,27 @@ defmodule SoshWeb.RoomChannelTest do
     assert_broadcast("move", %{v: [0, 0], to: nil})
   end
 
+  test "a heartbeat that matches the prediction isn't passed on", %{socket: socket} do
+    {reply, socket} = join_as(socket, "steady")
+    id = reply.user_id
+
+    push(socket, "move", %{"at" => [0, 0, 0], "v" => [4, 0]})
+    assert_broadcast("move", %{user_id: ^id, v: [4, 0]})
+    Lobby.update(id, %{t: Lobby.now() - 1_000})
+
+    # a second on, about where it said: only the server's prediction moves
+    push(socket, "move", %{"at" => [4.1, 0, 0], "v" => [4, 0]})
+    :sys.get_state(socket.channel_pid)
+    refute_broadcast("move", _)
+    assert %{at: [4.1, 0, 0]} = Lobby.get(id)
+
+    # off the prediction (a wall, say), or a new velocity: news
+    push(socket, "move", %{"at" => [6, 0, 0], "v" => [4, 0]})
+    assert_broadcast("move", %{at: [6, 0, 0]})
+    push(socket, "move", %{"at" => [6, 0, 0], "v" => [0, 4]})
+    assert_broadcast("move", %{v: [0, 4]})
+  end
+
   test "positions are predicted from the last report" do
     p = %{at: [0, 0, 1], v: [2, 0], to: nil, t: 1_000}
     assert Lobby.position(p, 1_000) == [0.0, 0.0, 1]

@@ -17,7 +17,9 @@ defmodule SoshWeb.RoomChannel do
       second, and stop at `to` [x, y] if it isn't nil. Clients send it when
       their velocity changes (start, stop, turn, blocked) and once a second
       while moving, and everyone predicts the rest; so does the server, for
-      cows (`Sosh.Lobby.position/2`). On an airship `on` is its id and
+      cows (`Sosh.Lobby.position/2`). A once-a-second restatement that
+      matches that prediction (same `v`, `to` and `on`, within 0.3 tiles)
+      only updates the server's: it isn't sent on to anyone. On an airship `on` is its id and
       `local` [x, y, z] where on it they stand, with `v` and `to` in its
       frame too (`at` is only roughly where that was in the world); else
       `on` is 0 and `local` nil.
@@ -29,7 +31,8 @@ defmodule SoshWeb.RoomChannel do
   animation}`, `vec` (or, aboard a ship, `local`) being where they are
   predicted to be now.
   """
-  use Phoenix.Channel
+  # not every move, face and emote in the log: walking alone is several a second
+  use Phoenix.Channel, log_handle_in: false
 
   alias Sosh.{Lobby, Players, Sim, Universes}
 
@@ -42,6 +45,9 @@ defmodule SoshWeb.RoomChannel do
   @max_index 63
   # walking is 4.2 tiles a second
   @max_speed 6.0
+  # a restated motion this close to where it was predicted isn't news
+  @drift 0.3
+  @same_v 0.05
   @emotes ~w(wave dance jump cheer)
 
   def join("room:" <> key, params, socket) do
@@ -165,8 +171,11 @@ defmodule SoshWeb.RoomChannel do
       local: local
     }
 
-    Lobby.update(socket.assigns.user_id, Map.put(motion, :t, Lobby.now()))
-    broadcast_from!(socket, "move", Map.put(motion, :user_id, socket.assigns.user_id))
+    now = Lobby.now()
+    user_id = socket.assigns.user_id
+    news = not restated?(Lobby.get(user_id), motion, now)
+    Lobby.update(user_id, Map.put(motion, :t, now))
+    if news, do: broadcast_from!(socket, "move", Map.put(motion, :user_id, user_id))
     {:noreply, socket}
   end
 
@@ -243,6 +252,17 @@ defmodule SoshWeb.RoomChannel do
   end
 
   defp clean_to(_), do: nil
+
+  # The same motion as before, from about where it predicted they'd be: a
+  # heartbeat everyone already agrees with.
+  defp restated?(%{v: [pvx, pvy], to: to, on: on} = prev, %{v: [vx, vy], to: to, on: on} = motion, now)
+       when abs(pvx - vx) <= @same_v and abs(pvy - vy) <= @same_v do
+    {_, [px, py, pz]} = Lobby.frame(prev, now)
+    [x, y, z] = if on > 0, do: motion.local, else: motion.at
+    (px - x) * (px - x) + (py - y) * (py - y) <= @drift * @drift and abs(pz - z) <= 0.5
+  end
+
+  defp restated?(_, _, _), do: false
 
   # capped at @max_speed, so a client can't claim to fly (or fling cows)
   defp clean_velocity([vx, vy]) when is_number(vx) and is_number(vy) do

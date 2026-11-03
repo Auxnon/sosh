@@ -186,7 +186,8 @@ Movement is sent as motion, not a stream of positions. `move` carries where
 the player stands (`at`), their velocity in tiles a second (`v`) and, when
 walking to a clicked point, the destination (`to`). It goes out only when
 that motion changes (start, stop, a turn of about 14°, a new destination,
-a wall), plus once a second while moving to correct drift. Other clients
+a wall), plus once a second while moving to correct drift; the server passes that
+heartbeat on only if it has drifted from what it predicted. Other clients
 carry each avatar along its last motion and ease out any error. The server
 predicts the same way (`Sosh.Lobby.position/2`) to push cows and check
 reach. Walking is about 6 messages a second at worst, and nothing while
