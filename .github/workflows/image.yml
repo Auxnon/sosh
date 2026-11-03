@@ -1,14 +1,14 @@
 # The server image (Containerfile), built here so the server only pulls it:
 # ghcr.io/<owner>/sosh, for x86_64 and arm64 (each on its own native runner,
-# no emulation), tagged `latest` and `sha-<commit>` from main and the version
-# from a v* tag. The NixOS deploy pulls it (deploy/README.md, deploy/AGENT.md).
+# no emulation). Only a release makes one: a v* tag, say v1.2.0, publishes
+# 1.2.0, 1.2, 1 and latest (a pre-release, v1.3.0-rc1, only its own tag, and
+# never latest). Pushes to main publish nothing. The NixOS deploy pulls it
+# (deploy/README.md, deploy/AGENT.md).
 name: image
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,10 +38,12 @@ jobs:
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${NAME}" >> "$GITHUB_ENV"
           p='${{ matrix.platform }}'; echo "PAIR=${p//\//-}" >> "$GITHUB_ENV"
 
+      # for the labels: org.opencontainers.image.version is the release (1.2.0)
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          tags: type=semver,pattern={{version}}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -89,10 +91,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          # latest comes with a release (flavor latest=auto: not for a pre-release)
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
 
       - uses: docker/setup-buildx-action@v3
 

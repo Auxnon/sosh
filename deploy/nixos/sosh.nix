@@ -70,7 +70,7 @@ in
     autoUpdate = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Pull a newer `image` and restart daily (podman-auto-update.timer), so a push to main deploys itself.";
+      description = "Pull a newer `image` and restart daily (podman-auto-update.timer), so each release (a v* tag) deploys itself.";
     };
   };
 

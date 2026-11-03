@@ -65,8 +65,9 @@ sudo podman image inspect ghcr.io/auxnon/sosh:latest --format '{{.Architecture}}
 - `unauthorized` or `denied`: the package is private. Ask the owner to make
   it public (GitHub, Packages, sosh, Package settings, Change visibility),
   or for a token with `read:packages` to `sudo podman login ghcr.io` with.
-- `manifest unknown`: the workflow hasn't published `latest` yet. It runs
-  on every push to `main`; check https://github.com/Auxnon/sosh/actions.
+- `manifest unknown`: no release has been published yet. Images only come
+  from release tags (`v1.2.0`); ask the owner to tag one, and check
+  https://github.com/Auxnon/sosh/actions.
 
 ## 4. The secrets file (first deploy only)
 
@@ -97,7 +98,8 @@ Add the module and the service. Without flakes, in
     enable = true;
     environmentFile = "/var/lib/sosh/env";
     # image = "ghcr.io/auxnon/sosh:latest";   # the default
-    # autoUpdate = true;   # pull a newer :latest daily and restart: a push to main deploys itself
+    # autoUpdate = true;   # pull a newer :latest daily and restart: each release deploys itself
+    # image = "ghcr.io/auxnon/sosh:1";      # or stay on major version 1 (1.x releases only)
   };
 }
 ```
@@ -120,7 +122,7 @@ site-delta.
 
 ```sh
 sudo podman exec sosh-db pg_dump -U sosh sosh | gzip > ~/sosh-$(date +%F-%H%M).sql.gz
-sudo podman image inspect ghcr.io/auxnon/sosh:latest --format '{{index .Labels "org.opencontainers.image.revision"}}'   # the commit running now, to roll back to
+sudo podman image inspect ghcr.io/auxnon/sosh:latest --format '{{index .Labels "org.opencontainers.image.version"}}'   # the release running now, to roll back to
 sudo systemctl restart podman-sosh        # pulls a newer :latest first (pull = "newer")
 cd /srv/sosh && sudo git pull --ff-only   # only matters if the module changed
 ```
@@ -128,10 +130,10 @@ cd /srv/sosh && sudo git pull --ff-only   # only matters if the module changed
 Migrations run on every start. If the module itself changed (`git log -p
 deploy/nixos`), run `sudo nixos-rebuild switch` too.
 
-**Rolling back:** pin the image to the commit noted above, by its first 7
-characters: `services.sosh.image = "ghcr.io/auxnon/sosh:sha-<7 chars>";`,
-then `sudo nixos-rebuild switch`. Remove the pin once a fixed `latest` is
-out. If a migration already ran and the old release can't read the
+**Rolling back:** pin the image to the release noted above:
+`services.sosh.image = "ghcr.io/auxnon/sosh:1.2.0";` (the version, no `v`),
+then `sudo nixos-rebuild switch`. Remove the pin once a fixed release is
+out. The releases: https://github.com/Auxnon/sosh/releases. If a migration already ran and the old release can't read the
 database, restore the dump. Ask the owner before doing that: it drops
 everything since the dump.
 

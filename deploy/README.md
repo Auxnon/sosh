@@ -9,9 +9,10 @@ browser / desktop / app ──https──▶ Cloudflare (proxied) ──▶ site
   repo root: the Phoenix release with the Rust NIF, and the web game (the
   Petrichor64 wasm engine plus the packed client) in `priv/static`.
   `.github/workflows/image.yml` builds it on GitHub, for x86_64 and arm64
-  (native runners), and pushes it to `ghcr.io/auxnon/sosh` on every push to
-  main (`latest`, `sha-…`) and every `v*` tag (`1.2.3`). The server only
-  pulls it; nothing compiles there.
+  (native runners), and pushes it to `ghcr.io/auxnon/sosh` for every release:
+  a `v*` tag, say `v1.2.0`, publishes `1.2.0`, `1.2`, `1` and `latest`.
+  Pushes to main publish nothing. The server only pulls it; nothing compiles
+  there.
 - **The clients** come from `.github/workflows/release.yml` on a `v*` tag:
   a Windows exe, a Linux AppImage and an Android APK, all pointed at
   `https://sosh.makeavoy.com` by default.
@@ -39,7 +40,7 @@ modules = [
     services.sosh = {
       enable = true;
       environmentFile = "/var/lib/sosh/env";
-      # autoUpdate = true;   # pull a newer :latest daily and restart
+      # autoUpdate = true;   # pull a newer :latest (the newest release) daily and restart
     };
   }
 ];
@@ -106,11 +107,16 @@ if nothing but your proxy can reach it.
   certificate for `makeavoy.com, *.makeavoy.com` does; a certificate for
   `makeavoy.com` alone doesn't, and Cloudflare answers 526.
 
-## Releasing the clients
+## Releasing
 
 ```sh
 git tag v0.2.0 && git push origin v0.2.0
 ```
+
+A `v*` tag is the only thing that publishes: the server image
+(`image.yml`: `0.2.0`, `0.2`, `0` and `latest`) and the clients
+(`release.yml`, a GitHub release). A pre-release tag (`v0.3.0-rc1`) gets
+its own image tag but not `latest`, so servers following `latest` stay put.
 
 The Petrichor64 engine they're built on is pinned by commit (`P64_REF` in
 `release.yml` and the `Containerfile`; bump both together). The engine takes
