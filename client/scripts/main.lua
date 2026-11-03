@@ -572,12 +572,13 @@ end
 function send_move()
 	local me = APP.me
 	APP.sent_at = U.clock
-	APP.sent_vx = me.vx
-	APP.sent_vy = me.vy
+	APP.sent_vx = me.ivx
+	APP.sent_vy = me.ivy
 	APP.sent_to = nil
 	APP.sent_on = me.on
-	local vx = me.vx
-	local vy = me.vy
+	-- where we're heading, at full speed: everyone (us too) ramps up to it
+	local vx = me.ivx
+	local vy = me.ivy
 	local ax = U.round(me.x, 1000)
 	local ay = U.round(me.y, 1000)
 	local az = U.round(me.z, 1000)
@@ -628,8 +629,8 @@ function motion_changed(me)
 	if to ~= nil then
 		return true
 	end
-	local dvx = me.vx - APP.sent_vx
-	local dvy = me.vy - APP.sent_vy
+	local dvx = me.ivx - APP.sent_vx
+	local dvy = me.ivy - APP.sent_vy
 	return dvx * dvx + dvy * dvy > MOVE_TOLERANCE * MOVE_TOLERANCE
 end
 
@@ -695,6 +696,7 @@ function world_frame()
 	Helpers.update(U.dt)
 	Herd.update(me)
 	Carry.update()
+	Dust.update(U.dt)
 	Furn.update()
 
 	if me ~= nil then

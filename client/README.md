@@ -183,11 +183,19 @@ Inside a server, the client also joins two channels for its universe:
   into the next universe with its riders.
 
 Movement is sent as motion, not a stream of positions. `move` carries where
-the player stands (`at`), their velocity in tiles a second (`v`) and, when
-walking to a clicked point, the destination (`to`). It goes out only when
-that motion changes (start, stop, a turn of about 14°, a new destination,
-a wall), plus once a second while moving to correct drift; the server passes that
-heartbeat on only if it has drifted from what it predicted. Other clients
+the player stands (`at`), the velocity they're heading for in tiles a
+second (`v`: full speed, which everyone ramps up to) and, when walking to a
+clicked point, the destination (`to`). It goes out only when that motion
+changes (start, stop, a turn of about 14°, a new destination, a wall), plus
+once a second while moving to correct drift; the server passes that
+heartbeat on only if it has drifted from what it predicted. That path has a
+little weight (it speeds up over a fifth of a second and loses most of its
+speed in a sharp turn); the character drawn on it is a free body chasing
+it, which skids with dust when running into a turn past a right angle
+(`Avatar:chase`), and only the path goes on the wire. Walking to a point,
+the path slows into it, so the body stops there rather than running past
+and turning back; a body settling back after a stop steps back without
+turning round (`Avatar:turn`). Other clients
 carry each avatar along its last motion and ease out any error. The server
 predicts the same way (`Sosh.Lobby.position/2`) to push cows and check
 reach. Walking is about 6 messages a second at worst, and nothing while

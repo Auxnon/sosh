@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The block tiles, 32x32, into client/assets/ (gen_assets.py runs this too).
+"""The block tiles, 32x32, and the dust puff sprite, into client/assets/
+(gen_assets.py runs this too).
 
 Run alone: `python3 client/tools/gen_blocks.py`. Needs Pillow.
 
@@ -282,9 +283,35 @@ TILES = {
 }
 
 
+def dust():
+    """A skid's puff (avatar.lua's Dust): a lumpy 16x16 cloud, lit on top,
+    clear around it (the engine draws it as a billboard)."""
+    n = 16
+    lumps = ((8, 9, 5.2), (5, 7, 3.4), (11, 6.5, 3.6), (8, 5, 3.2))
+    light, base, dark = (240, 228, 204, 255), (222, 206, 176, 255), (190, 172, 140, 255)
+    im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    for y in range(n):
+        for x in range(n):
+            # how deep inside the nearest lump, and where in it
+            best = None
+            for cx, cy, r in lumps:
+                d = math.hypot(x + 0.5 - cx, y + 0.5 - cy) / r
+                if d < 1 and (best is None or d < best[0]):
+                    best = (d, y + 0.5 - cy)
+            if best is None:
+                continue
+            d, dy = best
+            c = light if dy < -0.35 * d * 4 else dark if dy > 1.2 or d > 0.84 else base
+            im.putpixel((x, y), c)
+    return im
+
+
+SPRITES = {"dust": dust}
+
+
 def build(assets=ASSETS):
     assets.mkdir(parents=True, exist_ok=True)
-    for name, make in TILES.items():
+    for name, make in {**TILES, **SPRITES}.items():
         make().save(assets / f"{name}.png")
 
 
