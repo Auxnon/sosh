@@ -8,8 +8,10 @@ browser / desktop / app ──https──▶ Cloudflare (proxied) ──▶ site
 - **The server** is one container image, built by the `Containerfile` at the
   repo root: the Phoenix release with the Rust NIF, and the web game (the
   Petrichor64 wasm engine plus the packed client) in `priv/static`.
-  `.github/workflows/image.yml` pushes it to `ghcr.io/auxnon/sosh` on every
-  push to main (`latest`, `sha-…`) and every `v*` tag (`1.2.3`).
+  `.github/workflows/image.yml` builds it on GitHub, for x86_64 and arm64
+  (native runners), and pushes it to `ghcr.io/auxnon/sosh` on every push to
+  main (`latest`, `sha-…`) and every `v*` tag (`1.2.3`). The server only
+  pulls it; nothing compiles there.
 - **The clients** come from `.github/workflows/release.yml` on a `v*` tag:
   a Windows exe, a Linux AppImage and an Android APK, all pointed at
   `https://sosh.makeavoy.com` by default.

@@ -1,8 +1,11 @@
 # Deploying sosh on a NixOS server: a runbook for an agent
 
 You're on the NixOS machine that serves makeavoy.com, with root (sudo). The
-goal: sosh running at https://sosh.makeavoy.com, built **on this machine**
-(no registry), behind site-delta. site-delta has its own runbook,
+goal: sosh running at https://sosh.makeavoy.com, behind site-delta. The
+server image is built by GitHub Actions (`.github/workflows/image.yml`, for
+x86_64 and arm64) and **pulled** from `ghcr.io/auxnon/sosh`: nothing is
+compiled here. (Building it here instead is the last section, for when the
+registry can't be used.) site-delta has its own runbook,
 `DEPLOY.md` in github.com/Auxnon/site-delta; do that one too if site-delta
 isn't running here yet, or is older than the `feat/sosh-subdomain` merge
 (it must route `sosh.makeavoy.com`).
@@ -30,8 +33,8 @@ Cloudflare (proxied) ─▶ site-delta :443 ─▶ 127.0.0.1:4000 sosh ─▶ so
 ## 1. Look before changing anything
 
 ```sh
-uname -m                                  # x86_64 or aarch64: both work, the image builds natively
-free -g; df -h /var/lib                   # the build wants ~4 GB RAM free and ~15 GB of disk
+uname -m                                  # x86_64 or aarch64: the image has both
+free -g; df -h /var/lib                   # ~1 GB RAM for sosh + Postgres, a few GB of disk
 nixos-version
 ls /etc/nixos/                            # flake.nix there means a flake config
 systemctl status podman-sosh podman-sosh-db 2>&1 | head -20   # is it already deployed?
@@ -40,7 +43,7 @@ sudo test -e /var/lib/sosh/env && echo "env exists: keep it"
 
 If `podman-sosh` already exists, this is an update: skip to step 6.
 
-## 2. The source
+## 2. The source (for the NixOS module)
 
 ```sh
 sudo mkdir -p /srv && cd /srv
@@ -52,21 +55,18 @@ Deploy the branch the owner names, `main` by default; it has to have
 `deploy/nixos/sosh.nix` (until `feat/android-social` is merged, only that
 branch does: `sudo git checkout feat/android-social`).
 
-## 3. Build the image
+## 3. Pull the image
 
 ```sh
-cd /srv/sosh
-sudo podman build -t localhost/sosh .
+sudo podman pull ghcr.io/auxnon/sosh:latest
+sudo podman image inspect ghcr.io/auxnon/sosh:latest --format '{{.Architecture}} {{.Created}}'
 ```
 
-This takes 15 to 40 minutes the first time: it builds the Petrichor64 engine
-twice (wasm and native) and the Elixir release. Run it in the foreground,
-or in the background with its output going to a log you can read. Don't
-start a second build while one runs. The engine comes from GitHub at
-`P64_REF` (the `Containerfile`), and its Lua, silt-lua, from silt-lua's
-GitHub `main`.
-
-It's done when `sudo podman image exists localhost/sosh && echo ok` says ok.
+- `unauthorized` or `denied`: the package is private. Ask the owner to make
+  it public (GitHub, Packages, sosh, Package settings, Change visibility),
+  or for a token with `read:packages` to `sudo podman login ghcr.io` with.
+- `manifest unknown`: the workflow hasn't published `latest` yet. It runs
+  on every push to `main`; check https://github.com/Auxnon/sosh/actions.
 
 ## 4. The secrets file (first deploy only)
 
@@ -95,9 +95,9 @@ Add the module and the service. Without flakes, in
 
   services.sosh = {
     enable = true;
-    image = "localhost/sosh";             # the image from step 3
     environmentFile = "/var/lib/sosh/env";
-    # autoUpdate stays false: it pulls from a registry, and this image isn't in one
+    # image = "ghcr.io/auxnon/sosh:latest";   # the default
+    # autoUpdate = true;   # pull a newer :latest daily and restart: a push to main deploys itself
   };
 }
 ```
@@ -120,19 +120,20 @@ site-delta.
 
 ```sh
 sudo podman exec sosh-db pg_dump -U sosh sosh | gzip > ~/sosh-$(date +%F-%H%M).sql.gz
-cd /srv/sosh && sudo git pull --ff-only
-sudo podman tag localhost/sosh localhost/sosh:previous   # to roll back to
-sudo podman build -t localhost/sosh .
-sudo systemctl restart podman-sosh
+sudo podman image inspect ghcr.io/auxnon/sosh:latest --format '{{index .Labels "org.opencontainers.image.revision"}}'   # the commit running now, to roll back to
+sudo systemctl restart podman-sosh        # pulls a newer :latest first (pull = "newer")
+cd /srv/sosh && sudo git pull --ff-only   # only matters if the module changed
 ```
 
 Migrations run on every start. If the module itself changed (`git log -p
 deploy/nixos`), run `sudo nixos-rebuild switch` too.
 
-**Rolling back:** `sudo podman tag localhost/sosh:previous localhost/sosh &&
-sudo systemctl restart podman-sosh`. If a migration already ran and the old
-release can't read the database, restore the dump. Ask the owner before
-doing that: it drops everything since the dump.
+**Rolling back:** pin the image to the commit noted above, by its first 7
+characters: `services.sosh.image = "ghcr.io/auxnon/sosh:sha-<7 chars>";`,
+then `sudo nixos-rebuild switch`. Remove the pin once a fixed `latest` is
+out. If a migration already ran and the old release can't read the
+database, restore the dump. Ask the owner before doing that: it drops
+everything since the dump.
 
 ## 7. Check it works
 
@@ -168,14 +169,25 @@ When all of it passes, `sudo nixos-rebuild switch`.
 | `podman-sosh` restarting | `journalctl -u podman-sosh -n 200`: `DB_*`/password errors mean the env file and the database disagree (see Rules) |
 | `podman-sosh-db` failing | `journalctl -u podman-sosh-db`; permissions on `/var/lib/sosh/postgres` |
 | `network sosh not found` | `systemctl restart sosh-network`, then the two containers |
-| image not found at start | it was built rootless: rebuild with `sudo podman build` |
-| the build is killed | out of memory: stop other heavy work, retry once |
+| image pull fails at start | step 3: the package's visibility, or `sudo podman login ghcr.io` |
 
 Useful afterwards:
 - A console: `sudo podman exec -it sosh bin/sosh remote`
 - Giving someone a server: `Sosh.Servers.give(server_id, "handle")` in that console
 - Logs: `journalctl -u podman-sosh -f`
 - The full reference: `deploy/README.md`
+
+## Building the image here instead
+
+Only if the registry is unusable: it compiles the Petrichor64 engine twice
+and the Elixir release (15 to 40 minutes, ~4 GB RAM, ~15 GB disk).
+
+```sh
+cd /srv/sosh && sudo podman build -t localhost/sosh .
+```
+
+Then set `services.sosh.image = "localhost/sosh";` and leave `autoUpdate`
+off. Updating then means `git pull`, the build again, and a restart.
 
 Report back the commit you deployed (`git -C /srv/sosh log --oneline -1`),
 the check results from step 7, and anything you skipped.
