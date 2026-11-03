@@ -9,7 +9,7 @@
 # with .github/workflows/release.yml.
 
 ARG P64_REPO=https://github.com/Auxnon/Petrichor64.git
-ARG P64_REF=f412dabbf139939003978830381877d0dff2e936
+ARG P64_REF=b7c976c3bc4ce4af5e96f2f1853a81ede74ee834
 
 # --- 1. web engine + game.game.png ------------------------------------------
 FROM docker.io/library/rust:1-bookworm AS web
@@ -36,8 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && cargo build --release --bin chor
 COPY client /client
 RUN mkdir -p /static && cp web/dist/* /static/ \
- && cp /client/web/gamepad.js /static/ \
- && perl -pi -e 's#</body>#  <script src="/gamepad.js"></script>\n  </body>#' /static/index.html \
+ && cp /client/web/gamepad.js /client/web/recover.js /static/ \
+ && perl -pi -e 's#</body>#  <script src="/gamepad.js"></script>\n  <script src="/recover.js"></script>\n  </body>#' /static/index.html \
  && target/release/chor pack /client /static/game.game.png
 
 # --- 2. the release ----------------------------------------------------------

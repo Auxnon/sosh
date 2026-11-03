@@ -40,6 +40,11 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     
     
     
+    <!-- Key-to-sound latency probe, off unless the URL has ?lat. A classic
+         script, so it runs before the engine's module creates its AudioContext
+         and worker (see the file). -->
+    
+    <script src="latency.js"></script>
     <style>
       html,
       body {
@@ -49,10 +54,9 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
         background: #111;
         overflow: hidden;
       }
-      /* winit appends its canvas to <body>; make it fill the viewport. */
+      /* The canvas lands in <body> and attach_canvas_to_dom (lib.rs) pins it
+         to fill it, so the game fills the viewport. */
       canvas {
-        display: block;
-        margin: 0 auto;
         image-rendering: pixelated; /* keep the low-res console look crisp */
       }
       /* winit makes the canvas focusable (tabindex) to receive keyboard input;
@@ -62,10 +66,11 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
         outline: none;
       }
     </style>
-  <link rel="modulepreload" href="/Petrichor64.js" crossorigin="anonymous" integrity="sha384-JG+xKle3hEAjvm+oJKrCs+nn4003nvvaSwQtU/fVdFWmTFAkMjciXrt9xBwBnBJi"><link rel="preload" href="/Petrichor64_bg.wasm" crossorigin="anonymous" integrity="sha384-Zw0rxUGHHLlIJVwee7mPq87gVokJdb2NbDFs+SbRdElYtJr6MQ48hrz1o69Qj0iH" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/Petrichor64.js" crossorigin="anonymous" integrity="sha384-jE158A1O3C8lmJYfFxsnIcRslluqQ4/dKCuxjvjUufubTgdg7LBwr/ugRnKMCmu5"><link rel="preload" href="/Petrichor64_bg.wasm" crossorigin="anonymous" integrity="sha384-JFy/PM5hcKd3XJwRs/EcMS3tPwK1OeW0G0YsB4Wh4OzmjqleVjjxirow4vTya38/" as="fetch" type="application/wasm"></head>
   <body>
     <!-- The engine (main-thread wasm) now spawns and drives the VM worker
          itself (§4d) — see about_to_wait in lib.rs. No JS spawner needed. -->
     <script src="/gamepad.js"></script>
+  <script src="/recover.js"></script>
   </body>
 </html>

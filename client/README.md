@@ -120,6 +120,14 @@ fit in your bag is left in a sack.
   camera, A takes the helm or lets go, B closes the bag, X is pose (G),
   Y the bag, the triggers climb and sink at a helm, and back asks a helper.
 
+In the browser, a background tab can lose its GPU (the WebGL context or
+WebGPU device). An engine with GPU restore (`petrichor-gpu-lost` /
+`petrichor-gpu-restored` events) rebuilds it without missing a beat;
+`client/web/recover.js` is the fallback, reloading the page if an engine
+never says it restored (or, older, never says anything), which would
+otherwise leave the world black or purple. The game rejoins where you
+stood.
+
 Everything reaches about 7 blocks. The server enforces this and refuses
 anything farther.
 

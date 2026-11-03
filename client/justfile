@@ -44,8 +44,8 @@ web-engine:
     cd {{p64}} && trunk build --release
     mkdir -p {{static}}
     cp {{p64}}/web/dist/* {{static}}/
-    cp web/gamepad.js {{static}}/
-    perl -pi -e 's#</body>#  <script src="/gamepad.js"></script>\n  </body>#' {{static}}/index.html
+    cp web/gamepad.js web/recover.js {{static}}/
+    perl -pi -e 's#</body>#  <script src="/gamepad.js"></script>\n  <script src="/recover.js"></script>\n  </body>#' {{static}}/index.html
     @echo "web engine installed to {{static}}"
 
 # Everything the web client needs: engine + packed game.
