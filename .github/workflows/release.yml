@@ -1,6 +1,6 @@
-# The client, for a v* tag: a Windows exe and a Linux AppImage (the
-# Petrichor64 engine with the game baked in) and the Android APK, all pointed
-# at https://sosh.makeavoy.com, attached to a GitHub release. Run it by hand
+# The client, for a v* tag: a Windows exe, a Linux AppImage and a macOS dmg
+# (the Petrichor64 engine with the game baked in) and the Android APK, all
+# pointed at https://sosh.makeavoy.com, attached to a GitHub release. Run it by hand
 # (workflow_dispatch) to get the files as workflow artifacts without a release.
 #
 # Android signing secrets (optional, but without them every release is signed
@@ -151,6 +151,106 @@ jobs:
           name: windows
           path: sosh-*.exe
 
+  # A universal (Apple Silicon and Intel) Sosh.app in a dmg. There's no
+  # Apple Developer ID, so it's ad-hoc signed (an arm64 Mac won't run it
+  # unsigned at all) and not notarized: Gatekeeper stops the first launch,
+  # and the release notes say how to get past it. With a Developer ID this is
+  # where `codesign --options runtime -s "Developer ID Application: …"` and
+  # `xcrun notarytool submit --wait` + `xcrun stapler staple` would go.
+  macos:
+    needs: [version, pack]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.P64_REPO }}
+          ref: ${{ env.P64_REF }}
+          path: p64
+      - uses: actions/download-artifact@v4
+        with:
+          name: game
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: p64
+      - name: engine with the game baked in, for both architectures
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          cp game.game.png p64/auto.game.png
+          cd p64
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --bin chor --features ws,include_auto --target "$t"
+          done
+          lipo -create -output ../sosh \
+            target/aarch64-apple-darwin/release/chor target/x86_64-apple-darwin/release/chor
+          lipo -info ../sosh
+      - name: Sosh.app
+        env:
+          VERSION: ${{ needs.version.outputs.name }}
+        run: |
+          app=Sosh.app/Contents
+          mkdir -p "$app/MacOS" "$app/Resources"
+          mv sosh "$app/MacOS/sosh"
+          # the icon: client/icon.png at every size an icns wants
+          mkdir sosh.iconset
+          for n in 16 32 128 256 512; do
+            sips -z $n $n client/icon.png --out "sosh.iconset/icon_${n}x${n}.png" >/dev/null
+            sips -z $((n*2)) $((n*2)) client/icon.png --out "sosh.iconset/icon_${n}x${n}@2x.png" >/dev/null
+          done
+          iconutil -c icns sosh.iconset -o "$app/Resources/sosh.icns"
+          # CFBundleVersion has to be numbers and dots: 0.1.0-rc1 -> 0.1.0
+          short="${VERSION%%-*}"
+          cat > "$app/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>sosh</string>
+            <key>CFBundleDisplayName</key><string>sosh</string>
+            <key>CFBundleIdentifier</key><string>app.sosh</string>
+            <key>CFBundleExecutable</key><string>sosh</string>
+            <key>CFBundleIconFile</key><string>sosh</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${short}</string>
+            <key>CFBundleVersion</key><string>${short}</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint "$app/Info.plist"
+          codesign --force --deep --sign - Sosh.app
+          codesign --verify --deep --strict --verbose=2 Sosh.app
+      - name: dmg
+        env:
+          VERSION: ${{ needs.version.outputs.name }}
+        run: |
+          mkdir dmg
+          cp -R Sosh.app dmg/
+          ln -s /Applications dmg/Applications
+          cat > "dmg/Opening sosh.txt" <<'EOF'
+          sosh isn't signed by an Apple developer, so macOS stops it the first time.
+
+          1. Drag Sosh into Applications.
+          2. Open it. macOS says it can't check it: click Done (or Cancel).
+          3. Open System Settings > Privacy & Security, scroll down to
+             "Sosh was blocked", and click Open Anyway.
+          (Before macOS 15 you can instead right-click Sosh, choose Open, then Open.)
+
+          Or, in Terminal: xattr -dr com.apple.quarantine /Applications/Sosh.app
+          EOF
+          hdiutil create -volname sosh -srcfolder dmg -ov -format UDZO "sosh-${VERSION}-macos.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: sosh-*.dmg
+
   android:
     needs: version
     runs-on: ubuntu-latest
@@ -192,7 +292,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [linux, windows, android]
+    needs: [linux, windows, macos, android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -201,7 +301,14 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          body: |
+            **Desktop:** Windows `.exe`, Linux `.AppImage` (`chmod +x` it first), macOS `.dmg` (Apple Silicon and Intel). **Android:** the `.apk`. Or play in the browser at https://sosh.makeavoy.com.
+
+            The macOS and Windows builds aren't signed by a paid developer account, so the first launch gets a warning:
+            - **macOS:** open Sosh once, then System Settings > Privacy & Security > Open Anyway (before macOS 15: right-click > Open). The dmg has the steps.
+            - **Windows:** SmartScreen's "Windows protected your PC": More info > Run anyway.
           files: |
             sosh-*.AppImage
             sosh-*.exe
+            sosh-*.dmg
             sosh-*.apk
