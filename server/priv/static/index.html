@@ -66,11 +66,12 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
         outline: none;
       }
     </style>
-  <link rel="modulepreload" href="/Petrichor64.js" crossorigin="anonymous" integrity="sha384-jE158A1O3C8lmJYfFxsnIcRslluqQ4/dKCuxjvjUufubTgdg7LBwr/ugRnKMCmu5"><link rel="preload" href="/Petrichor64_bg.wasm" crossorigin="anonymous" integrity="sha384-JFy/PM5hcKd3XJwRs/EcMS3tPwK1OeW0G0YsB4Wh4OzmjqleVjjxirow4vTya38/" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/Petrichor64.js" crossorigin="anonymous" integrity="sha384-rvuEA/gMGXHukSM2JB8jpyVcqgqMzjWLFbyfW4w+iMSIonwMqC22JbBfpX7nt5AG"><link rel="preload" href="/Petrichor64_bg.wasm" crossorigin="anonymous" integrity="sha384-pwd3Alx8X+O00Qw+XQ7J8lYvtxVVwRazlYV7wE5hfbX7cvAC5/wJwRq/u/+lAWD8" as="fetch" type="application/wasm"></head>
   <body>
     <!-- The engine (main-thread wasm) now spawns and drives the VM worker
          itself (§4d) — see about_to_wait in lib.rs. No JS spawner needed. -->
     <script src="/gamepad.js"></script>
   <script src="/recover.js"></script>
+  <script src="/bridge.js"></script>
   </body>
 </html>
