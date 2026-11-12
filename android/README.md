@@ -17,8 +17,8 @@ Gradle downloads a JDK 21 for itself (`gradle/gradle-daemon-jvm.properties`),
 so only a JRE is needed to start it. The Android SDK is read from
 `local.properties` (`sdk.dir`), else `$ANDROID_HOME`, else `~/Android/Sdk`.
 
-The app starts pointed at `http://10.0.2.2:4000`, which is the computer
-running the emulator. On a phone, tap the server address under the sign-in
+Release builds start pointed at `https://sosh.makeavoy.com`. Debug builds
+start at `http://10.0.2.2:4000`, which is the computer running the emulator. On a phone, tap the server address under the sign-in
 form and give it the computer's LAN address (`http://192.168.x.y:4000`);
 `just serve` listens on every interface. Debug builds allow plain http;
 release builds only allow https.
@@ -34,7 +34,8 @@ release builds only allow https.
 | `data/SessionStore.kt` | the token, sealed with an Android Keystore AES-GCM key |
 | `ui/AuthScreen.kt` | sign in, sign up, confirm the emailed code, forgot/reset password, server address |
 | `ui/Theme.kt`, `ui/Kit.kt` | the look: console plastic around cozy paper (indigo, cream, leaf green, orange; M PLUS Rounded 1c and Michroma, subset to Latin in `res/font`), and its pieces: plastic buttons, paper cards, name tags, item icons |
-| `ui/MainScreen.kt` | the server rail (memory-card slots) and drawer, the chat as speech bubbles with @mentions and presents, the message tray and Chat / Both / World, wrapping a present |
+| `ui/MainScreen.kt` | the server rail (memory-card slots): a drawer on a phone, docked beside the chat from 840dp wide (tablets, unfolded phones). The chat as speech bubbles with @mentions, presents and pictures, the message tray (present, picture, text) and Chat / Both / World, wrapping a present |
+| `ui/MediaView.kt` | pictures in messages (Coil; gifs and animated webp move, tap one for it large) and shared Petrichor64 carts: press Play and it runs in the chat, in a web view of its own on the server's fenced `/play/<key>` page, with no token, no storage and nothing loaded but the engine and that cart |
 | `ui/Pockets.kt` | the pockets over the world, dragging to sort them or onto the chat (`PocketDrag`) |
 | `ui/Screens.kt` | server list (join or ask), friends, the pockets page, members and moderation, server settings |
 | `ui/CreatorScreen.kt` | the character creator: a front view drawn on a canvas, face sprites dragged into place |

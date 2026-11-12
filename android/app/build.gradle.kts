@@ -73,6 +73,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // pictures in chat: Coil, with its gif module for animated GIF and WebP
+    // (Android's AnimatedImageDecoder, API 28+)
+    implementation("io.coil-kt.coil3:coil-compose:3.3.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+    implementation("io.coil-kt.coil3:coil-gif:3.3.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     // the real org.json (Android's is stubbed off-device)

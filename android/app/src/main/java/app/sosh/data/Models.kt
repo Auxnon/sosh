@@ -100,12 +100,50 @@ data class Message(
     val body: String,
     val at: String,
     val gift: Gift?,
+    val media: Media? = null,
 ) {
     companion object {
         fun from(o: JSONObject) = Message(
             o.optLong("id"), Person.from(o.optJSONObject("author")), o.optString("body"),
-            o.optString("at"), Gift.from(o.optJSONObject("gift")),
+            o.optString("at"), Gift.from(o.optJSONObject("gift")), Media.from(o.optJSONObject("media")),
         )
+    }
+}
+
+/**
+ * A picture or a Petrichor64 cart shared in a message (`Sosh.Media.view`):
+ * `url` is relative to the server; `kind` "image" or "cart".
+ */
+data class Media(
+    val key: String,
+    val url: String,
+    val kind: String,
+    val mime: String,
+    val animated: Boolean,
+    val w: Int,
+    val h: Int,
+    val size: Long,
+    val name: String?,
+) {
+    val isCart get() = kind == "cart"
+
+    /** What it's called where it can't be shown. */
+    val label: String
+        get() = when {
+            isCart -> (name ?: "a game").removeSuffix(".png").removeSuffix(".game")
+            animated -> "a moving picture"
+            else -> "a picture"
+        }
+
+    companion object {
+        fun from(o: JSONObject?): Media? {
+            if (o == null || !o.has("key")) return null
+            return Media(
+                o.optString("key"), o.optString("url"), o.optString("kind", "image"), o.optString("mime"),
+                o.optBoolean("animated"), o.optInt("w", 1), o.optInt("h", 1), o.optLong("size"),
+                o.optString("name").takeIf { o.has("name") && !o.isNull("name") && it.isNotEmpty() },
+            )
+        }
     }
 }
 

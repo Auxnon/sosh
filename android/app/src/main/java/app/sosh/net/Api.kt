@@ -29,6 +29,22 @@ class Api(private val base: String, var token: String? = null) {
     suspend fun patch(path: String, body: JSONObject): JSONObject = call("PATCH", path, body)
     suspend fun delete(path: String): JSONObject = call("DELETE", path, null)
 
+    /** Upload a file (`POST /api/media`): the bytes are the body. */
+    suspend fun upload(bytes: ByteArray, name: String): JSONObject = withContext(Dispatchers.IO) {
+        val url = base.trimEnd('/') + "/api/media?name=" + java.net.URLEncoder.encode(name, "UTF-8")
+        val b = Request.Builder().url(url).post(bytes.toRequestBody("application/octet-stream".toMediaType()))
+        token?.let { b.header("Authorization", "Bearer $it") }
+        client.newCall(b.build()).execute().use { r ->
+            val text = r.body?.string().orEmpty()
+            val obj = try { JSONObject(text) } catch (e: Exception) { JSONObject() }
+            if (!r.isSuccessful) {
+                val reason = obj.optString("error", "http_${r.code}")
+                throw ApiError(r.code, reason, describe(reason, obj))
+            }
+            obj
+        }
+    }
+
     private suspend fun call(method: String, path: String, body: JSONObject?): JSONObject =
         withContext(Dispatchers.IO) {
             val b = Request.Builder().url(base.trimEnd('/') + "/api" + path)
@@ -66,6 +82,8 @@ class Api(private val base: String, var token: String? = null) {
             "banned" to "You're banned from that server.",
             "yourself" to "That's you.",
             "not_a_member" to "They aren't a member here.",
+            "bad_media" to "Only png, jpeg, gif and webp pictures (and games).",
+            "too_big" to "That's over 8 MB.",
         )
 
         /** A sentence for a reason (and the first field error, if invalid). */

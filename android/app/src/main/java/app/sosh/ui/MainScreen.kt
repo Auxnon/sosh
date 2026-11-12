@@ -41,6 +41,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Backpack
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.ChatBubble
@@ -131,6 +133,16 @@ fun ChatScreen(app: AppState, go: (Screen) -> Unit) {
     var origin by remember { mutableStateOf(Offset.Zero) }
     BackHandler(enabled = app.place is Place.InServer && app.pane != Pane.Chat) { app.pane = Pane.Chat }
 
+    // A tablet, or a phone unfolded: the rail of servers stays open beside
+    // the chat instead of sliding in over it.
+    BoxWithConstraints(Modifier.fillMaxSize().ground()) {
+    val docked = maxWidth >= 840.dp
+    if (docked) {
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.width(340.dp).fillMaxHeight()) { Drawer(app, go) {} }
+            Box(Modifier.weight(1f).fillMaxHeight()) { PlaceView(app, go, drag, origin, { origin = it }, null) { gift = null; giftOpen = true } }
+        }
+    } else {
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = {
@@ -142,41 +154,53 @@ fun ChatScreen(app: AppState, go: (Screen) -> Unit) {
             }
         },
     ) {
-        Box(Modifier.fillMaxSize().ground().onGloballyPositioned { origin = it.positionInRoot() }) {
+        PlaceView(app, go, drag, origin, { origin = it }, { scope.launch { drawer.open() } }) { gift = null; giftOpen = true }
+    }
+    }
+    }
+    if (giftOpen) GiftSheet(app, gift) { giftOpen = false }
+}
+
+/** Where we are: the bar on top, then a server (its chat and world) or a conversation. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlaceView(
+    app: AppState, go: (Screen) -> Unit, drag: PocketDrag, origin: Offset, setOrigin: (Offset) -> Unit,
+    openDrawer: (() -> Unit)?, onGift: () -> Unit,
+) {
+        Box(Modifier.fillMaxSize().ground().onGloballyPositioned { setOrigin(it.positionInRoot()) }) {
             Column(
                 Modifier.fillMaxSize().systemBarsPadding().imePadding().padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Header(app, { scope.launch { drawer.open() } }, go)
+                Header(app, openDrawer, go)
                 when (val p = app.place) {
                     null -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Text("Pick a server or a friend from the menu.", color = TextDim)
                     }
                     is Place.InServer -> {
                         ServerView(app, p.id, drag, Modifier.weight(1f))
-                        Tray(app, drag, panes = !WindowInsets.isImeVisible) { gift = null; giftOpen = true }
+                        Tray(app, drag, panes = !WindowInsets.isImeVisible, onGift)
                     }
                     is Place.WithPerson -> {
                         Messages(app, drag, Modifier.weight(1f))
-                        Tray(app, drag, panes = false) { gift = null; giftOpen = true }
+                        Tray(app, drag, panes = false, onGift)
                     }
                 }
             }
             DragGhost(app.bag, drag, origin)
         }
-    }
-    if (giftOpen) GiftSheet(app, gift) { giftOpen = false }
 }
 
 /** The plastic bar on top: the menu, where we are, its members. */
 @Composable
-private fun Header(app: AppState, openDrawer: () -> Unit, go: (Screen) -> Unit) {
+private fun Header(app: AppState, openDrawer: (() -> Unit)?, go: (Screen) -> Unit) {
     Row(
         Modifier.fillMaxWidth().height(60.dp).plastic().padding(horizontal = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        IconPlastic(Icons.Filled.Menu, "servers", onClick = openDrawer)
+        if (openDrawer != null) IconPlastic(Icons.Filled.Menu, "servers", onClick = openDrawer)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             when (val p = app.place) {
                 is Place.InServer -> {
@@ -541,7 +565,7 @@ private fun Messages(app: AppState, drag: PocketDrag, modifier: Modifier) {
             onDismissRequest = { menuFor = null },
             containerColor = Paper, titleContentColor = Ink, textContentColor = InkDim,
             title = { Text("Message") },
-            text = { Text(m.body.ifEmpty { "(a present)" }) },
+            text = { Text(m.body.ifEmpty { m.media?.label ?: "(a present)" }) },
             confirmButton = {
                 if (mine || mod) TextButton({ app.deleteMessage(m); menuFor = null }) { Text("Delete", color = Color(0xFFC2413A)) }
             },
@@ -562,6 +586,7 @@ private fun Bubble(app: AppState, m: Message, onMenu: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (m.body.isNotEmpty()) Text(mentions(m.body, app.me?.handle), color = Ink, fontSize = 15.sp, lineHeight = 21.sp)
+            m.media?.let { MediaCard(app, it) }
             if (m.gift != null) PresentCard(app, m)
         }
         NameTag(who, Modifier.offset(14.dp, (-12).dp))
@@ -656,9 +681,19 @@ private fun Composer(app: AppState, onGift: () -> Unit) {
             }
         }
     }
+    // a picture (or a .game.png) from the phone
+    val pickPicture = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    ) { uri -> if (uri != null) app.share(uri) }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         PlasticButton(onGift, Modifier.size(44.dp), shape = RoundedCornerShape(14.dp)) {
             Icon(Icons.Filled.CardGiftcard, "send a present", tint = Color(0xFFFFC566), modifier = Modifier.size(22.dp))
+        }
+        PlasticButton({ if (!app.sharing) pickPicture.launch("image/*") }, Modifier.size(44.dp), shape = RoundedCornerShape(14.dp)) {
+            Icon(
+                if (app.sharing) Icons.Filled.HourglassTop else Icons.Filled.AddPhotoAlternate,
+                "share a picture or a game", tint = Color(0xFF9FE3D0), modifier = Modifier.size(22.dp),
+            )
         }
         BasicTextField(
             text, { text = it.take(2000) }, Modifier.weight(1f),

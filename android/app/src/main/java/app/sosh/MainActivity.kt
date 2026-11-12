@@ -23,6 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import app.sosh.ui.AuthScreen
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.gif.AnimatedImageDecoder
 import app.sosh.ui.BagScreen
 import app.sosh.ui.Centered
 import app.sosh.ui.ChatScreen
@@ -42,6 +45,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // pictures in chat move if they're gifs or animated webp
+        SingletonImageLoader.setSafe { ctx ->
+            ImageLoader.Builder(ctx).components { add(AnimatedImageDecoder.Factory()) }.build()
+        }
         app = AppState(applicationContext, lifecycleScope)
         setContent {
             SoshTheme {

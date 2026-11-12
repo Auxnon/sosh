@@ -1,6 +1,8 @@
 package app.sosh
 
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -20,6 +22,8 @@ import app.sosh.net.ApiError
 import app.sosh.net.PhoenixSocket
 import app.sosh.ui.Look
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -44,6 +48,7 @@ enum class Pane { Chat, Both, World }
  */
 class AppState(context: Context, private val scope: CoroutineScope) {
     private val store = SessionStore(context)
+    private val resolver = context.applicationContext.contentResolver
 
     var serverUrl by mutableStateOf(store.server ?: BuildConfig.DEFAULT_SERVER)
         private set
@@ -277,6 +282,7 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         chat?.leave()
         chat = null
         place = p
+        playing = null
         messages.clear()
         members.clear()
         val s = socket ?: return
@@ -348,9 +354,60 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    /** Post to the open pane, with items for `giftTo` if given. */
-    fun post(body: String, giftItem: String? = null, giftCount: Int = 1, giftTo: String? = null) {
+    /** The shared cart playing in the chat, by key (one at a time). */
+    var playing by mutableStateOf<String?>(null)
+
+    /** A picture or cart going up to the open pane. */
+    var sharing by mutableStateOf(false)
+        private set
+
+    /** Share a picture (or a .game.png) from the phone into the open pane. */
+    fun share(uri: Uri) = scope.launch {
+        if (chat == null) {
+            notice = "Not connected."
+            return@launch
+        }
+        sharing = true
+        attempt {
+            val (bytes, name) = withContext(Dispatchers.IO) { readShared(uri) }
+            if (bytes == null) {
+                notice = "That's over 8 MB."
+            } else {
+                val media = api.upload(bytes, name).getJSONObject("media")
+                post("", media = media.getString("key"))
+            }
+        }
+        sharing = false
+    }
+
+    // Its bytes (null if over the server's 8 MB) and its file name.
+    private fun readShared(uri: Uri): Pair<ByteArray?, String> {
+        var name = "picture"
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) name = c.getString(0)
+        }
+        val max = 8 * 1024 * 1024
+        val bytes = resolver.openInputStream(uri)?.use { input ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                if (out.size() > max) return Pair(null, name)
+            }
+            out.toByteArray()
+        }
+        return Pair(bytes, name)
+    }
+
+    /** Where something the server names by path (a picture's `url`) is. */
+    fun resolve(path: String): String = serverUrl.trimEnd('/') + path
+
+    /** Post to the open pane, with items for `giftTo` if given, or a picture we uploaded (`media`, its key). */
+    fun post(body: String, giftItem: String? = null, giftCount: Int = 1, giftTo: String? = null, media: String? = null) {
         val payload = JSONObject().put("body", body)
+        if (media != null) payload.put("media", media)
         if (giftItem != null && giftTo != null) {
             payload.put("gift", JSONObject().put("item", giftItem).put("count", giftCount).put("to", giftTo))
         }
