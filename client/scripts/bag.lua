@@ -95,7 +95,7 @@ function Bag.layout(bottom)
 		rows = 1
 	end
 	L.w = cols * SLOT_W + PAD * 2
-	L.x = flr((gui.w - L.w) / 2)
+	L.x = flr((VIEW_W - L.w) / 2)
 	L.bag_h = rows * SLOT_H + LH + PAD * 3
 	L.bag_y = bottom - L.bag_h
 	L.box = nil

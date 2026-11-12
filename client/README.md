@@ -121,6 +121,49 @@ fit in your bag is left in a sack.
   camera, A takes the helm or lets go, B closes the bag, X is pose (G),
   Y the bag, the triggers climb and sink at a helm, and back asks a helper.
 
+### Chat, pictures and shared games
+
+On a wide screen the server's chat is a column on the right
+(`scripts/chatpane.lua`), as the Android app puts it beside the world: a
+bar with where you are and who's here, each message on cream paper under
+its speaker's name tag, the box to type in at the bottom (click it, or
+Enter), the wheel to scroll back. The camera slides so you stay in the
+middle of the world that's left. Narrower than 560 gui pixels (or taller
+than wide), the chat floats over the world as before. The gui itself is
+`attr{gui_px=2}`: two logical pixels a gui pixel, never coarser than
+320x240, so a bigger window gets more room rather than bigger letters.
+
+Messages can carry a picture (png, jpeg, gif, webp) or a Petrichor64 cart
+(a `.game.png`). The game doesn't draw them: it shows a shape the size of
+a letter where they sit (`scripts/media.lua`), a framed hill for a picture,
+the same with its sun going round for a gif or animated webp, and a
+cartridge for a game, with what it is. The Android app shows the pictures
+themselves.
+
+**In the browser**:
+
+- **Sharing.** Drop a picture on the page, paste one, or press **+** by the
+  chat box (or type `/share`). It's posted to the chat you're in.
+- **Shared games.** Click one in the chat and it runs right there in a box
+  (the chat column's top, or the world's top left), as its own instance
+  with no way into sosh. **x** closes it.
+
+The engine gives Lua no way to call into the page, so the game reaches it
+over a `conn`. The VM worker imports `client/web/bridge-worker.js` first,
+and that turns a `conn` to `/sosh-bridge` into a channel to the page's
+`client/web/bridge.js` instead of a network socket. The game
+(`scripts/web.lua`) sends it a cart to show and where, and a share ticket
+for the open chat (`user:<id>` `media_ticket`). The ticket can only post
+pictures into that one chat, for an hour; the page never sees the session.
+A cart runs on its own page, `/play/<key>` (`client/web/play.js`). Its
+Content-Security-Policy lets it fetch the engine and that one cart and
+connect nowhere, so it gets no `/socket` and no `/api`. It shows in a
+sandboxed frame.
+
+**On the desktop** a picture can't be picked from inside the engine yet,
+and a cart's line says where to play it (`<server>/play/<key>`). The engine
+can't run a second cart inside the first: see the README's engine notes.
+
 In the browser, a background tab can lose its GPU (the WebGL context or
 WebGPU device). An engine with GPU restore (`petrichor-gpu-lost` /
 `petrichor-gpu-restored` events) rebuilds it without missing a beat;
@@ -153,11 +196,14 @@ looks, the way home and the bag, which the app has as its own screens). The clie
   `character`, `dm_post`, `claim`/`cancel` (open or take back a gift),
   `bag_swap` (`a`, `b`: sort the bag by swapping two slots), `hold`
   (`item`: the item in hand, passed on to your other clients), `members`,
-  `member` (moderation), `invite`, `server_update`. Events tell you
+  `member` (moderation), `invite`, `server_update`, `media_ticket`
+  (`place`: `"server:<id>"`: a ticket for the web page to share pictures
+  there), `upload` (`data` in base64, `name`: a picture or cart to attach,
+  for clients that can't make HTTP requests). Events tell you
   when servers, friends, your bag, the item in hand or your character
   change, and about DMs and gifts. See `SoshWeb.UserChannel`.
 - **`server:<id>`**: a server's chat, for its members. `post` (`body`, and
-  optionally `gift: {item, count, to}`) and `history`; `message`, `gift`,
+  optionally `gift: {item, count, to}` and `media`, the key of an upload) and `history`; `message`, `gift`,
   `deleted` and `members` come in. Gifts go out wrapped: who they're for,
   not what's in them. **`dm:<id>`** is the same for a conversation.
 

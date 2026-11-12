@@ -124,6 +124,9 @@ function UI.begin()
 	local m = mus()
 	UI.mouse = m
 	UI.mx = flr(m.x * gui.w)
+	-- the world's width on screen: all of it, unless the chat is docked
+	-- beside it (hud_layout)
+	VIEW_W = gui.w
 	UI.my = flr(m.y * gui.h)
 	-- how far the pointer moved since last frame, as a share of the screen
 	-- (from positions: the browser only reports motion deltas when locked)
@@ -321,6 +324,9 @@ function UI.avatar_overlay(av, is_me, p)
 		end
 		for j = 1, #lines do
 			UI.text(lines[j], bx + PAD, by + PAD + (j - 1) * LH, C_BUBBLE_TEXT)
+			if b.media_at == j then
+				Media.glyph(bx + PAD, by + PAD + (j - 1) * LH - 1, b.media, U.clock)
+			end
 		end
 		by = by - 4
 		i = i - 1

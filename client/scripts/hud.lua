@@ -56,13 +56,16 @@ end
 -- on the left, clear of the column.
 function hud_layout()
 	local L = {}
+	-- the docked chat column (chatpane.lua) takes the right of a wide screen
+	L.pane_w = Pane.width()
+	VIEW_W = gui.w - L.pane_w
 	L.top_h = LH + PAD * 2
 	L.col_y = L.top_h + PAD * 2
 
 	-- tool buttons narrow (and drop their numbers) on a small gui
 	local nt = #TOOLS
 	L.tool_w = TOOL_W
-	local tfit = flr((gui.w - PAD * 4 - PAD * (nt - 1)) / nt)
+	local tfit = flr((VIEW_W - PAD * 4 - PAD * (nt - 1)) / nt)
 	if tfit < L.tool_w then
 		L.tool_w = tfit
 	end
@@ -81,7 +84,7 @@ function hud_layout()
 				widest = w
 			end
 		end
-		local fit = flr((gui.w - PAD * 4 - PAD * (n - 1)) / n)
+		local fit = flr((VIEW_W - PAD * 4 - PAD * (n - 1)) / n)
 		if fit < widest + PAD * 2 then
 			L.compact = true
 			L.pick_bw = widest + CH * 4 + PAD * 2
@@ -92,7 +95,7 @@ function hud_layout()
 	end
 	local pick_w = L.pick_bw * n + PAD * (n - 1)
 	L.tb_y = gui.h - HUD_BTN_H - PAD * 2
-	L.tb_x = flr((gui.w - tools_w) / 2)
+	L.tb_x = flr((VIEW_W - tools_w) / 2)
 	L.tb_w = tools_w
 	L.pick = n > 0
 	L.pick_x = 0
@@ -101,12 +104,12 @@ function hud_layout()
 	local bottom = L.tb_y
 	if L.pick then
 		local both = tools_w + PAD * 3 + pick_w
-		if both <= gui.w - PAD * 4 and L.pick_bw == PICK_W then
-			L.tb_x = flr((gui.w - both) / 2)
+		if both <= VIEW_W - PAD * 4 and L.pick_bw == PICK_W then
+			L.tb_x = flr((VIEW_W - both) / 2)
 			L.pick_x = L.tb_x + tools_w + PAD * 3
 		else
 			L.pick_y = L.tb_y - HUD_BTN_H - PAD * 2
-			L.pick_x = flr((gui.w - pick_w) / 2)
+			L.pick_x = flr((VIEW_W - pick_w) / 2)
 			bottom = L.pick_y
 		end
 	end
@@ -124,7 +127,7 @@ function hud_layout()
 	end
 	local cols = flr((count + rows - 1) / rows)
 	L.col_rows = rows
-	L.col_x = gui.w - PAD * 2 - HUD_BTN_W * cols - PAD * (cols - 1)
+	L.col_x = VIEW_W - PAD * 2 - HUD_BTN_W * cols - PAD * (cols - 1)
 	L.col_h = (HUD_BTN_H + PAD) * rows
 	-- the emote dropdown opens to the left of its button, the column's first
 	L.emotes_x = L.col_x - HUD_BTN_W - PAD
@@ -135,12 +138,12 @@ function hud_layout()
 		L.hint_text = HINT_HELM
 	end
 	-- key hints mean nothing on a phone
-	L.hint = not APP.embedded and UI.text_w(L.hint_text) <= gui.w - PAD * 4
+	L.hint = not APP.embedded and UI.text_w(L.hint_text) <= VIEW_W - PAD * 4
 	if L.hint then
 		bottom = bottom - LH - PAD
 	end
 	L.chat_bottom = bottom - PAD
-	local w = flr(gui.w * 0.45)
+	local w = flr(VIEW_W * 0.45)
 	if w < 160 then
 		w = 160
 	end
@@ -154,6 +157,12 @@ end
 
 function hud_hit(x, y)
 	local L = hud_layout()
+	if L.pane_w > 0 and x >= VIEW_W then
+		return true
+	end
+	if Web.hit(x, y) then
+		return true
+	end
 	if y < L.top_h then
 		return true
 	end
@@ -169,7 +178,7 @@ function hud_hit(x, y)
 	if L.pick and y >= L.pick_y and y < L.pick_y + HUD_BTN_H and x >= L.pick_x and x < L.pick_x + L.pick_w then
 		return true
 	end
-	if APP.typing and x < PAD + L.chat_w and y >= L.chat_bottom - LH - PAD * 2 and y < L.chat_bottom then
+	if L.pane_w == 0 and APP.typing and x < PAD + L.chat_w and y >= L.chat_bottom - LH - PAD * 2 and y < L.chat_bottom then
 		return true
 	end
 	return Bag.hit(x, y, L.panel_bottom)
@@ -255,8 +264,8 @@ function draw_hud()
 	if APP.me ~= nil then
 		online = online + 1
 	end
-	UI.plastic(0, 0, gui.w, L.top_h, 0)
-	if UI.inside(0, 0, gui.w, L.top_h) then
+	UI.plastic(0, 0, VIEW_W, L.top_h, 0)
+	if UI.inside(0, 0, VIEW_W, L.top_h) then
 		UI.hot = true
 	end
 	local st = PHX.state
@@ -272,17 +281,19 @@ function draw_hud()
 	UI.text("sosh", PAD * 2, PAD + 1, C_ACCENT)
 	UI.text(label, PAD * 2 + 6 * CH, PAD + 1, col)
 	local here = tostring(online) .. " here"
-	local hx = gui.w - UI.text_w(here) - PAD * 2
+	local hx = VIEW_W - UI.text_w(here) - PAD * 2
 	UI.text(here, hx, PAD + 1, C_DIM)
 	local edge = edge_note()
 	if edge ~= nil then
 		local ew = UI.text_w(edge)
-		local ex = flr((gui.w - ew) / 2)
+		local ex = flr((VIEW_W - ew) / 2)
 		gui:rrect(ex - PAD, L.top_h + PAD * 2, ew + PAD * 2, LH + PAD, 3, C_GLASS)
 		UI.text(edge, ex, L.top_h + PAD * 3, C_ACCENT)
 	end
 
-	if not APP.embedded then
+	if L.pane_w > 0 then
+		Pane.draw(L.pane_w)
+	elseif not APP.embedded then
 		draw_chat(L)
 	end
 	if APP.me ~= nil then
@@ -486,15 +497,39 @@ function draw_chat(L)
 		c.age = c.age + 1
 		if c.age < CHAT_FADE or APP.typing then
 			local text = c.body
+			local prefix = ""
 			if c.name ~= nil then
-				text = c.name .. ": " .. c.body
+				prefix = c.name .. ": "
 			end
-			local wrapped = U.wrap(text, cols)
+			local wrapped = {}
+			if text ~= "" then
+				wrapped = U.wrap(prefix .. text, cols)
+			end
+			-- a picture or cart: its shape and what it is, on a line of its own
+			-- (after the name, if it came alone)
+			local media_at = nil
+			if c.media ~= nil then
+				local lead = "  "
+				if text == "" then
+					lead = prefix
+				end
+				local mline = lead .. Media.text(c.media)
+				if #mline > cols then
+					mline = mline:sub(1, cols)
+				end
+				table.insert(wrapped, mline)
+				media_at = #wrapped
+				c.media_col = #lead
+			end
 			local j = #wrapped
 			while j >= 1 and #rows < CHAT_SHOWN do
 				local row = {}
 				row.text = wrapped[j]
 				row.col = c.col
+				if j == media_at then
+					row.media = c.media
+					row.media_col = c.media_col
+				end
 				table.insert(rows, row)
 				j = j - 1
 			end
@@ -517,12 +552,48 @@ function draw_chat(L)
 		local h = #rows * LH + PAD * 2
 		gui:rrect(PAD, bottom - h, w, h, 4, C_GLASS)
 		for r = 1, #rows do
-			UI.text(rows[r].text, PAD * 2, bottom - PAD - r * LH + 1, rows[r].col)
+			local ry = bottom - PAD - r * LH + 1
+			local row = rows[r]
+			if row.media ~= nil and row.media.kind == "cart" then
+				-- a game: click to play it
+				local mx = PAD * 2 + row.media_col * CH
+				local mw = UI.text_w(row.text) - row.media_col * CH
+				if UI.inside(mx - 2, ry - 2, mw + 4, LH + 1) then
+					UI.hot = true
+					gui:rrect(mx - 2, ry - 2, mw + 4, LH + 1, 3, C_PANEL_LIT)
+					if UI.clicked then
+						Web.open(row.media)
+					end
+				end
+			end
+			UI.text(row.text, PAD * 2, ry, row.col)
+			if row.media ~= nil then
+				Media.glyph(PAD * 2 + row.media_col * CH, ry - 1, row.media, U.clock)
+			end
 		end
+	end
+
+	-- a shared cart running, over the world's top left (web.lua)
+	if Web.cart ~= nil then
+		local bw = flr(VIEW_W * 0.5)
+		if bw > 320 then
+			bw = 320
+		end
+		if bw < 160 then
+			bw = 160
+		end
+		Web.draw_box(PAD * 2, L.top_h + PAD * 2, bw)
 	end
 
 	if APP.typing then
 		local y = L.chat_bottom - LH - PAD * 2
+		if Web.can_share() then
+			-- the attach button, at the end of the box
+			w = w - 18 - PAD
+			if UI.button("+", PAD + w + PAD, y, 18, LH + PAD * 2) then
+				Web.pick()
+			end
+		end
 		UI.paper(PAD, y, w, LH + PAD * 2, 4)
 		if UI.inside(PAD, y, w, LH + PAD * 2) then
 			UI.hot = true

@@ -24,6 +24,10 @@
 
 Account = {}
 
+HOME_MAX_W = 620 -- gui pixels: the home screen's card on a big screen
+HOME_MAX_H = 380
+HOME_STACK_W = 330 -- narrower than this, friends go under the servers
+
 AUTH_TITLES = {
 	login = "sign in",
 	register = "make an account",
@@ -443,10 +447,18 @@ function home_screen()
 	CAM.az = CAM.az + 0.0015
 	place_camera(0, 0, GROUND_Z)
 
-	local x = 8
-	local y = 6
+	-- the whole screen on a small one; on a big one a card in the middle,
+	-- so the list doesn't stretch across it
 	local w = gui.w - 16
 	local h = gui.h - 12
+	if w > HOME_MAX_W then
+		w = HOME_MAX_W
+	end
+	if h > HOME_MAX_H then
+		h = HOME_MAX_H
+	end
+	local x = flr((gui.w - w) / 2)
+	local y = flr((gui.h - h) / 2)
 	UI.panel(x, y, w, h)
 	local me = APP.account
 	UI.text("sosh", x + PAD * 2, y + PAD * 2, C_ACCENT)
@@ -461,7 +473,15 @@ function home_screen()
 		return
 	end
 
+	-- side by side, or on a narrow screen (a phone held upright) friends
+	-- under the servers
+	local stacked = w < HOME_STACK_W
 	local col_w = flr(w * 0.6)
+	local list_end = y + h - 14
+	if stacked then
+		col_w = w - PAD * 4
+		list_end = y + flr(h * 0.55)
+	end
 	local sx = x + PAD * 2
 	local top = y + 24
 	UI.text("servers", sx, top, C_DIM)
@@ -471,7 +491,7 @@ function home_screen()
 	local name_chars = flr(name_w / CH)
 	for i = 1, #rows do
 		local s = rows[i]
-		if ry + 14 > y + h - 14 then
+		if ry + 14 > list_end then
 			break
 		end
 		local label = STATUS_LABELS[s.status or ""] or "join"
@@ -491,11 +511,16 @@ function home_screen()
 		ry = ry + 15
 	end
 
-	-- friends, on the right
+	-- friends, on the right (or below)
 	local fx = sx + col_w + PAD
+	local ftop = top
+	if stacked then
+		fx = sx
+		ftop = ry + 6
+	end
 	local fw = x + w - fx - PAD * 2
-	UI.text("friends", fx, top, C_DIM)
-	local fy = top + LH + 2
+	UI.text("friends", fx, ftop, C_DIM)
+	local fy = ftop + LH + 2
 	local f = APP.friends
 	if f ~= nil then
 		fy = friend_rows(f.incoming or {}, "asks", fx, fy, fw, true)
@@ -503,7 +528,11 @@ function home_screen()
 		fy = friend_rows(f.outgoing or {}, "asked", fx, fy, fw, false)
 	end
 	local ay = y + h - 50
-	if UI.draw_field("add friend", APP.friend_field, fx, ay, fw, APP.home_focus) then
+	local field_label = "add friend"
+	if fw < #field_label * CH + 36 then
+		field_label = "friend"
+	end
+	if UI.draw_field(field_label, APP.friend_field, fx, ay, fw, APP.home_focus) then
 		APP.home_focus = true
 	end
 	local add = UI.button("add", fx + fw - 30, ay, 30, 11)
@@ -654,8 +683,8 @@ function chat_message(m, old)
 	if m.author ~= nil then
 		col = U.hex_for(who)
 	end
-	if m.body ~= nil and m.body ~= "" then
-		add_chat(who, m.body, col)
+	if (m.body ~= nil and m.body ~= "") or m.media ~= nil then
+		add_chat(who, m.body, col, m.media)
 	end
 	if m.gift ~= nil then
 		local to = "someone"
@@ -696,6 +725,16 @@ function Account.command(text)
 		who = stripped
 	end
 
+	if cmd == "/share" then
+		if Web.can_share() then
+			Web.pick()
+		elseif APP.web then
+			add_chat(nil, "not ready to share yet: try again in a moment", C_DIM)
+		else
+			add_chat(nil, "share pictures from the web or the app: drop one on the page", C_DIM)
+		end
+		return true
+	end
 	if cmd == "/home" then
 		Account.leave_world()
 		return true
@@ -789,6 +828,6 @@ function Account.command(text)
 		end
 		return true
 	end
-	add_chat(nil, "commands: /dm /give /open /unsend /friend /accept /unfriend /friends /home", C_DIM)
+	add_chat(nil, "commands: /dm /give /open /unsend /share /friend /accept /unfriend /friends /home", C_DIM)
 	return true
 end

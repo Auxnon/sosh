@@ -127,6 +127,7 @@ function loop()
 	else
 		world_frame()
 	end
+	Web.update()
 end
 
 function draw() end
@@ -354,10 +355,13 @@ function bind_lobby(ch)
 		else
 			av = APP.players[p.user_id]
 		end
+		local body = p.body or ""
 		if av ~= nil then
 			name = av.name
-			av:say(p.body)
-			Voice.say(av, p.body)
+			av:say(body, p.media)
+			if body ~= "" then
+				Voice.say(av, body)
+			end
 		end
 		-- in a server's universe the log has it already (account.lua)
 		if APP.server == nil then
@@ -365,7 +369,7 @@ function bind_lobby(ch)
 			if p.user_id ~= nil then
 				hex = U.hex_for(p.user_id)
 			end
-			add_chat(name, p.body, hex)
+			add_chat(name, body, hex, p.media)
 		end
 	end
 	ch.on["character"] = function(p)
@@ -554,11 +558,13 @@ function remove_player(id)
 	end
 end
 
-function add_chat(name, body, col)
+-- `media`: a picture or cart the message carries (media.lua), or nil.
+function add_chat(name, body, col, media)
 	local line = {}
 	line.name = name
-	line.body = body
+	line.body = body or ""
 	line.col = col
+	line.media = media
 	line.age = 0
 	table.insert(APP.chat, line)
 	while #APP.chat > CHAT_LOG_MAX do
@@ -731,6 +737,17 @@ function place_camera(x, y, z)
 	CAM.x = x - fx * dist
 	CAM.y = y - fy * dist
 	CAM.z = focus_z - fz * dist
+	-- the chat docked on the right: slide the camera along so what we're
+	-- looking at sits in the middle of the world that's left showing
+	local pane = Pane.width()
+	if pane > 0 then
+		local th = 0.41421356 -- tan(22.5 deg), as UI.project
+		local share = pane / gui.w -- of the screen
+		local side = share * dist * th * (gui.w / gui.h)
+		local rl = sqrt(fx * fx + fy * fy)
+		CAM.x = CAM.x + (fy / rl) * side
+		CAM.y = CAM.y - (fx / rl) * side
+	end
 	local pos = { CAM.x, CAM.y, CAM.z }
 	local rot = { CAM.az, CAM.alt }
 	cam({ pos = pos, rot = rot })

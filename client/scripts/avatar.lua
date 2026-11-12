@@ -261,9 +261,26 @@ function Avatar:moving()
 	return self.walk > 0.05
 end
 
-function Avatar:say(text)
-	local lines = U.wrap(text, 24)
+-- A speech bubble; `media`, a picture or cart said with it (media.lua),
+-- goes on a line of its own under the words.
+function Avatar:say(text, media)
+	local lines = {}
+	if text ~= nil and text ~= "" then
+		lines = U.wrap(text, 24)
+	end
 	local b = {}
+	if media ~= nil then
+		local label = Media.text(media)
+		if #label > 24 then
+			label = label:sub(1, 24)
+		end
+		table.insert(lines, label)
+		b.media = media
+		b.media_at = #lines
+	end
+	if #lines == 0 then
+		return
+	end
 	b.lines = lines
 	b.ttl = BUBBLE_FRAMES
 	table.insert(self.bubbles, b)
