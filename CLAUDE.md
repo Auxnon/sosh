@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-The live client is the Petrichor64 game in `client/` (desktop and web), plus the Android app in `android/`; `front/` is the older Svelte client.
+The live client is the Petrichor64 game in `client/` (desktop and web), plus the Android app in `android/` and the desktop app in `desktop/` (egui on wgpu, styled like the Android app; see its README); `front/` is the older Svelte client.
 
 Sosh is a social application with a 3D interactive world. It combines Phoenix/Elixir backend with Phoenix Channels for real-time communication, Rust NIFs for performance-critical game logic, and a Svelte 5 + Three.js frontend for 3D rendering.
 
@@ -119,7 +119,7 @@ npm run preview
 - `Sosh.Friends`, `Sosh.Chat` (server chats and DMs). A message can carry items for its @: they're taken from the author's bag (`bag_take` NIF, all or nothing), only the recipient can open it (`bag_give`), and it settles once with a conditional update
 - `Sosh.Media`: pictures (png, jpeg, gif, webp) and Petrichor64 carts shared in chat. They're kept in Postgres (`media`) and recognised by their bytes, never by name or declared type. A PNG with a zip after IEND is a cart. Upload with `POST /api/media` (raw body), attach with a message's `media` (key), served at `/media/<key>` (sandboxed, nosniff). A cart runs at `/play/<key>` (`SoshWeb.PlayController`), whose CSP lets it reach only the engine and that cart. Share tickets (`Sosh.Media.ticket`) let the web page around the game post pictures into one chat without the session (`POST /api/media/shared`)
 - `Sosh.Character`: what someone looks like (`users.character`), cleaned on every save; the parts are made by `client/tools/gen_character.py`
-- The JSON API is `/api` (`lib/sosh_web/api/`, Bearer token); the Android app (`android/`, see its README) uses it plus the channels
+- The JSON API is `/api` (`lib/sosh_web/api/`, Bearer token); the Android app (`android/`) and the desktop app (`desktop/`), see their READMEs, use it plus the channels
 
 ### Universes and the Rust NIF
 - The world is a grid of universes, `{gx, gy}`, each 96x96 blocks of floating islands over the sea or wild land. Channels are per universe: `room:gx,gy` and `actions:gx,gy`. A player is in one at a time (`Sosh.Players`, by name); joining another is refused with `reason: "elsewhere"`.

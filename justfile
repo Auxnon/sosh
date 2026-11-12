@@ -24,6 +24,10 @@ engine:
 desktop:
     just -f client/justfile desktop
 
+# The desktop app (desktop/): the social client, styled like the Android app.
+app *args:
+    cd desktop && cargo run --release -- {{args}}
+
 assets:
     just -f client/justfile assets
 
