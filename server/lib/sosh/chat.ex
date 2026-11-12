@@ -15,15 +15,19 @@ defmodule Sosh.Chat do
   A server message from someone standing in that universe also shows as a
   speech bubble over them (`room:gx,gy` `new_msg`).
 
+  A message can carry a picture or a cart (`media`, the key of something
+  its author uploaded: `Sosh.Media`).
+
   Messages as clients see them (`view/2`): `%{id, server_id,
-  conversation_id, author, body, at, gift}`, `author` public, `gift` nil or
+  conversation_id, author, body, at, gift, media}`, `author` public,
+  `media` nil or `Sosh.Media.view/1`, `gift` nil or
   `%{to, state, item, count}` with state `"sealed"`, `"opened"` or
   `"returned"`; `item` and `count` are only there for the author, and for
   the recipient once it's opened.
   """
   import Ecto.Query
 
-  alias Sosh.{Accounts, Friends, Lobby, Players, RateLimit, Repo, Servers, Universe}
+  alias Sosh.{Accounts, Friends, Lobby, Media, Players, RateLimit, Repo, Servers, Universe}
   alias Sosh.Accounts.User
   alias Sosh.Social.{Conversation, Membership, Message, Server}
 
@@ -80,7 +84,7 @@ defmodule Sosh.Chat do
             where: m.conversation_id == ^c.id,
             order_by: [desc: m.id],
             limit: 1,
-            preload: [:author, :recipient]
+            preload: [:author, :recipient, :media]
         )
 
       %{id: c.id, with: User.public(other), last: last && view(last, user)}
@@ -99,7 +103,7 @@ defmodule Sosh.Chat do
   defp page(q, viewer, before) do
     q = if is_integer(before), do: from(m in q, where: m.id < ^before), else: q
 
-    from(m in q, order_by: [desc: m.id], limit: @page, preload: [:author, :recipient])
+    from(m in q, order_by: [desc: m.id], limit: @page, preload: [:author, :recipient, :media])
     |> Repo.all()
     |> Enum.reverse()
     |> Enum.map(&view(&1, viewer))
@@ -116,9 +120,13 @@ defmodule Sosh.Chat do
       author: m.author && User.public(m.author),
       body: m.body,
       at: m.inserted_at,
-      gift: gift_view(m, viewer_id)
+      gift: gift_view(m, viewer_id),
+      media: media_view(m)
     }
   end
+
+  defp media_view(%Message{media: %Sosh.Social.Medium{} = md}), do: Media.view(md)
+  defp media_view(_), do: nil
 
   defp gift_view(%Message{item: nil}, _), do: nil
 
@@ -140,7 +148,8 @@ defmodule Sosh.Chat do
 
   @doc """
   Post to a server's chat (`{:server, id}`) or a conversation (`{:dm, id}`).
-  `attrs`: `body`, and optionally `gift: %{item, count, to}` (`to` a handle).
+  `attrs`: `body`, and optionally `gift: %{item, count, to}` (`to` a handle)
+  and `media` (the key of a picture or cart we uploaded).
   `{:ok, view}` as the author sees it, or `{:error, reason}`.
   """
   def post(%User{} = me, where, attrs) do
@@ -150,18 +159,19 @@ defmodule Sosh.Chat do
     with :ok <- RateLimit.hit({:chat, me.id}, 20, 10_000),
          {:ok, place} <- may_post(me, where),
          {:ok, gift} <- check_gift(me, place, gift),
-         :ok <- if(body == "" and gift == nil, do: {:error, :empty}, else: :ok) do
+         {:ok, media} <- check_media(me, fetch(attrs, "media")),
+         :ok <- if(body == "" and gift == nil and media == nil, do: {:error, :empty}, else: :ok) do
       result =
         case gift do
           nil ->
-            {:ok, insert(me, place, body, nil)}
+            {:ok, insert(me, place, body, nil, media)}
 
           {to, item, count} ->
             # the items leave the bag first: if they can't, nothing is sent
             case Players.update_bag(me.handle, &Universe.bag_take(&1, item, count)) do
               {:ok, bag} ->
                 bag_changed(me, bag)
-                {:ok, insert(me, place, body, {to, item, count})}
+                {:ok, insert(me, place, body, {to, item, count}, media)}
 
               {:error, why} ->
                 {:error, String.to_atom(why)}
@@ -170,11 +180,15 @@ defmodule Sosh.Chat do
 
       with {:ok, m} <- result do
         announce(place, "message", view(%{m | author: me}, nil))
-        if match?({:server, _}, place) and body != "", do: bubble(place, me, body)
+        if match?({:server, _}, place) and (body != "" or media != nil),
+          do: bubble(place, me, body, media)
         {:ok, view(%{m | author: me}, me)}
       end
     end
   end
+
+  @doc "May `me` post in `where` (`{:server, id}` or `{:dm, id}`)?"
+  def may_post?(%User{} = me, where), do: match?({:ok, _}, may_post(me, where))
 
   defp fetch(attrs, key) when is_map(attrs),
     do: Map.get(attrs, key) || Map.get(attrs, String.to_atom(key))
@@ -198,6 +212,10 @@ defmodule Sosh.Chat do
   end
 
   defp may_post(_, _), do: {:error, :bad_place}
+
+  defp check_media(_, nil), do: {:ok, nil}
+  defp check_media(_, ""), do: {:ok, nil}
+  defp check_media(me, key), do: Media.attachable(me, key)
 
   defp check_gift(_, _, nil), do: {:ok, nil}
 
@@ -227,7 +245,7 @@ defmodule Sosh.Chat do
   defp may_receive({:dm, c}, _me, them),
     do: if(in_conversation?(c, them.id), do: :ok, else: {:error, :not_in_conversation})
 
-  defp insert(me, place, body, gift) do
+  defp insert(me, place, body, gift, media) do
     {server_id, conversation_id} =
       case place do
         {:server, s} -> {s.id, nil}
@@ -244,8 +262,11 @@ defmodule Sosh.Chat do
         body: body,
         item: item,
         count: count,
-        recipient_id: recipient && recipient.id
+        recipient_id: recipient && recipient.id,
+        media_id: media && media.id
       })
+
+    m = %{m | media: media}
 
     if conversation_id do
       from(c in Conversation, where: c.id == ^conversation_id)
@@ -297,7 +318,7 @@ defmodule Sosh.Chat do
         case Players.update_bag(me.handle, &Universe.bag_give(&1, m.item, m.count)) do
           {:ok, bag} ->
             bag_changed(me, bag)
-            m = Repo.preload(m, [:author, :recipient])
+            m = Repo.preload(m, [:author, :recipient, :media])
             announce(place_of(m), "gift", view(m, nil))
             {:ok, view(m, me)}
 
@@ -356,14 +377,15 @@ defmodule Sosh.Chat do
     do: SoshWeb.Endpoint.broadcast("user:#{me.id}", "bag", %{bag: Players.bag_json(bag)})
 
   # Over the author's head too, if they're standing in that universe.
-  defp bubble({:server, %Server{gx: gx, gy: gy}}, me, body) do
+  defp bubble({:server, %Server{gx: gx, gy: gy}}, me, body, media) do
     u = {gx, gy}
 
     for %{name: name, user_id: id} <- Lobby.list(u), name == me.handle do
       SoshWeb.Endpoint.broadcast("room:#{gx},#{gy}", "new_msg", %{
         body: body,
         user_id: id,
-        name: name
+        name: name,
+        media: Media.view(media)
       })
     end
 

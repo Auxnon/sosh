@@ -15,7 +15,12 @@ defmodule SoshWeb.Api.Json do
     no_such_server: 404,
     no_such_message: 404,
     no_such_gift: 404,
-    no_such_conversation: 404
+    no_such_conversation: 404,
+    no_such_media: 404,
+    too_big: 413,
+    bad_media: 415,
+    bad_ticket: 403,
+    expired: 403
   }
 
   def ok(conn, body \\ %{ok: true}), do: json(conn, body)

@@ -64,6 +64,26 @@ defmodule SoshWeb.Router do
     delete "/messages/:id", ChatController, :delete
   end
 
+  # Pictures and carts shared in chat: uploaded with the API, served by key
+  scope "/api", SoshWeb do
+    pipe_through [:signed_in]
+    post "/media", MediaController, :create
+  end
+
+  scope "/api", SoshWeb do
+    post "/media/shared", MediaController, :shared
+  end
+
+  scope "/media", SoshWeb do
+    get "/:key", MediaController, :show
+  end
+
+  # A shared cart running on its own, fenced off from the rest of sosh
+  scope "/play", SoshWeb do
+    get "/worker.js", PlayController, :worker
+    get "/:key", PlayController, :show
+  end
+
   scope "/api", SoshWeb do
     pipe_through :api
     get "/hello", PageController, :api_hello

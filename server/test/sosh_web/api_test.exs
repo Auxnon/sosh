@@ -302,6 +302,108 @@ defmodule SoshWeb.ApiTest do
 
     defp wood(handle), do: for({"wood", n} <- Players.bag(handle), do: n) |> Enum.sum()
 
+    # A tiny picture of each kind: the headers are all the server reads.
+    defp png(w, h, extra \\ ""),
+      do: <<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A, 13::32, "IHDR", w::32, h::32, 8, 6, 0, 0, 0, 0::32>> <> extra <> <<0::32, "IEND", 0::32>>
+
+    defp png_chunk(type, data), do: <<byte_size(data)::32, type::binary, data::binary, 0::32>>
+
+    defp gif(frames) do
+      frame = <<0x21, 0xF9, 4, 0, 0, 0, 0, 0, 0x2C, 0::16, 0::16, 4::little-16, 4::little-16, 0, 2, 2, 0x4C, 0x01, 0>>
+      <<"GIF89a", 4::little-16, 3::little-16, 0, 0, 0>> <> String.duplicate(frame, frames) <> ";"
+    end
+
+    defp webp_anim(w, h),
+      do: <<"RIFF", 30::little-32, "WEBP", "VP8X", 10::little-32, 0x02, 0, 0, 0, (w - 1)::little-24, (h - 1)::little-24>>
+
+    defp upload(token, bytes, name \\ "x") do
+      authed(token)
+      |> put_req_header("content-type", "application/octet-stream")
+      |> post("/api/media?name=#{name}", bytes)
+    end
+
+    test "pictures and carts: uploaded, attached to a message, served by key", %{ann: ann, ben: ben, plaza: p} do
+      assert %{"media" => %{"key" => key, "kind" => "image", "mime" => "image/png", "w" => 30, "h" => 20, "animated" => false, "name" => "cat.png"}} =
+               upload(ann, png(30, 20), "cat.png") |> json_response(200)
+
+      assert %{"media" => %{"mime" => "image/png", "animated" => true}} =
+               upload(ann, png(5, 5, png_chunk("acTL", <<2::32, 0::32>>))) |> json_response(200)
+
+      assert %{"media" => %{"mime" => "image/gif", "animated" => true, "w" => 4, "h" => 3}} = upload(ann, gif(3)) |> json_response(200)
+      assert %{"media" => %{"mime" => "image/gif", "animated" => false}} = upload(ann, gif(1)) |> json_response(200)
+
+      assert %{"media" => %{"mime" => "image/webp", "animated" => true, "w" => 640, "h" => 480}} =
+               upload(ann, webp_anim(640, 480)) |> json_response(200)
+
+      # a .game.png: a picture with the game zipped after it
+      assert %{"media" => %{"key" => cart, "kind" => "cart", "animated" => false}} =
+               upload(ann, png(64, 64) <> <<"PK", 3, 4>> <> "rest of the zip", "pong.game.png") |> json_response(200)
+
+      assert %{"error" => "bad_media"} = upload(ann, "<html><script>alert(1)</script>") |> json_response(415)
+      assert %{"error" => "bad_media"} = upload(ann, png(0, 10)) |> json_response(415)
+      assert %{"error" => "too_big"} = upload(ann, png(1, 1, :binary.copy("x", Sosh.Media.max_size()))) |> json_response(413)
+      assert build_conn() |> put_req_header("content-type", "image/png") |> post("/api/media", png(1, 1)) |> response(401)
+
+      # attached: a picture alone is a message
+      assert %{"message" => %{"body" => "", "media" => %{"key" => ^key, "url" => url}}} =
+               authed(ann) |> post("/api/servers/#{p.id}/messages", %{media: key}) |> json_response(200)
+
+      assert %{"messages" => [%{"media" => %{"key" => ^key, "kind" => "image"}}]} =
+               authed(ben) |> get("/api/servers/#{p.id}/messages") |> json_response(200)
+
+      # only your own
+      assert %{"error" => "not_yours"} =
+               authed(ben) |> post("/api/servers/#{p.id}/messages", %{body: "mine", media: cart}) |> json_response(403)
+
+      assert %{"error" => "no_such_media"} =
+               authed(ann) |> post("/api/servers/#{p.id}/messages", %{media: "nope"}) |> json_response(404)
+
+      # served as what it is, sandboxed, cached for good
+      served = build_conn() |> get(url)
+      assert served.status == 200
+      assert served.resp_body == png(30, 20)
+      assert get_resp_header(served, "content-type") == ["image/png"]
+      assert get_resp_header(served, "x-content-type-options") == ["nosniff"]
+      assert [csp] = get_resp_header(served, "content-security-policy")
+      assert csp =~ "sandbox"
+      assert [cache] = get_resp_header(served, "cache-control")
+      assert cache =~ "immutable"
+      assert build_conn() |> get("/media/nope") |> response(404)
+
+      # a cart plays on a page of its own that can reach nothing but itself
+      page = build_conn() |> get("/play/#{cart}")
+      assert page.status == 200
+      assert page.resp_body =~ ~s(data-cart="/media/#{cart}")
+      assert [csp] = get_resp_header(page, "content-security-policy")
+      assert csp =~ "default-src 'none'"
+      assert csp =~ "connect-src www.example.com:*/media/#{cart} "
+      refute csp =~ "socket"
+      refute csp =~ "connect-src 'self'"
+      # pictures don't play
+      assert build_conn() |> get("/play/#{key}") |> response(404)
+    end
+
+    test "a share ticket posts one picture into its chat, and does nothing else", %{ann: ann, ben: ben, plaza: p} do
+      me = Sosh.Accounts.get_by_handle("ann")
+      t = Sosh.Media.ticket(me, {:server, p.id})
+
+      assert %{"message" => %{"author" => %{"handle" => "ann"}, "body" => "", "media" => %{"kind" => "image", "w" => 9}}} =
+               build_conn()
+               |> put_req_header("content-type", "image/png")
+               |> post("/api/media/shared?ticket=#{t}&name=pic.png", png(9, 9))
+               |> json_response(200)
+
+      assert %{"messages" => [%{"media" => %{"w" => 9}}]} =
+               authed(ben) |> get("/api/servers/#{p.id}/messages") |> json_response(200)
+
+      assert %{"error" => "bad_ticket"} =
+               build_conn() |> put_req_header("content-type", "image/png") |> post("/api/media/shared?ticket=#{t}x", png(1, 1)) |> json_response(403)
+
+      # a ticket isn't a session
+      assert build_conn() |> put_req_header("authorization", "Bearer " <> t) |> get("/api/me") |> response(401)
+      _ = ann
+    end
+
     test "server chat history", %{ann: ann, ben: ben, plaza: p} do
       assert %{"message" => %{"body" => "hello"}} =
                authed(ann) |> post("/api/servers/#{p.id}/messages", %{body: " hello "}) |> json_response(200)

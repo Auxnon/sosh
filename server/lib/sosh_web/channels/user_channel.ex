@@ -49,6 +49,28 @@ defmodule SoshWeb.UserChannel do
 
   defp answer("everything", _, me, _), do: {:ok, Me.everything(me)}
 
+  # A picture or cart to attach to a message, for clients that can't make
+  # an HTTP request (the game): `{data}` in base64, `name` optional.
+  # A ticket for the web page around the game to share pictures into a chat
+  # we may post in (`{place: "server:<id>"}` or `"dm:<id>"`): Sosh.Media.ticket.
+  defp answer("media_ticket", %{"place" => place}, me, _) when is_binary(place) do
+    with [kind, id] when kind in ["server", "dm"] <- String.split(place, ":"),
+         {id, ""} <- Integer.parse(id),
+         where = {String.to_existing_atom(kind), id},
+         true <- Sosh.Chat.may_post?(me, where) do
+      {:ok, %{ticket: Sosh.Media.ticket(me, where)}}
+    else
+      _ -> {:error, %{reason: "forbidden"}}
+    end
+  end
+
+  defp answer("upload", %{"data" => b64} = p, me, _) when is_binary(b64) do
+    case Base.decode64(b64, ignore: :whitespace) do
+      {:ok, bytes} -> wrap(Sosh.Media.store(me, bytes, p["name"]), &%{media: Sosh.Media.view(&1)})
+      :error -> {:error, %{reason: "bad_media"}}
+    end
+  end
+
   defp answer("character", %{"character" => c}, me, _),
     do: wrap(Me.set_character(me, c), &%{user: Me.user(&1)})
 

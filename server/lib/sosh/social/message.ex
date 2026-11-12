@@ -12,6 +12,7 @@ defmodule Sosh.Social.Message do
     belongs_to :conversation, Sosh.Social.Conversation
     belongs_to :author, Sosh.Accounts.User
     belongs_to :recipient, Sosh.Accounts.User
+    belongs_to :media, Sosh.Social.Medium
 
     timestamps(type: :utc_datetime)
   end
