@@ -48,6 +48,17 @@ client (Super+R). The client needs the engine's `feat/skinning` branch. The
 recipes use the `~/projects/petrichor64-ws` worktree of it if that exists,
 else `~/projects/petrichor64`; set `P64=/path/to/petrichor64` to override.
 
+## Hosted by the desktop app
+
+The desktop app (`desktop/`) runs this game as a Petrichor64 instance in its
+world pane. It talks to the game over the engine's host channel
+(`host.recv`), in `scripts/hosted.lua`: `session <socket url> <token> <user
+id> <server id>` signs the game in as the app's session and takes it into
+that server, and `enter <server id>` moves it to another. Hosted, the game
+is `APP.embedded`, as in the Android app's world view: the app has the chat,
+the creator and the way home. Where nothing hosts it (`chor`, the web),
+`host` is nil or silent and nothing changes.
+
 ## The world
 
 The world is a grid of **universes**. Each is 96×96 blocks of floating

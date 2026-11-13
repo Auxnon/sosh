@@ -114,6 +114,8 @@ end
 
 function loop()
 	U.tick()
+	-- an app hosting us (desktop/) says who we are and where to be
+	Hosted.update()
 	UI.begin()
 	tell_hold()
 	if APP.screen == "connect" then
