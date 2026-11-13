@@ -8,6 +8,14 @@ import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -15,7 +23,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
@@ -38,6 +50,11 @@ import kotlinx.coroutines.delay
  * the pane settles and while it's starting: it boots at a 640x548 stand-in,
  * and a size that came while it was being built (the pane sliding open)
  * can be missed, leaving a tall phone with a squashed wide picture.
+ *
+ * Until the game says it's in the world (`screen=world` from
+ * client/scripts/web.lua, read off `<html data-sosh-screen>`), a spinner
+ * covers it. A screen that wants us (signing in, making a character) lifts
+ * it too, and so does a while gone by, for a server whose game doesn't say.
  */
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
@@ -46,6 +63,21 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier 
     var web by remember { mutableStateOf<WebView?>(null) }
     var size by remember { mutableStateOf(IntSize.Zero) }
     var loaded by remember { mutableStateOf(0) }
+    var ready by remember { mutableStateOf(false) }
+
+    LaunchedEffect(web, loaded) {
+        val w = web ?: return@LaunchedEffect
+        var waited = 0L
+        while (!ready) {
+            delay(400)
+            if (loaded > 0) waited += 400
+            w.evaluateJavascript("document.documentElement.dataset.soshScreen||''") { r ->
+                val screen = r?.trim('"') ?: ""
+                if (screen == "world" || screen == "auth" || screen == "creator") ready = true
+            }
+            if (waited > 25_000) ready = true
+        }
+    }
 
     LaunchedEffect(web, shown) {
         val w = web ?: return@LaunchedEffect
@@ -78,6 +110,7 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier 
         }
     }
 
+    Box(modifier) {
     AndroidView(
         factory = { ctx ->
             WebView(ctx).apply {
@@ -103,8 +136,19 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier 
                 web = this
             }
         },
-        modifier = modifier.onSizeChanged { size = it },
+        modifier = Modifier.fillMaxSize().onSizeChanged { size = it },
     )
+    if (!ready) {
+        Column(
+            Modifier.fillMaxSize().background(Night),
+            verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            CircularProgressIndicator(Modifier.size(44.dp), color = Accent, trackColor = Panel, strokeWidth = 5.dp)
+            Text("Into the world…", color = TextDim, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+    }
+    }
 }
 
 /**
