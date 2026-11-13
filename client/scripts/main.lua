@@ -122,6 +122,8 @@ function loop()
 		connect_screen()
 	elseif APP.screen == "auth" then
 		auth_screen()
+	elseif APP.screen == "backdrop" then
+		backdrop_screen()
 	elseif APP.screen == "home" then
 		home_screen()
 	elseif APP.screen == "creator" then
@@ -150,6 +152,12 @@ end
 -- connect screen
 
 -- Desktop only: which server. The web build's server is the page's.
+-- Behind the app's sign-in page (hosted.lua): the view, no panel.
+function backdrop_screen()
+	CAM.az = CAM.az + 0.0015
+	place_camera(0, 0, GROUND_Z)
+end
+
 function connect_screen()
 	-- slow orbit of the empty plaza
 	CAM.az = CAM.az + 0.0015

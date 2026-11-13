@@ -6,6 +6,9 @@
 --     sign in as that session (the app's own) and go into that server
 --   enter <server id>
 --     go into that server instead (the app opened another)
+--   backdrop
+--     nobody's signed in yet: only the sea and the sky, slowly turning,
+--     for the app's sign-in page to sit on
 --
 -- `host` is nil where nothing hosts us (chor, the web), and quiet when the
 -- host never writes: the game runs as ever.
@@ -26,6 +29,8 @@ function Hosted.update()
 			Hosted.session(w[2], w[3], tonumber(w[4]), tonumber(w[5]))
 		elseif w[1] == "enter" and #w >= 2 then
 			Hosted.enter(tonumber(w[2]))
+		elseif w[1] == "backdrop" then
+			Hosted.backdrop()
 		end
 	end
 end
@@ -39,6 +44,13 @@ function Hosted.session(url, token, user_id, server_id)
 	APP.url = url
 	APP.enter_id = server_id
 	Account.signed_in({ token = token, user = { id = user_id } })
+end
+
+function Hosted.backdrop()
+	APP.embedded = true
+	if APP.screen == "connect" or APP.screen == "auth" then
+		APP.screen = "backdrop"
+	end
 end
 
 function Hosted.enter(id)
