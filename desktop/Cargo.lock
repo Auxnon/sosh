@@ -4495,7 +4495,7 @@ dependencies = [
 
 [[package]]
 name = "sosh_desktop"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "Petrichor64",
  "egui",

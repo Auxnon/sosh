@@ -1,6 +1,6 @@
 [package]
 name = "sosh_desktop"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "sosh for the desktop (Linux, macOS, Windows): the social client in egui on wgpu, styled like the Android app, hosting Petrichor64 for the world"
 publish = false
