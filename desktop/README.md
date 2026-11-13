@@ -14,9 +14,9 @@ cd desktop && cargo run        # or a debug build
 It starts on https://sosh.makeavoy.com. The server button under the sign-in
 card changes it, e.g. to `http://localhost:4000` for `just serve`.
 
-It builds Petrichor64 from a checkout beside this repo
-(`../../petrichor64`, a path dependency in `Cargo.toml`), which needs the
-engine's library mode (`petrichor64::Instance`).
+It builds Petrichor64 from GitHub at a pinned revision (`Cargo.toml`), for
+the engine's library mode (`petrichor64::Instance`). To try a local engine
+checkout, point the dependency at it with `path = "../../petrichor64"`.
 
 ## The world and shared games
 

@@ -5,6 +5,7 @@ version = 4
 [[package]]
 name = "Petrichor64"
 version = "0.4.3"
+source = "git+https://github.com/Auxnon/Petrichor64?rev=efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa#efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa"
 dependencies = [
  "android-activity",
  "android_logger",
@@ -3498,6 +3499,7 @@ dependencies = [
 [[package]]
 name = "petrichor-synth"
 version = "0.1.0"
+source = "git+https://github.com/Auxnon/Petrichor64?rev=efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa#efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa"
 dependencies = [
  "anyhow",
  "cpal",
@@ -4493,7 +4495,7 @@ dependencies = [
 
 [[package]]
 name = "sosh_desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "Petrichor64",
  "egui",
