@@ -264,6 +264,14 @@ impl State {
         Some(WorldSession { key: format!("{url} {token}"), hello: format!("session {url} {token} {} {server}", me), server })
     }
 
+    /// The game behind the sign-in page: the same one, before anyone's
+    /// signed in (asks for it the first time).
+    pub fn want_backdrop(&mut self) {
+        if matches!(self.game, GameCart::Wanted) {
+            self.load_game();
+        }
+    }
+
     fn load_game(&mut self) {
         if let Some(dir) = std::env::var_os("SOSH_GAME") {
             self.game = GameCart::Ready(petrichor64::host::Cart::Path(dir.into()));
@@ -322,6 +330,10 @@ impl State {
         self.saved.server = Some(u.clone());
         self.saved.save();
         self.api = Api::new(&u, self.api.token.clone());
+        // the game comes from the server: a new one may have it
+        if matches!(self.game, GameCart::Failed) {
+            self.game = GameCart::Wanted;
+        }
     }
 
     // -- signing in

@@ -53,6 +53,7 @@ pub fn draw(root: &mut Ui, st: &mut State, v: &mut View) {
                 });
             });
         } else {
+            backdrop(root.painter(), st, full);
             auth::draw(root, st, v, full);
         }
         notice(&ctx, st);
@@ -146,4 +147,14 @@ pub fn page(ui: &mut Ui, st: &mut State, title: &str, body: impl FnOnce(&mut Ui,
 pub fn section(ui: &mut Ui, title: &str) {
     ui.add_space(6.0);
     label(ui, title, INK_FAINT);
+}
+
+/// The game's sea and sky, slowly turning, under the sign-in page (once
+/// it's running: the ground until then), dimmed so the page reads over it.
+fn backdrop(p: &egui::Painter, st: &mut State, full: Rect) {
+    st.world.rect = Some(full);
+    if let Some(tex) = st.world.tex {
+        p.image(tex, full, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
+        p.rect_filled(full, 0.0, NIGHT.gamma_multiply(0.35));
+    }
 }

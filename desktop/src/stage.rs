@@ -9,7 +9,9 @@
 //! lands on them.
 //!
 //! The world runs our own game, trusted (`Policy::open`), and is handed the
-//! session over the host channel, so it never sees a sign-in screen. A
+//! session over the host channel, so it never sees a sign-in screen. Before
+//! that it's the sign-in page's backdrop (told `backdrop`: the sea and the
+//! sky turning), and the same instance is signed in when we are. A
 //! shared cart is someone else's: `Policy::sandbox()` (no network, files,
 //! clipboard, console, other carts, microphone or host channel).
 
@@ -21,6 +23,9 @@ use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{Key, NamedKey, PhysicalKey};
 
 use crate::state::{GameCart, State};
+
+/// The world's key while it's the sign-in page's backdrop.
+const BACKDROP: &str = "backdrop";
 
 /// What the engine renders into, and egui samples like its own pictures.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -82,12 +87,26 @@ impl Stages {
         self.scale = ppp;
         let now = self.start.elapsed();
 
-        // the world: our game, signed in, once there's a server open
+        // the world: our game, signed in, once there's a server open; before
+        // anyone's signed in, the sign-in page's backdrop, kept until then
         let session = st.world_session();
+        let have = self.world.as_ref().map(|w| w.key.as_str());
+        let backdrop = st.me.is_none() && st.world.rect.is_some() || st.me.is_some() && have == Some(BACKDROP);
+        if backdrop && st.me.is_none() {
+            st.want_backdrop();
+        }
         let want = match (&session, &st.game) {
             (Some(s), GameCart::Ready(_)) => Some(s.key.clone()),
+            (None, GameCart::Ready(_)) if backdrop => Some(BACKDROP.to_owned()),
             _ => None,
         };
+        // signed in over the backdrop: the same instance, told who we are
+        if let (Some(slot), Some(s)) = (self.world.as_mut(), &session) {
+            if slot.key == BACKDROP && want.as_ref() == Some(&s.key) {
+                slot.inst.post(s.hello.clone());
+                slot.key = s.key.clone();
+            }
+        }
         if self.world.as_ref().map(|w| &w.key) != want.as_ref() {
             self.drop_slot(renderer, true);
             st.world.tex = None;
@@ -102,6 +121,15 @@ impl Stages {
                         log::warn!("world: {e}");
                         st.world.status = Some(format!("The world didn't start: {e}"));
                     }
+                }
+            } else if let (Some(BACKDROP), GameCart::Ready(cart), Some(r)) = (want.as_deref(), &st.game, st.world.rect) {
+                // a backdrop that doesn't start just leaves the plain ground
+                match self.make(renderer, cart.clone(), Policy::open(), px(r, ppp), BACKDROP.to_owned()) {
+                    Ok(mut slot) => {
+                        slot.inst.post("backdrop".into());
+                        self.world = Some(slot);
+                    }
+                    Err(e) => log::warn!("backdrop: {e}"),
                 }
             }
         }
