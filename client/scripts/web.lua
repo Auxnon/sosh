@@ -4,7 +4,7 @@
 -- /sosh-bridge leads to the page instead of the network (the engine's worker
 -- imports client/web/bridge-worker.js, which makes that socket). Whenever
 -- it changes, the game sends what it wants as `sosh;play=...;ticket=...;
--- pick=n`:
+-- pick=n;screen=...`:
 --
 --   * a shared cart running (`play`): the page puts the cart's own page,
 --     fenced off from sosh, in a frame over the box the chat leaves for it
@@ -14,6 +14,8 @@
 --     chat, an hour, pictures only; the page never sees our session)
 --   * `pick`: counts up each time the attach button is pressed, and the page
 --     opens its file picker
+--   * `screen`: which screen we're on. In the Android app (APP.embedded)
+--     it's all we say: the app shows a spinner until "world"
 --
 -- On the desktop there's no page: a cart says where to play it instead.
 
@@ -82,8 +84,13 @@ end
 
 -- Once a frame, after everything's drawn (so Web.box is this frame's).
 function Web.update()
-	-- in the app its own screens share pictures and play games
-	if not APP.web or APP.embedded then
+	if not APP.web then
+		return
+	end
+	-- in the app its own screens share pictures and play games: the page
+	-- only hears which screen we're on (the app's spinner waits for "world")
+	if APP.embedded then
+		Web.say("sosh;screen=" .. tostring(APP.screen))
 		return
 	end
 	local place = Web.place()
@@ -112,7 +119,14 @@ function Web.update()
 	if Web.ticket ~= nil then
 		s = s .. ";ticket=" .. Web.ticket
 	end
-	s = s .. ";pick=" .. tostring(Web.picks)
+	s = s .. ";pick=" .. tostring(Web.picks) .. ";screen=" .. tostring(APP.screen)
+	Web.say(s)
+	-- drawn again next frame if it's still wanted
+	Web.box = nil
+end
+
+-- tell the page s, if it's news
+function Web.say(s)
 	if Web.sock == nil then
 		local ok, sock = pcall(conn, "/sosh-bridge")
 		if ok then
@@ -124,8 +138,6 @@ function Web.update()
 		Web.sent = s
 		Web.sock:send(s)
 	end
-	-- drawn again next frame if it's still wanted
-	Web.box = nil
 end
 
 function Web.frac(v, of)

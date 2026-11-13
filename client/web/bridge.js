@@ -13,6 +13,8 @@
 //                        chat for an hour; the page never sees the session
 //   pick=<n>             opens the file picker each time n goes up (the
 //                        game's attach button)
+//   screen=<name>        the game's screen, set as <html data-sosh-screen>
+//                        (in the Android app it says only this)
 //
 // The cart's own page fences it off from sosh (play.js and its policy); the
 // frame's sandbox adds no popups, no top-level navigation, no forms.
@@ -52,6 +54,9 @@
 
   function apply(text) {
     const s = parse(text);
+    // which screen the game is on, for whoever holds the page (the
+    // Android app's spinner waits for "world")
+    if (s.screen) document.documentElement.dataset.soshScreen = s.screen;
     ticket = s.ticket || null;
     play(s.play);
     if (s.pick !== undefined && state.pick !== undefined && s.pick !== state.pick) pick();
