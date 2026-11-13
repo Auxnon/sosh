@@ -11,7 +11,7 @@
 p64_ws := home_directory() / "projects/petrichor64-ws"
 p64 := env_var_or_default("P64", if path_exists(p64_ws) == "true" { p64_ws } else { home_directory() / "projects/petrichor64" })
 # Engine binary for packing (and running the game on its own); must be built with `ws`.
-chor := env_var_or_default("CHOR", p64 / "target/release/petrichor64")
+chor := env_var_or_default("CHOR", p64 / "target/release/chor")
 server := justfile_directory() / "../server"
 # Container engine: podman if installed, else docker (macOS); or set CTR.
 ctr := env_var_or_default("CTR", `command -v podman >/dev/null 2>&1 && echo podman || echo docker`)
