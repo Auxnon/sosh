@@ -137,7 +137,7 @@ jobs:
   # world's below.
   app-macos:
     needs: version
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -315,7 +315,7 @@ jobs:
   # `xcrun notarytool submit --wait` + `xcrun stapler staple` would go.
   macos:
     needs: [version, pack]
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -420,6 +420,9 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: android-actions/setup-android@v3
+        with:
+          # the SDK has no 'tools' package any more (the action's default asks for it)
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
       - name: keystore
         env:
