@@ -39,6 +39,10 @@ android {
 
     buildTypes {
         debug {
+            // its own app beside the released one (which has another key and
+            // a higher version code, so it can't be installed over)
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
             manifestPlaceholders["cleartext"] = "true"
             // the host machine, from the Android emulator
             buildConfigField("String", "DEFAULT_SERVER", "\"http://10.0.2.2:4000\"")
