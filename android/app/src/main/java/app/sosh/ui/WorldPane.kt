@@ -16,8 +16,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import app.sosh.AppState
+import kotlinx.coroutines.delay
 
 /**
  * A server's world: the same web game the browser gets, in a web view. Its
@@ -29,12 +32,20 @@ import app.sosh.AppState
  *
  * It stays loaded while it's slid away (`shown` false), only paused, so
  * sliding it back is instant.
+ *
+ * Its touches are its own: the drawer around it never takes a drag that
+ * starts on the world. And the engine is nudged to read its size again once
+ * the pane settles and while it's starting: it boots at a 640x548 stand-in,
+ * and a size that came while it was being built (the pane sliding open)
+ * can be missed, leaving a tall phone with a squashed wide picture.
  */
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
 fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier = Modifier) {
     val token = app.token ?: return
     var web by remember { mutableStateOf<WebView?>(null) }
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    var loaded by remember { mutableStateOf(0) }
 
     LaunchedEffect(web, shown) {
         val w = web ?: return@LaunchedEffect
@@ -44,6 +55,18 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier 
         } else {
             w.onPause()
             if (Gamepad.web == w) Gamepad.web = null
+        }
+    }
+    // once the size stops changing (the slide is over), and a few times
+    // while the engine starts after the page loads
+    LaunchedEffect(web, size, loaded, shown) {
+        val w = web ?: return@LaunchedEffect
+        if (!shown || size.width == 0 || size.height == 0) return@LaunchedEffect
+        delay(400)
+        nudge(w)
+        if (loaded > 0) for (wait in listOf(1500L, 3000L, 5000L)) {
+            delay(wait)
+            nudge(w)
         }
     }
     DisposableEffect(Unit) {
@@ -63,13 +86,37 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier 
                 settings.domStorageEnabled = true
                 settings.mediaPlaybackRequiresUserGesture = false
                 settings.userAgentString = settings.userAgentString + " sosh-token/$token sosh-enter/$serverId"
-                webViewClient = WebViewClient()
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String?) {
+                        loaded++
+                    }
+                }
                 webChromeClient = WebChromeClient()
+                // a drag on the world is the world's (turning the camera), not
+                // the drawer's: holding off our parents makes Compose keep the
+                // whole gesture here
+                setOnTouchListener { v, e ->
+                    if (e.actionMasked == MotionEvent.ACTION_DOWN) v.parent?.requestDisallowInterceptTouchEvent(true)
+                    false
+                }
                 loadUrl(app.serverUrl + "/")
                 web = this
             }
         },
-        modifier = modifier,
+        modifier = modifier.onSizeChanged { size = it },
+    )
+}
+
+/**
+ * Make the engine read its size again: its canvas one pixel shorter for a
+ * frame, so the canvas's resize observer (winit's) reports the real size.
+ */
+private fun nudge(w: WebView) {
+    w.evaluateJavascript(
+        "(function(){var c=document.querySelector('canvas');if(!c)return;" +
+            "c.style.height='calc(100% - 1px)';" +
+            "requestAnimationFrame(function(){requestAnimationFrame(function(){c.style.height='100%';});});})()",
+        null,
     )
 }
 

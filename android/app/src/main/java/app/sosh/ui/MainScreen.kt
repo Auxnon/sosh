@@ -143,8 +143,12 @@ fun ChatScreen(app: AppState, go: (Screen) -> Unit) {
             Box(Modifier.weight(1f).fillMaxHeight()) { PlaceView(app, go, drag, origin, { origin = it }, null) { gift = null; giftOpen = true } }
         }
     } else {
+    // All world: a drag anywhere is the camera's, so the servers only come
+    // out by the menu button (or back in by a swipe once they're out).
+    val allWorld = app.place is Place.InServer && app.pane == Pane.World
     ModalNavigationDrawer(
         drawerState = drawer,
+        gesturesEnabled = drawer.isOpen || !allWorld,
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = Color.Transparent, drawerShape = RectangleShape,
