@@ -7,7 +7,7 @@ Android app: the same colours, the Android app's own fonts (read from
 `android/app/src/main/res/font/`), plastic buttons and paper bubbles.
 
 ```sh
-just app                       # from the repo root (cargo run --release)
+just desktop                   # from the repo root (cargo run --release; `just app` too)
 cd desktop && cargo run        # or a debug build
 ```
 

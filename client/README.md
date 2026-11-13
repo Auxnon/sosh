@@ -27,8 +27,9 @@ Needs a Petrichor64 engine with the **`ws`** feature, which provides
 just engine        # desktop engine with websockets (once)
 just db            # Postgres for the world, on :5442
 just serve         # Phoenix on :4000, in another terminal (container if no local mix)
-just desktop       # run the client window; it starts on wss://sosh.makeavoy.com,
-                   # type localhost:4000 for yours
+just desktop       # the desktop app (desktop/), the game inside it; it starts on
+                   # https://sosh.makeavoy.com, its server button changes that
+SOSH_GAME=$PWD/client just desktop   # with the game from here, not the server
 ```
 
 The recipes run from the repo root or `client/`. Containers use podman if it's

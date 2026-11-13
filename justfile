@@ -21,12 +21,13 @@ web-engine:
 engine:
     just -f client/justfile engine
 
-desktop:
-    just -f client/justfile desktop
-
-# The desktop app (desktop/): the social client, styled like the Android app.
-app *args:
+# The desktop app (desktop/): the social client, styled like the Android
+# app, with the world (the game, run by the engine as a library) inside it.
+desktop *args:
     cd desktop && cargo run --release -- {{args}}
+
+app *args:
+    just desktop {{args}}
 
 assets:
     just -f client/justfile assets
