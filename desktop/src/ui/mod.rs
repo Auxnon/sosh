@@ -38,6 +38,11 @@ pub struct View {
 pub fn draw(root: &mut Ui, st: &mut State, v: &mut View) {
     let ctx = root.ctx().clone();
     let full = root.max_rect();
+    // shown this frame only if something puts them somewhere
+    st.world.rect = None;
+    st.play.rect = None;
+    st.world.hover = false;
+    st.play.hover = false;
     theme::ground(root.painter(), full);
 
     if st.me.is_none() {

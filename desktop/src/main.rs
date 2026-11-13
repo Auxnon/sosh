@@ -1,8 +1,7 @@
 //! sosh for the desktop: the social client (servers, chat, friends,
-//! pictures) in egui on wgpu, styled like the Android app. The world will
-//! be a Petrichor64 instance drawn into the window on the same device
-//! (petrichor64's HANDOFF-host-library.md); until then it opens in the
-//! browser.
+//! pictures) in egui on wgpu, styled like the Android app. The world and
+//! shared carts are Petrichor64 instances on the same device, drawn into
+//! the window as egui pictures (`stage.rs`).
 //!
 //! `sosh --snapshot out.png [--size 1280x800] [--secs 6] [--click x,y]...`
 //! draws the app without a window (no display needed) and writes a picture:
@@ -12,6 +11,7 @@
 mod media;
 mod models;
 mod net;
+mod stage;
 mod state;
 mod store;
 mod theme;
@@ -119,6 +119,7 @@ struct Win {
     renderer: egui_wgpu::Renderer,
     state: State,
     view: ui::View,
+    stages: stage::Stages,
 }
 
 struct App {
@@ -184,8 +185,9 @@ impl ApplicationHandler for App {
             let _ = repaint.send_event(());
         });
         let state = State::new(egui.clone(), wake);
+        let stages = stage::Stages::new(&gpu.device, &gpu.queue);
         window.request_redraw();
-        self.win = Some(Win { window, surface, config, gpu, egui, egui_state, renderer, state, view: ui::View::default() });
+        self.win = Some(Win { window, surface, config, gpu, egui, egui_state, renderer, state, view: ui::View::default(), stages });
     }
 
     fn user_event(&mut self, _el: &ActiveEventLoop, _: ()) {
@@ -197,6 +199,9 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, el: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         let Some(w) = self.win.as_mut() else { return };
         let resp = w.egui_state.on_window_event(&w.window, &event);
+        // the world or a cart under the pointer (or with the keys) hears it too
+        let typing = w.egui.egui_wants_keyboard_input();
+        w.stages.event(&mut w.state, &event, typing);
         if resp.repaint {
             w.window.request_redraw();
         }
@@ -218,6 +223,8 @@ impl ApplicationHandler for App {
                 let mut out = run_ui(&w.egui, raw, &mut w.state, &mut w.view);
                 w.egui_state.handle_platform_output(&w.window, out.platform_output);
                 let ppp = out.pixels_per_point;
+                // the world and a cart draw first, into their textures
+                w.stages.update(&mut w.state, &mut w.renderer, ppp);
                 let jobs = w.egui.tessellate(out.shapes, ppp);
                 for (id, deltas) in &out.textures_delta.set {
                     for delta in deltas {
@@ -243,14 +250,19 @@ impl ApplicationHandler for App {
                 }
                 out.textures_delta.clear();
                 let delay = out.viewport_output.get(&egui::ViewportId::ROOT).map_or(Duration::MAX, |v| v.repaint_delay);
-                if delay.is_zero() {
+                let egui_next = if delay.is_zero() {
                     w.window.request_redraw();
-                    self.next = None;
+                    None
                 } else if delay < Duration::from_secs(3600) {
-                    self.next = Some(Instant::now() + delay);
+                    Some(Instant::now() + delay)
                 } else {
-                    self.next = None;
-                }
+                    None
+                };
+                // whichever comes first: egui's repaint or an engine tick
+                self.next = match (egui_next, w.stages.next()) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
             }
             _ => {}
         }
@@ -298,6 +310,7 @@ fn snapshot(args: &[String]) {
     let wake: state::Wake = Arc::new(|| {});
     let mut st = State::new(egui.clone(), wake);
     let mut view = ui::View::default();
+    let mut stages = stage::Stages::new(&gpu.device, &gpu.queue);
     let start = Instant::now();
     let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w as f32 / ppp, h as f32 / ppp));
     let mut clicked = 0usize;
@@ -307,6 +320,10 @@ fn snapshot(args: &[String]) {
     loop {
         let t = start.elapsed().as_secs_f32();
         let mut events = Vec::new();
+        // the pointer waits over the next click, so it's hovering when it lands
+        if let Some(&(x, y)) = clicks.get(clicked) {
+            events.push(egui::Event::PointerMoved(egui::pos2(x, y)));
+        }
         if clicked < clicks.len() && t > load.max(0.5) + clicked as f32 {
             let (x, y) = clicks[clicked];
             let pos = egui::pos2(x, y);
@@ -323,6 +340,7 @@ fn snapshot(args: &[String]) {
         let mut raw = egui::RawInput { screen_rect: Some(screen_rect), time: Some(t as f64), events, ..Default::default() };
         raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(ppp);
         let mut out = run_ui(&egui, raw, &mut st, &mut view);
+        stages.update(&mut st, &mut renderer, ppp);
         for (id, deltas) in &out.textures_delta.set {
             for delta in deltas {
                 renderer.update_texture(&gpu.device, &gpu.queue, *id, delta);

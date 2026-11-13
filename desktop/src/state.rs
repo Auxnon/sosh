@@ -45,6 +45,33 @@ pub enum Screen {
     Members,
 }
 
+/// The sosh game the world runs: fetched from the server (the same
+/// `/game.game.png` the web plays), or a folder on disk (`SOSH_GAME`, for
+/// working on the game).
+pub enum GameCart {
+    Wanted,
+    Loading,
+    Ready(petrichor64::host::Cart),
+    Failed,
+}
+
+/// A shared cart being played in the app.
+pub struct Playing {
+    pub media: Media,
+    /// Its bytes, once fetched.
+    pub bytes: Option<Vec<u8>>,
+}
+
+/// What the world is made for and told when it starts.
+pub struct WorldSession {
+    /// Its socket and token: a new one remakes the world.
+    pub key: String,
+    /// The first thing it hears (`client/scripts/hosted.lua`).
+    pub hello: String,
+    /// The server it should be in.
+    pub server: i64,
+}
+
 pub struct State {
     pub ctx: egui::Context,
     pub wake: Wake,
@@ -78,6 +105,15 @@ pub struct State {
     /// A picture or cart going up to the open place.
     pub sharing: bool,
     pub pics: Pics,
+
+    /// The world pane and a cart's window: where the UI puts them
+    /// (`stage.rs` runs them).
+    pub world: crate::stage::Spot,
+    pub play: crate::stage::Spot,
+    pub game: GameCart,
+    pub playing: Option<Playing>,
+    /// The last server opened: the world stays in it while a DM is open.
+    world_server: Option<i64>,
 
     notice: Option<(String, Instant)>,
 }
@@ -113,6 +149,11 @@ impl State {
             loading_older: false,
             sharing: false,
             pics: Pics::default(),
+            world: Default::default(),
+            play: Default::default(),
+            game: GameCart::Wanted,
+            playing: None,
+            world_server: None,
             notice: None,
             saved,
         };
@@ -206,6 +247,73 @@ impl State {
         &self.api.base
     }
 
+    // -- the world and shared carts
+
+    /// What the world runs as, once we're signed in and have opened a
+    /// server (and asks for the game the first time).
+    pub fn world_session(&mut self) -> Option<WorldSession> {
+        let me = self.me.as_ref()?.id;
+        let token = self.api.token.clone()?;
+        let server = self.world_server?;
+        if matches!(self.game, GameCart::Wanted) {
+            self.load_game();
+        }
+        // the game adds `&token=` itself
+        let url = self.api.socket_url();
+        let url = url.split("&token=").next().unwrap_or(&url).to_owned();
+        Some(WorldSession { key: format!("{url} {token}"), hello: format!("session {url} {token} {} {server}", me), server })
+    }
+
+    fn load_game(&mut self) {
+        if let Some(dir) = std::env::var_os("SOSH_GAME") {
+            self.game = GameCart::Ready(petrichor64::host::Cart::Path(dir.into()));
+            return;
+        }
+        self.game = GameCart::Loading;
+        self.spawn(|api| {
+            let r = api.fetch("/game.game.png");
+            Box::new(move |st: &mut State| {
+                st.game = match r {
+                    Ok(b) => GameCart::Ready(petrichor64::host::Cart::Bytes(b)),
+                    Err(e) => {
+                        log::warn!("game: {e}");
+                        st.world.status = Some(format!("Couldn't get the world from the server ({e})."));
+                        GameCart::Failed
+                    }
+                };
+            })
+        });
+    }
+
+    /// Fetch the game again after it failed.
+    pub fn retry_game(&mut self) {
+        self.world.status = None;
+        self.load_game();
+    }
+
+    /// Play a shared cart here, fenced off (`stage.rs`).
+    pub fn play_cart(&mut self, m: &Media) {
+        self.playing = Some(Playing { media: m.clone(), bytes: None });
+        self.play.status = None;
+        let url = m.url.clone();
+        let key = m.key.clone();
+        self.spawn(move |api| {
+            let r = api.fetch(&url);
+            Box::new(move |st: &mut State| {
+                let Some(p) = st.playing.as_mut().filter(|p| p.media.key == key) else { return };
+                match r {
+                    Ok(b) => p.bytes = Some(b),
+                    Err(e) => st.play.status = Some(format!("Couldn't get it: {e}")),
+                }
+            })
+        });
+    }
+
+    pub fn stop_cart(&mut self) {
+        self.playing = None;
+        self.play.focus = false;
+    }
+
     pub fn set_server(&mut self, url: &str) {
         let u = url.trim().trim_end_matches('/').to_owned();
         if u.is_empty() {
@@ -295,6 +403,8 @@ impl State {
         self.api.token = None;
         self.me = None;
         self.place = None;
+        self.world_server = None;
+        self.playing = None;
         self.online = false;
         self.servers.clear();
         self.conversations.clear();
@@ -476,6 +586,7 @@ impl State {
         match p {
             None => {}
             Some(Place::InServer(id)) => {
+                self.world_server = Some(id);
                 let topic = format!("server:{id}");
                 if let Some(s) = self.socket.as_mut() {
                     s.join(&topic, json!({}));

@@ -9,7 +9,7 @@ use egui::{Align, Align2, Color32, CornerRadius, Frame, Id, Margin, Rect, RichTe
 use super::View;
 use crate::media::Pics;
 use crate::models::{Media, Message};
-use crate::state::{Pane, Place, Screen, State};
+use crate::state::{GameCart, Pane, Place, Screen, State};
 use crate::theme::*;
 
 pub struct GiftForm {
@@ -120,34 +120,48 @@ fn server_view(ui: &mut Ui, st: &mut State, v: &mut View, r: Rect) {
 /// library mode: petrichor64 HANDOFF-host-library.md) it's a window onto
 /// the islands that opens the world in the browser.
 fn world_pane(ui: &mut Ui, st: &mut State, v: &mut View, r: Rect) {
+    st.world.rect = Some(r);
+    let resp = ui.interact(r, Id::unique("world"), Sense::click_and_drag());
+    st.world.hover = resp.hovered() || resp.dragged();
     let p = ui.painter();
     p.rect_filled(r.translate(vec2(0.0, 4.0)), CornerRadius::same(24), EDGE);
-    p.rect_filled(r, CornerRadius::same(24), Color32::from_rgb(0x8F, 0xC9, 0xF0));
-    let sea = Rect::from_min_max(pos2(r.left(), r.top() + r.height() * 0.72), r.max);
-    p.rect_filled(sea, CornerRadius { nw: 0, ne: 0, sw: 24, se: 24 }, Color32::from_rgb(0x4A, 0x8F, 0xD0));
-    let w = (r.width() * 0.8).min(420.0);
-    let banner = Rect::from_center_size(pos2(r.center().x, r.top() + r.height() * 0.42), vec2(w, w * 116.0 / 252.0));
-    if banner.height() < r.height() * 0.8 {
-        islands(p, banner);
-    }
-    p.rect_stroke(r, CornerRadius::same(24), Stroke::new(3.0, EDGE), egui::StrokeKind::Inside);
-    if r.height() > 140.0 && r.width() > 220.0 {
-        let card = Rect::from_center_size(pos2(r.center().x, r.bottom() - 54.0), vec2(w.max(220.0).min(r.width() - 24.0), 64.0));
-        paper(ui.painter(), card, 18.0);
-        ui.scope_builder(UiBuilder::new().max_rect(card.shrink2(vec2(14.0, 10.0))), |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
-                    ui.label(RichText::new("The world").font(font(EXTRA, 16.0)).color(INK));
-                    ui.label(RichText::new("opens in your browser for now").font(font(MEDIUM, 12.0)).color(INK_DIM));
-                });
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    if text_button(ui, "Open", vec2(84.0, 40.0), Tone::Orange).clicked() {
-                        ui.ctx().open_url(egui::OpenUrl::new_tab(st.server_url()));
+    if let Some(tex) = st.world.tex {
+        egui::Image::from_texture((tex, r.size())).corner_radius(CornerRadius::same(24)).paint_at(ui, r);
+        let edge = if st.world.focus { Color32::from_rgb(0xFF, 0xB0, 0x3A) } else { EDGE };
+        ui.painter().rect_stroke(r, CornerRadius::same(24), Stroke::new(3.0, edge), egui::StrokeKind::Inside);
+    } else {
+        // sky, sea and islands until the world is running
+        p.rect_filled(r, CornerRadius::same(24), Color32::from_rgb(0x8F, 0xC9, 0xF0));
+        let sea = Rect::from_min_max(pos2(r.left(), r.top() + r.height() * 0.72), r.max);
+        p.rect_filled(sea, CornerRadius { nw: 0, ne: 0, sw: 24, se: 24 }, Color32::from_rgb(0x4A, 0x8F, 0xD0));
+        let w = (r.width() * 0.8).min(420.0);
+        let banner = Rect::from_center_size(pos2(r.center().x, r.top() + r.height() * 0.42), vec2(w, w * 116.0 / 252.0));
+        if banner.height() < r.height() * 0.8 {
+            islands(p, banner);
+        }
+        p.rect_stroke(r, CornerRadius::same(24), Stroke::new(3.0, EDGE), egui::StrokeKind::Inside);
+        let failed = matches!(st.game, GameCart::Failed);
+        let line = st.world.status.clone().unwrap_or_else(|| "on its way…".into());
+        if r.height() > 140.0 && r.width() > 220.0 {
+            let card = Rect::from_center_size(pos2(r.center().x, r.bottom() - 54.0), vec2(w.max(220.0).min(r.width() - 24.0), 64.0));
+            paper(ui.painter(), card, 18.0);
+            ui.scope_builder(UiBuilder::new().max_rect(card.shrink2(vec2(14.0, 10.0))), |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+                        ui.label(RichText::new("The world").font(font(EXTRA, 16.0)).color(INK));
+                        ui.add(egui::Label::new(RichText::new(line).font(font(MEDIUM, 12.0)).color(INK_DIM)).truncate());
+                    });
+                    if failed {
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                            if text_button(ui, "Again", vec2(84.0, 40.0), Tone::Orange).clicked() {
+                                st.retry_game();
+                            }
+                        });
                     }
                 });
             });
-        });
+        }
     }
     // all world: the latest lines over it, as the game's own chat log was
     if st.pane == Pane::World && r.height() > 260.0 {
@@ -218,6 +232,25 @@ fn messages(ui: &mut Ui, st: &mut State, v: &mut View) {
 
 fn bubble(ui: &mut Ui, st: &mut State, v: &mut View, m: &Message, time: f64) {
     let who = m.author.as_ref().map(|a| a.handle.clone()).unwrap_or_else(|| "someone".into());
+    // right-click: what can be done with it. Made before what's inside (on
+    // last frame's rect), so that it's under the picture, Play and present
+    // buttons and they get their clicks.
+    let id = ui.scope_id().with(("msg", m.id));
+    if let Some(r) = ui.data(|d| d.get_temp::<Rect>(id)) {
+        let click = ui.interact(r, id, Sense::click());
+        let mine = st.me.as_ref().map(|me| me.id) == m.author.as_ref().map(|a| a.id);
+        let moderator = st.open_server().map(|s| s.can("manage_messages")).unwrap_or(false);
+        click.context_menu(|ui| {
+            if !m.body.is_empty() && ui.button("Copy text").clicked() {
+                ui.ctx().copy_text(m.body.clone());
+                ui.close();
+            }
+            if (mine || moderator) && ui.button(RichText::new("Delete").color(DANGER_INK)).clicked() {
+                st.delete_message(m.id);
+                ui.close();
+            }
+        });
+    }
     let frame = Frame::new()
         .fill(PAPER)
         .corner_radius(CornerRadius::same(22))
@@ -242,20 +275,7 @@ fn bubble(ui: &mut Ui, st: &mut State, v: &mut View, m: &Message, time: f64) {
     let r = resp.rect;
     name_tag_at(ui.painter(), pos2(r.left() + 14.0, r.top() - 2.0), &who, 13.0, -3.0);
     ui.painter().text(pos2(r.right() - 14.0, r.top() + 9.0), Align2::RIGHT_TOP, m.time(), font(TECH, 9.0), INK_FAINT);
-    // right-click: what can be done with it
-    let click = ui.interact(r, ui.scope_id().with(("msg", m.id)), Sense::click());
-    let mine = st.me.as_ref().map(|me| me.id) == m.author.as_ref().map(|a| a.id);
-    let moderator = st.open_server().map(|s| s.can("manage_messages")).unwrap_or(false);
-    click.context_menu(|ui| {
-        if !m.body.is_empty() && ui.button("Copy text").clicked() {
-            ui.ctx().copy_text(m.body.clone());
-            ui.close();
-        }
-        if (mine || moderator) && ui.button(RichText::new("Delete").color(DANGER_INK)).clicked() {
-            st.delete_message(m.id);
-            ui.close();
-        }
-    });
+    ui.data_mut(|d| d.insert_temp(id, r));
 }
 
 /// @handles highlighted, ours most of all.
@@ -339,10 +359,8 @@ fn cart_card(ui: &mut Ui, st: &mut State, m: &Media) {
                         Icon::Play.paint(p, Rect::from_center_size(pos2(r.left() + 24.0, r.center().y), vec2(16.0, 16.0)), on);
                         p.text(pos2(r.left() + 40.0, r.center().y), Align2::LEFT_CENTER, "Play", font(EXTRA, 15.0), on);
                     });
-                    // in the app once Petrichor64 can be hosted here; on the web page until then
-                    if r.on_hover_text("plays in your browser, fenced off from sosh").clicked() {
-                        let url = format!("{}{}", st.server_url(), m.url.replacen("/media/", "/play/", 1));
-                        ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                    if r.on_hover_text("plays here, fenced off from sosh and your files").clicked() {
+                        st.play_cart(m);
                     }
                 });
             });
@@ -536,8 +554,12 @@ fn pane_bar(ui: &mut Ui, st: &mut State) {
     });
 }
 
-/// What floats over everything: a picture large, the present form.
+/// What floats over everything: a cart being played, a picture large, the
+/// present form.
 pub fn dialogs(ctx: &egui::Context, st: &mut State, v: &mut View) {
+    if st.playing.is_some() {
+        cart_window(ctx, st);
+    }
     if let Some(m) = v.big_picture.clone() {
         let screen = ctx.content_rect();
         let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
@@ -626,5 +648,55 @@ pub fn dialogs(ctx: &egui::Context, st: &mut State, v: &mut View) {
     }
     if done {
         v.gift = None;
+    }
+}
+
+/// A shared cart, running in the app in a window of its own over a dimmed
+/// chat: Esc or the cross closes it (and stops it).
+fn cart_window(ctx: &egui::Context, st: &mut State) {
+    let Some(name) = st.playing.as_ref().map(|p| p.media.label()) else { return };
+    let screen = ctx.content_rect();
+    let mut close = false;
+    egui::Area::new(Id::unique("cart-window")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
+        let (all, _) = ui.allocate_exact_size(screen.size(), Sense::click());
+        ui.painter().rect_filled(all, 0.0, Color32::from_rgba_unmultiplied(0x12, 0x0F, 0x2A, 0xD0));
+        // 4:3 like the engine's own window, as big as fits under a bar
+        let bar_h = 52.0;
+        let avail = all.shrink(28.0);
+        let mut size = vec2(avail.width(), avail.width() * 0.75);
+        if size.y + bar_h > avail.height() {
+            size = vec2((avail.height() - bar_h) / 0.75, avail.height() - bar_h);
+        }
+        let frame = Rect::from_center_size(all.center(), vec2(size.x, size.y + bar_h));
+        paper(ui.painter(), frame.expand(8.0), 26.0);
+        let bar = Rect::from_min_size(frame.min, vec2(frame.width(), bar_h));
+        let game = Rect::from_min_max(pos2(frame.left(), bar.bottom()), frame.max);
+        ui.scope_builder(UiBuilder::new().max_rect(bar.shrink2(vec2(8.0, 6.0))), |ui| {
+            ui.horizontal_centered(|ui| {
+                let (c, _) = ui.allocate_exact_size(vec2(26.0, 30.0), Sense::hover());
+                cartridge(ui.painter(), c);
+                ui.label(RichText::new(name).font(font(EXTRA, 17.0)).color(INK));
+                ui.label(RichText::new("fenced off: no network, no files").font(font(MEDIUM, 12.0)).color(INK_FAINT));
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    if icon_button(ui, Icon::Close, Tone::Plastic, "close").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+        st.play.rect = Some(game);
+        let resp = ui.interact(game, Id::unique("cart-game"), Sense::click_and_drag());
+        st.play.hover = resp.hovered() || resp.dragged();
+        ui.painter().rect_filled(game, CornerRadius::same(12), Color32::BLACK);
+        if let Some(tex) = st.play.tex {
+            egui::Image::from_texture((tex, game.size())).corner_radius(CornerRadius::same(12)).paint_at(ui, game);
+        } else {
+            let line = st.play.status.clone().unwrap_or_else(|| "loading…".into());
+            ui.painter().text(game.center(), Align2::CENTER_CENTER, line, font(TECH, 12.0), TEXT_DIM);
+        }
+    });
+    // Esc closes it even while the cart has the keys: the way out can't be a cart's to take
+    if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        st.stop_cart();
     }
 }

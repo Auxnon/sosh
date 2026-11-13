@@ -298,6 +298,7 @@ pub enum Icon {
     Globe,
     Play,
     Back,
+    Close,
 }
 
 impl Icon {
@@ -368,6 +369,10 @@ impl Icon {
             Icon::Back => {
                 p.add(Shape::line(vec![at(11.0, 3.0), at(4.0, 10.0), at(11.0, 17.0)], s));
                 p.line_segment([at(4.0, 10.0), at(17.0, 10.0)], s);
+            }
+            Icon::Close => {
+                p.line_segment([at(4.0, 4.0), at(16.0, 16.0)], s);
+                p.line_segment([at(16.0, 4.0), at(4.0, 16.0)], s);
             }
         }
     }
