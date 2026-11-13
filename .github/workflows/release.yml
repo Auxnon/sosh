@@ -1,6 +1,11 @@
-# The client, for a v* tag: a Windows exe, a Linux AppImage and a macOS dmg
-# (the Petrichor64 engine with the game baked in) and the Android APK, all
-# pointed at https://sosh.makeavoy.com, attached to a GitHub release. Run it by hand
+# The client, for a v* tag, all pointed at https://sosh.makeavoy.com and
+# attached to a GitHub release:
+# - the desktop app (desktop/: chat, servers and the world, hosting
+#   Petrichor64 as a library): a Linux AppImage, a Windows exe, a macOS dmg
+#   (sosh-<version>-...)
+# - the world alone (the Petrichor64 engine with the game baked in), the same
+#   three (sosh-world-<version>-...)
+# - the Android APK Run it by hand
 # (workflow_dispatch) to get the files as workflow artifacts without a release.
 #
 # Android signing secrets (optional, but without them every release is signed
@@ -62,6 +67,157 @@ jobs:
           name: game
           path: game.game.png
 
+  # The desktop app (desktop/), which hosts Petrichor64 itself (its engine
+  # comes from Cargo.toml, not P64_REF) and fetches the game from the server.
+  app-linux:
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build deps
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libudev-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev libfuse2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - run: cargo build --release
+        working-directory: desktop
+      - name: AppImage
+        env:
+          VERSION: ${{ needs.version.outputs.name }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp desktop/target/release/sosh AppDir/usr/bin/sosh
+          cp client/icon.png AppDir/sosh.png
+          cat > AppDir/sosh.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=sosh
+          Comment=Floating islands to hang out on together
+          Exec=sosh
+          Icon=sosh
+          StartupWMClass=sosh
+          Categories=Network;Chat;Game;
+          EOF
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          here="$(dirname "$(readlink -f "$0")")"
+          exec "$here/usr/bin/sosh" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+          curl -fsSLo appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool AppDir "sosh-${VERSION}-x86_64.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-linux
+          path: sosh-*.AppImage
+
+  app-windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      # windowed (no console) by main.rs's windows_subsystem in release builds
+      - run: cargo build --release
+        working-directory: desktop
+      - shell: bash
+        run: cp desktop/target/release/sosh.exe "sosh-${{ needs.version.outputs.name }}-windows.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-windows
+          path: sosh-*.exe
+
+  # A universal Sosh.app in a dmg, ad-hoc signed and not notarized, as the
+  # world's below.
+  app-macos:
+    needs: version
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: both architectures
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        working-directory: desktop
+        run: |
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --target "$t"
+          done
+          lipo -create -output ../sosh target/aarch64-apple-darwin/release/sosh target/x86_64-apple-darwin/release/sosh
+          lipo -info ../sosh
+      - name: Sosh.app
+        env:
+          VERSION: ${{ needs.version.outputs.name }}
+        run: |
+          app=Sosh.app/Contents
+          mkdir -p "$app/MacOS" "$app/Resources"
+          mv sosh "$app/MacOS/sosh"
+          mkdir sosh.iconset
+          for n in 16 32 128 256 512; do
+            sips -z $n $n client/icon.png --out "sosh.iconset/icon_${n}x${n}.png" >/dev/null
+            sips -z $((n*2)) $((n*2)) client/icon.png --out "sosh.iconset/icon_${n}x${n}@2x.png" >/dev/null
+          done
+          iconutil -c icns sosh.iconset -o "$app/Resources/sosh.icns"
+          short="${VERSION%%-*}"
+          cat > "$app/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>sosh</string>
+            <key>CFBundleDisplayName</key><string>sosh</string>
+            <key>CFBundleIdentifier</key><string>app.sosh</string>
+            <key>CFBundleExecutable</key><string>sosh</string>
+            <key>CFBundleIconFile</key><string>sosh</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${short}</string>
+            <key>CFBundleVersion</key><string>${short}</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>LSApplicationCategoryType</key><string>public.app-category.social-networking</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>NSMicrophoneUsageDescription</key><string>For talking in the world.</string>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint "$app/Info.plist"
+          codesign --force --deep --sign - Sosh.app
+          codesign --verify --deep --strict --verbose=2 Sosh.app
+      - name: dmg
+        env:
+          VERSION: ${{ needs.version.outputs.name }}
+        run: |
+          mkdir dmg
+          cp -R Sosh.app dmg/
+          ln -s /Applications dmg/Applications
+          cat > "dmg/Opening sosh.txt" <<'EOF'
+          sosh isn't signed by an Apple developer, so macOS stops it the first time.
+
+          1. Drag Sosh into Applications.
+          2. Open it. macOS says it can't check it: click Done (or Cancel).
+          3. Open System Settings > Privacy & Security, scroll down to
+             "Sosh was blocked", and click Open Anyway.
+          (Before macOS 15 you can instead right-click Sosh, choose Open, then Open.)
+
+          Or, in Terminal: xattr -dr com.apple.quarantine /Applications/Sosh.app
+          EOF
+          hdiutil create -volname sosh -srcfolder dmg -ov -format UDZO "sosh-${VERSION}-macos.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-macos
+          path: sosh-*.dmg
+
   linux:
     needs: [version, pack]
     # the oldest supported runner, for the oldest glibc the AppImage needs
@@ -98,7 +254,7 @@ jobs:
           cat > AppDir/sosh.desktop <<'EOF'
           [Desktop Entry]
           Type=Application
-          Name=sosh
+          Name=sosh world
           Comment=Floating islands to hang out on together
           Exec=sosh
           Icon=sosh
@@ -112,7 +268,7 @@ jobs:
           chmod +x AppDir/AppRun
           curl -fsSLo appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
-          ARCH=x86_64 ./appimagetool AppDir "sosh-${VERSION}-x86_64.AppImage"
+          ARCH=x86_64 ./appimagetool AppDir "sosh-world-${VERSION}-x86_64.AppImage"
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -145,13 +301,13 @@ jobs:
           cd p64 && cargo rustc --release --bin chor --features ws,include_auto -- \
             -C link-arg=/SUBSYSTEM:WINDOWS -C link-arg=/ENTRY:mainCRTStartup
       - shell: bash
-        run: cp p64/target/release/chor.exe "sosh-${{ needs.version.outputs.name }}-windows.exe"
+        run: cp p64/target/release/chor.exe "sosh-world-${{ needs.version.outputs.name }}-windows.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: sosh-*.exe
 
-  # A universal (Apple Silicon and Intel) Sosh.app in a dmg. There's no
+  # A universal (Apple Silicon and Intel) "Sosh World.app" in a dmg. There's no
   # Apple Developer ID, so it's ad-hoc signed (an arm64 Mac won't run it
   # unsigned at all) and not notarized: Gatekeeper stops the first launch,
   # and the release notes say how to get past it. With a Developer ID this is
@@ -192,7 +348,7 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.name }}
         run: |
-          app=Sosh.app/Contents
+          app="Sosh World.app/Contents"
           mkdir -p "$app/MacOS" "$app/Resources"
           mv sosh "$app/MacOS/sosh"
           # the icon: client/icon.png at every size an icns wants
@@ -209,9 +365,9 @@ jobs:
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>CFBundleName</key><string>sosh</string>
-            <key>CFBundleDisplayName</key><string>sosh</string>
-            <key>CFBundleIdentifier</key><string>app.sosh</string>
+            <key>CFBundleName</key><string>sosh world</string>
+            <key>CFBundleDisplayName</key><string>sosh world</string>
+            <key>CFBundleIdentifier</key><string>app.sosh.world</string>
             <key>CFBundleExecutable</key><string>sosh</string>
             <key>CFBundleIconFile</key><string>sosh</string>
             <key>CFBundlePackageType</key><string>APPL</string>
@@ -225,27 +381,27 @@ jobs:
           </plist>
           EOF
           plutil -lint "$app/Info.plist"
-          codesign --force --deep --sign - Sosh.app
-          codesign --verify --deep --strict --verbose=2 Sosh.app
+          codesign --force --deep --sign - "Sosh World.app"
+          codesign --verify --deep --strict --verbose=2 "Sosh World.app"
       - name: dmg
         env:
           VERSION: ${{ needs.version.outputs.name }}
         run: |
           mkdir dmg
-          cp -R Sosh.app dmg/
+          cp -R "Sosh World.app" dmg/
           ln -s /Applications dmg/Applications
           cat > "dmg/Opening sosh.txt" <<'EOF'
-          sosh isn't signed by an Apple developer, so macOS stops it the first time.
+          sosh world isn't signed by an Apple developer, so macOS stops it the first time.
 
-          1. Drag Sosh into Applications.
+          1. Drag Sosh World into Applications.
           2. Open it. macOS says it can't check it: click Done (or Cancel).
           3. Open System Settings > Privacy & Security, scroll down to
-             "Sosh was blocked", and click Open Anyway.
-          (Before macOS 15 you can instead right-click Sosh, choose Open, then Open.)
+             "Sosh World was blocked", and click Open Anyway.
+          (Before macOS 15 you can instead right-click Sosh World, choose Open, then Open.)
 
-          Or, in Terminal: xattr -dr com.apple.quarantine /Applications/Sosh.app
+          Or, in Terminal: xattr -dr com.apple.quarantine "/Applications/Sosh World.app"
           EOF
-          hdiutil create -volname sosh -srcfolder dmg -ov -format UDZO "sosh-${VERSION}-macos.dmg"
+          hdiutil create -volname "sosh world" -srcfolder dmg -ov -format UDZO "sosh-world-${VERSION}-macos.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -292,7 +448,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [linux, windows, macos, android]
+    needs: [app-linux, app-windows, app-macos, linux, windows, macos, android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -302,10 +458,12 @@ jobs:
         with:
           generate_release_notes: true
           body: |
-            **Desktop:** Windows `.exe`, Linux `.AppImage` (`chmod +x` it first), macOS `.dmg` (Apple Silicon and Intel). **Android:** the `.apk`. Or play in the browser at https://sosh.makeavoy.com.
+            **Desktop:** `sosh-<version>-…`, the app: chat, servers, friends and the world. Windows `.exe`, Linux `.AppImage` (`chmod +x` it first), macOS `.dmg` (Apple Silicon and Intel).
+            **The world alone:** `sosh-world-<version>-…`, the game by itself, for the same three.
+            **Android:** the `.apk`. Or play in the browser at https://sosh.makeavoy.com.
 
             The macOS and Windows builds aren't signed by a paid developer account, so the first launch gets a warning:
-            - **macOS:** open Sosh once, then System Settings > Privacy & Security > Open Anyway (before macOS 15: right-click > Open). The dmg has the steps.
+            - **macOS:** open Sosh (or Sosh World) once, then System Settings > Privacy & Security > Open Anyway (before macOS 15: right-click > Open). The dmg has the steps.
             - **Windows:** SmartScreen's "Windows protected your PC": More info > Run anyway.
           files: |
             sosh-*.AppImage

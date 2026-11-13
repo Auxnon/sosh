@@ -8,6 +8,9 @@
 //! for checking layouts. `--click`s land a second apart once it's loaded,
 //! then `--type TEXT` (and Enter).
 
+// a windowed app on Windows: no console window behind it (debug builds keep one for logs)
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod media;
 mod models;
 mod net;
