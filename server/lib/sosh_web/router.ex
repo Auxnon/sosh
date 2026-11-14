@@ -12,6 +12,12 @@ defmodule SoshWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug SoshWeb.Api.ClientPlug
+  end
+
+  # apps too old for this server are told to update (Sosh.Clients)
+  pipeline :client do
+    plug SoshWeb.Api.ClientPlug
   end
 
   pipeline :signed_in do
@@ -23,6 +29,7 @@ defmodule SoshWeb.Router do
   scope "/api", SoshWeb.Api do
     pipe_through :api
 
+    get "/client", ClientController, :show
     post "/auth/register", AuthController, :register
     post "/auth/confirm", AuthController, :confirm
     post "/auth/resend", AuthController, :resend
@@ -69,7 +76,7 @@ defmodule SoshWeb.Router do
 
   # Pictures and carts shared in chat: uploaded with the API, served by key
   scope "/api", SoshWeb do
-    pipe_through [:signed_in]
+    pipe_through [:client, :signed_in]
     post "/media", MediaController, :create
   end
 

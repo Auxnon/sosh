@@ -295,6 +295,30 @@ defmodule SoshWeb.ApiTest do
     end
   end
 
+  describe "app versions" do
+    setup do
+      Application.put_env(:sosh, :min_client, %{"android" => "0.3.0"})
+      on_exit(fn -> Application.delete_env(:sosh, :min_client) end)
+    end
+
+    defp as_app(conn, client), do: put_req_header(conn, "x-sosh-client", client)
+
+    test "an app older than the server's minimum is told to update, before signing in too", %{conn: conn} do
+      assert %{"error" => "update_required", "min" => "0.3.0", "download" => "https://" <> _} =
+               conn |> as_app("android/0.2.1") |> get("/api/client") |> json_response(426)
+
+      assert %{"error" => "update_required"} =
+               build_conn() |> as_app("android/0.2.1") |> post("/api/auth/login", %{email: "a@b.c", password: "x"}) |> json_response(426)
+
+      for ok <- ["android/0.3.0", "android/0.4.1", "android/0.1.0-debug", "android/0.0.0-abc1234", "desktop/0.1.0", "nonsense"] do
+        assert %{"ok" => true} = build_conn() |> as_app(ok) |> get("/api/client") |> json_response(200)
+      end
+
+      # the web game and apps from before this don't say
+      assert %{"ok" => true} = build_conn() |> get("/api/client") |> json_response(200)
+    end
+  end
+
   describe "chat and gifts" do
     setup %{conn: conn} do
       %{ann: signup(conn, "ann"), ben: signup(conn, "ben"), cat: signup(conn, "cat"), plaza: Servers.home()}

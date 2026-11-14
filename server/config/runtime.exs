@@ -20,6 +20,14 @@ if System.get_env("PHX_SERVER") do
   config :sosh, SoshWeb.Endpoint, server: true
 end
 
+# The oldest Android and desktop apps this server still talks to (unset:
+# any); older ones are told to update (Sosh.Clients).
+config :sosh, :min_client,
+  %{"android" => System.get_env("SOSH_MIN_ANDROID"), "desktop" => System.get_env("SOSH_MIN_DESKTOP")}
+  |> Map.reject(fn {_, v} -> v in [nil, ""] end)
+
+if url = System.get_env("SOSH_DOWNLOAD_URL"), do: config(:sosh, :download_url, url)
+
 if config_env() == :prod do
   # The database: DATABASE_URL (ecto://USER:PASS@HOST/DATABASE), or its parts,
   # which is what the NixOS deploy passes (no URL-escaping the password).

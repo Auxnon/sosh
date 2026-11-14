@@ -107,6 +107,14 @@ if nothing but your proxy can reach it.
   certificate for `makeavoy.com, *.makeavoy.com` does; a certificate for
   `makeavoy.com` alone doesn't, and Cloudflare answers 526.
 
+## Old apps
+
+Set `SOSH_MIN_ANDROID` / `SOSH_MIN_DESKTOP` in the env file to the oldest
+app this server still talks to (see `deploy/env.example`). Older apps get
+an update screen with a link to the download instead of signing in.
+Development builds (`-debug`, `-dev`, `0.0.0-<commit>`) and the web game
+(always the server's own) are never turned away.
+
 ## Releasing
 
 ```sh
