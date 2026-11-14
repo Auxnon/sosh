@@ -209,7 +209,7 @@ end
 
 -- Build with `item` from now on (a click in the bag).
 function pick_build_item(item)
-	local info = Furn.items[item]
+	local info = Furn.item(item)
 	if info ~= nil and (info.block ~= nil or info.furniture ~= nil) then
 		APP.build_item = item
 		APP.tool = "build"
@@ -308,7 +308,7 @@ function world_pointer(me)
 			cell = hit.hit
 		elseif tool == "build" then
 			cell = hit.before
-			local info = Furn.items[APP.build_item or ""]
+			local info = Furn.item(APP.build_item)
 			if info ~= nil and info.furniture ~= nil then
 				ghost = footprint(info.furniture, cell)
 			end

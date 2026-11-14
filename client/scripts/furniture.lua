@@ -24,6 +24,8 @@
 Furn = {}
 
 SITE_LABEL_DIST = 12
+SIGN_LABEL_DIST = 6 -- tiles: signs this close show what they say
+SIGN_TEXT_MAX = 60
 GHOST_MAX = 4
 
 function Furn.init()
@@ -76,6 +78,16 @@ function Furn.set_catalog(c)
 		local it = c.items[i]
 		Furn.items[it.name] = it
 	end
+end
+
+-- What `item` is (the catalog's entry): a sign is `sign:<pin id>`, one of
+-- a kind, but placed as any sign is.
+function Furn.item(item)
+	if item == nil then
+		return nil
+	end
+	local base = item:match("^(%a+):%d+$") or item
+	return Furn.items[base]
 end
 
 function Furn.kind(name)
@@ -187,6 +199,8 @@ function Furn.set(p)
 	f.carriers = p.carriers or {}
 	f.helpers = p.helpers or {}
 	f.slots = p.slots or {}
+	-- a sign: what it says, {author, body, server} or {removed = true}
+	f.sign = p.sign
 	if f.ent == nil then
 		local model = p.kind
 		local ent = make(model, 0, 0, -1000, 1)
@@ -460,6 +474,46 @@ function Furn.show_ghost(cells, on)
 			g.z = -1000
 		end
 	end
+end
+
+-- Labels over signs nearby: the message pinned to each. {p, text, col} each.
+function Furn.sign_labels(me)
+	local out = {}
+	if me == nil then
+		return out
+	end
+	for id, f in pairs(Furn.pieces) do
+		if f.sign ~= nil and not f.lifted then
+			local o = f.origin
+			local tx, ty, tz = Ships.frame_pos(f.on, o[1], o[2], o[3])
+			if tx ~= nil then
+				local dx = tx - me.x
+				local dy = ty - me.y
+				if dx * dx + dy * dy < SIGN_LABEL_DIST * SIGN_LABEL_DIST then
+					local p = UI.project(tx, ty, tz + 1.2)
+					if p ~= nil then
+						local l = {}
+						l.p = p
+						l.text = Furn.sign_text(f.sign)
+						l.col = C_TEXT
+						table.insert(out, l)
+					end
+				end
+			end
+		end
+	end
+	return out
+end
+
+function Furn.sign_text(s)
+	if s.removed then
+		return "(this message was removed)"
+	end
+	local t = (s.author or "?") .. ": " .. (s.body or "")
+	if #t > SIGN_TEXT_MAX then
+		t = t:sub(1, SIGN_TEXT_MAX - 3) .. "..."
+	end
+	return t
 end
 
 -- Labels over blueprints nearby: what they still need. {p, text} each.

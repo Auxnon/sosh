@@ -30,6 +30,7 @@ ITEM_COLORS = {
 	carrot = "EE842A",
 	drawer = "965A3C",
 	stool = "C4966A",
+	sign = "E8D8A8",
 }
 
 function Bag.init()
@@ -65,7 +66,7 @@ function Bag.placeable()
 	for i = 1, #Bag.slots do
 		local s = Bag.slots[i]
 		if s[1] ~= nil and not seen[s[1]] then
-			local info = Furn.items[s[1]]
+			local info = Furn.item(s[1])
 			if info ~= nil and (info.block ~= nil or info.furniture ~= nil) then
 				seen[s[1]] = true
 				table.insert(out, s[1])
@@ -150,14 +151,18 @@ function Bag.grid(title, slots, x, y, w, h)
 		UI.paper(sx, sy, SLOT_W - 2, SLOT_H - 4, 4)
 		local s = slots[i]
 		if s[1] ~= nil then
-			local c = ITEM_COLORS[s[1]] or "DDDDDD"
+			local name = s[1]:match("^(%a+):%d+$") or s[1]
+			local c = ITEM_COLORS[name] or "DDDDDD"
 			gui:rrect(sx + 3, sy + 3, 8, 8, 1, c)
 			local n = tostring(s[2])
 			-- calls hoisted out of argument lists (petrichor64 SILT-BUGS.md #1)
 			local nw = UI.text_w(n)
 			UI.text(n, sx + SLOT_W - 3 - nw, sy + SLOT_H - LH - 3, C_INK)
 			if over then
-				Bag.tip = s[1] .. " x" .. n
+				Bag.tip = name .. " x" .. n
+				if name == "sign" then
+					Bag.tip = "a pinned message: place it like furniture"
+				end
 			end
 		end
 		if over and UI.clicked then

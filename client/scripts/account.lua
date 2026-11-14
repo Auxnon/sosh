@@ -17,6 +17,9 @@
 --   /dm @name text       a direct message (/w too)
 --   /give @name item [n] items for them, in the server chat; only they can
 --                        open it (/open <id>), you can take it back (/unsend)
+--   /edit text, /delete  change or remove your latest message
+--   /react +1|<3|lol|wow|sad|yay   on the latest message (again: off)
+--   /pin                 a sign of the latest message, for your bag
 --   /friend @name, /accept @name, /unfriend @name, /friends
 --   /home                back to the server list
 --
@@ -639,6 +642,35 @@ function Account.enter(s, u)
 	SERVER.on["gift"] = function(m)
 		gift_settled(m)
 	end
+	SERVER.on["edited"] = function(p)
+		local l = chat_line(p.id)
+		if l ~= nil then
+			l.raw = p.body
+			l.edited = true
+			chat_dress(l)
+		end
+	end
+	SERVER.on["deleted"] = function(p)
+		for i = #APP.chat, 1, -1 do
+			if APP.chat[i].id == p.id then
+				table.remove(APP.chat, i)
+			end
+		end
+	end
+	SERVER.on["reactions"] = function(p)
+		local l = chat_line(p.id)
+		if l ~= nil then
+			l.reactions = p.reactions
+			chat_dress(l)
+		end
+	end
+	SERVER.on["pins"] = function(p)
+		local l = chat_line(p.id)
+		if l ~= nil then
+			l.pins = p.pins
+			chat_dress(l)
+		end
+	end
 	SERVER.on["removed"] = function(p)
 		Account.leave_world()
 		APP.home_status = "you're no longer a member of " .. s.name
@@ -684,7 +716,14 @@ function chat_message(m, old)
 		col = U.hex_for(who)
 	end
 	if (m.body ~= nil and m.body ~= "") or m.media ~= nil then
-		add_chat(who, m.body, col, m.media)
+		local l = add_chat(who, m.body, col, m.media)
+		l.id = m.id
+		l.who = who
+		l.raw = m.body or ""
+		l.edited = m.edited_at ~= nil
+		l.reactions = m.reactions
+		l.pins = m.pins
+		chat_dress(l)
 	end
 	if m.gift ~= nil then
 		local to = "someone"
@@ -699,6 +738,82 @@ function chat_message(m, old)
 		end
 		add_chat(nil, line, C_ACCENT)
 	end
+end
+
+-- The emoji reactions are, as the game's font can write them.
+REACTION_WORDS = {}
+REACTION_WORDS["👍"] = "+1"
+REACTION_WORDS["❤️"] = "<3"
+REACTION_WORDS["😂"] = "lol"
+REACTION_WORDS["😮"] = "wow"
+REACTION_WORDS["😢"] = "sad"
+REACTION_WORDS["🎉"] = "yay"
+
+function chat_line(id)
+	for i = #APP.chat, 1, -1 do
+		if APP.chat[i].id == id then
+			return APP.chat[i]
+		end
+	end
+	return nil
+end
+
+-- A message line's text: what it says, then (edited), reactions and pins.
+function chat_dress(l)
+	local t = l.raw or ""
+	if l.edited then
+		t = t .. " (edited)"
+	end
+	local rs = l.reactions or {}
+	for i = 1, #rs do
+		local word = REACTION_WORDS[rs[i].emoji] or "?"
+		local n = #rs[i].users
+		t = t .. " [" .. word
+		if n > 1 then
+			t = t .. " " .. tostring(n)
+		end
+		t = t .. "]"
+	end
+	if l.pins ~= nil and l.pins > 0 then
+		t = t .. " [pinned]"
+	end
+	l.body = t
+	-- chatpane.lua lays it out again
+	l.pane_cols = nil
+end
+
+-- The latest message line in the log, ours only if `mine`.
+function chat_latest(mine)
+	local me = nil
+	if APP.account ~= nil then
+		me = APP.account.handle
+	end
+	for i = #APP.chat, 1, -1 do
+		local l = APP.chat[i]
+		if l.id ~= nil and (not mine or l.who == me) then
+			return l
+		end
+	end
+	return nil
+end
+
+-- Push `event` about message line `l` to the server's chat.
+function chat_act(event, p, done)
+	if SERVER == nil then
+		add_chat(nil, "only in a server", C_DIM)
+		return
+	end
+	PHX:push(SERVER, event, p, function(status, r)
+		if status ~= "ok" then
+			local why = "failed"
+			if r ~= nil and r.reason ~= nil then
+				why = r.reason
+			end
+			add_chat(nil, event .. ": " .. why, C_BAD)
+		elseif done ~= nil then
+			done(r)
+		end
+	end)
 end
 
 function gift_settled(m)
@@ -737,6 +852,68 @@ function Account.command(text)
 	end
 	if cmd == "/home" then
 		Account.leave_world()
+		return true
+	end
+	if cmd == "/edit" or cmd == "/delete" then
+		local l = chat_latest(true)
+		if l == nil then
+			add_chat(nil, "nothing of yours to " .. cmd:sub(2), C_DIM)
+			return true
+		end
+		local p = {}
+		p.id = l.id
+		if cmd == "/edit" then
+			p.body = text:match("^%S+%s+(.+)$")
+			if p.body == nil then
+				add_chat(nil, "/edit new text (for your latest message)", C_DIM)
+				return true
+			end
+		end
+		chat_act(cmd:sub(2), p, nil)
+		return true
+	end
+	if cmd == "/react" then
+		local l = chat_latest(false)
+		local emoji = nil
+		for e, word in pairs(REACTION_WORDS) do
+			if word == words[2] then
+				emoji = e
+			end
+		end
+		if l == nil or emoji == nil then
+			add_chat(nil, "/react +1, <3, lol, wow, sad or yay (on the latest message)", C_DIM)
+			return true
+		end
+		-- again takes it off
+		local on = true
+		local rs = l.reactions or {}
+		for i = 1, #rs do
+			if rs[i].emoji == emoji then
+				for j = 1, #rs[i].users do
+					if APP.account ~= nil and rs[i].users[j] == APP.account.id then
+						on = false
+					end
+				end
+			end
+		end
+		local p = {}
+		p.id = l.id
+		p.emoji = emoji
+		p.on = on
+		chat_act("react", p, nil)
+		return true
+	end
+	if cmd == "/pin" then
+		local l = chat_latest(false)
+		if l == nil then
+			add_chat(nil, "no message to pin", C_DIM)
+			return true
+		end
+		local p = {}
+		p.id = l.id
+		chat_act("pin", p, function(r)
+			add_chat(nil, "a sign of it is in your bag: place it like furniture", C_OK)
+		end)
 		return true
 	end
 	if cmd == "/dm" or cmd == "/w" then
@@ -828,6 +1005,6 @@ function Account.command(text)
 		end
 		return true
 	end
-	add_chat(nil, "commands: /dm /give /open /unsend /share /friend /accept /unfriend /friends /home", C_DIM)
+	add_chat(nil, "commands: /dm /give /open /unsend /edit /delete /react /pin /share /friend /accept /unfriend /friends /home", C_DIM)
 	return true
 end

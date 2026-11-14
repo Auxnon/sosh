@@ -216,8 +216,15 @@ looks, the way home and the bag, which the app has as its own screens). The clie
   change, and about DMs and gifts. See `SoshWeb.UserChannel`.
 - **`server:<id>`**: a server's chat, for its members. `post` (`body`, and
   optionally `gift: {item, count, to}` and `media`, the key of an upload) and `history`; `message`, `gift`,
-  `deleted` and `members` come in. Gifts go out wrapped: who they're for,
-  not what's in them. **`dm:<id>`** is the same for a conversation.
+  `edited`, `deleted`, `reactions`, `pins` and `members` come in. Gifts go out wrapped: who they're for,
+  not what's in them. `edit` and `delete` your own messages (moderators
+  delete anyone's), `react` with one of 👍 ❤️ 😂 😮 😢 🎉 (`on: false`
+  takes it off), and `pin` one: a sign of it goes into your bag as
+  `sign:<pin id>`, placed like furniture, and anyone near it in the world
+  reads the message (`SoshWeb.MessageOps`, `Sosh.Signs`). In the game:
+  `/edit`, `/delete`, `/react +1` (or `<3`, `lol`, `wow`, `sad`, `yay`) and
+  `/pin`, each on the latest message. **`dm:<id>`** is the same for a
+  conversation, except a DM can't be pinned.
 
 Inside a server, the client also joins two channels for its universe:
 

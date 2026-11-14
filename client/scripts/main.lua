@@ -580,6 +580,7 @@ function add_chat(name, body, col, media)
 	while #APP.chat > CHAT_LOG_MAX do
 		table.remove(APP.chat, 1)
 	end
+	return line
 end
 
 -- Tell everyone how we're moving: where we are, our velocity in tiles a

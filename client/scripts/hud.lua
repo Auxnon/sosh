@@ -224,6 +224,10 @@ function draw_world_labels()
 	for i = 1, #sites do
 		table.insert(labels, sites[i])
 	end
+	local signs = Furn.sign_labels(APP.me)
+	for i = 1, #signs do
+		table.insert(labels, signs[i])
+	end
 	-- insertion sort by depth (p[3]), farthest first; there are only a few
 	for i = 2, #labels do
 		local l = labels[i]
@@ -239,7 +243,7 @@ function draw_world_labels()
 		if l.cow ~= nil then
 			Herd.moo_bubble(l.p)
 		elseif l.text ~= nil then
-			draw_tag(l.text, l.p, C_ACCENT)
+			draw_tag(l.text, l.p, l.col or C_ACCENT)
 		else
 			UI.avatar_overlay(l.av, l.me, l.p)
 		end
