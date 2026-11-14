@@ -72,7 +72,16 @@ pub struct WorldSession {
     pub server: i64,
 }
 
+/// A newer app the server needs: at least `min`, from `download` (a web page).
+#[derive(Clone, Debug)]
+pub struct Update {
+    pub min: String,
+    pub download: String,
+}
+
 pub struct State {
+    /// The server needs a newer app; nothing else shows.
+    pub update: Option<Update>,
     pub ctx: egui::Context,
     pub wake: Wake,
     jobs_tx: Sender<Job>,
@@ -156,7 +165,9 @@ impl State {
             world_server: None,
             notice: None,
             saved,
+            update: None,
         };
+        st.check_version();
         if st.saved.token.is_some() {
             st.restoring = true;
             st.run(
@@ -194,9 +205,29 @@ impl State {
         let wake = self.wake.clone();
         std::thread::spawn(move || {
             let r = call(&api);
-            let _ = tx.send(Box::new(move |st: &mut State| done(st, r)));
+            let _ = tx.send(Box::new(move |st: &mut State| {
+                if let Err(e) = &r {
+                    st.refused(e);
+                }
+                done(st, r)
+            }));
             wake();
         });
+    }
+
+    /// A server that needs a newer app says so on every request: from then
+    /// on that's all there is (`ui::update`).
+    fn refused(&mut self, e: &ApiError) {
+        if e.reason == "update_required" {
+            let s = |k: &str| e.body.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
+            self.update = Some(Update { min: s("min"), download: s("download") });
+        }
+    }
+
+    /// Ask the server whether this app is new enough (before signing in).
+    pub fn check_version(&mut self) {
+        self.update = None;
+        self.run(|api| api.get("/client"), |_, _| {});
     }
 
     /// Run `call`, putting any error in the notice; `ok` gets the answer.
@@ -330,6 +361,7 @@ impl State {
         self.saved.server = Some(u.clone());
         self.saved.save();
         self.api = Api::new(&u, self.api.token.clone());
+        self.check_version();
         // the game comes from the server: a new one may have it
         if matches!(self.game, GameCart::Failed) {
             self.game = GameCart::Wanted;
@@ -508,6 +540,21 @@ impl State {
             "deleted" => {
                 let id = p.get("id").and_then(Value::as_i64).unwrap_or(-1);
                 self.messages.retain(|m| m.id != id);
+            }
+            "edited" => {
+                let (body, at) = (p.get("body").and_then(Value::as_str).unwrap_or("").to_owned(), p.get("edited_at").and_then(Value::as_str).map(str::to_owned));
+                self.change(p, |m| {
+                    m.body = body;
+                    m.edited_at = at;
+                });
+            }
+            "reactions" => {
+                let rs = Reaction::list(p.get("reactions"));
+                self.change(p, |m| m.reactions = rs);
+            }
+            "pins" => {
+                let n = p.get("pins").and_then(Value::as_i64).unwrap_or(0);
+                self.change(p, |m| m.pins = n);
             }
             "members" => self.load_members(),
             "removed" => {
@@ -796,6 +843,58 @@ impl State {
 
     pub fn delete_message(&mut self, id: i64) {
         self.attempt(move |api| api.delete(&format!("/messages/{id}")), |_, _| {});
+    }
+
+    /// The message `p.id` names, changed by `f`.
+    fn change(&mut self, p: &Value, f: impl FnOnce(&mut Message)) {
+        let id = p.get("id").and_then(Value::as_i64).unwrap_or(-1);
+        if let Some(m) = self.messages.iter_mut().find(|m| m.id == id) {
+            f(m);
+        }
+    }
+
+    /// Push `event` about a message on the open chat; `done` hears the reply.
+    fn act(&mut self, event: &str, payload: Value, done: fn(&mut State, &Value)) {
+        self.push_chat(
+            event,
+            payload,
+            Box::new(move |st, status, r| {
+                if status == "ok" {
+                    done(st, r);
+                } else if status == "offline" {
+                    st.notify("Not connected.");
+                } else {
+                    st.notify(&describe(r.get("reason").and_then(Value::as_str).unwrap_or(""), None));
+                }
+            }),
+        );
+    }
+
+    pub fn edit_message(&mut self, id: i64, body: &str) {
+        self.act("edit", json!({"id": id, "body": body}), |st, r| {
+            if let Some(m) = r.get("message") {
+                st.upsert(Message::from(m), true);
+            }
+        });
+    }
+
+    /// Our `emoji` on `m`, or off it if it's there already.
+    pub fn react(&mut self, m: &Message, emoji: &str) {
+        let me = self.me.as_ref().map(|me| me.id);
+        let on = !m.reactions.iter().any(|r| r.emoji == emoji && me.is_some_and(|me| r.users.contains(&me)));
+        self.act("react", json!({"id": m.id, "emoji": emoji, "on": on}), |st, r| {
+            let rs = Reaction::list(r.get("reactions"));
+            st.change(r, |m| m.reactions = rs);
+        });
+    }
+
+    /// A sign of message `id` into our pockets, to place in the world.
+    pub fn pin(&mut self, id: i64) {
+        self.act("pin", json!({"id": id}), |st, r| {
+            let n = r.get("pins").and_then(Value::as_i64).unwrap_or(0);
+            st.change(r, |m| m.pins = n);
+            st.notify("A sign of it is in your pockets: place it in the world.");
+        });
     }
 
     // -- servers and members

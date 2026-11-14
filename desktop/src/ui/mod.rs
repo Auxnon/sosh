@@ -33,6 +33,34 @@ pub struct View {
     /// The pocket picked up to swap.
     pub picked: Option<usize>,
     pub last_gen: u64,
+    /// Our message being edited in place, and its text so far.
+    pub editing: Option<(i64, String)>,
+}
+
+/// The server needs a newer app (`Sosh.Clients`): nothing else works until
+/// then, so this is all there is, with the way to the download.
+fn update(root: &mut Ui, st: &mut State, v: &mut View, full: Rect, u: &crate::state::Update) {
+    let w = 440.0f32.min(full.width() - 32.0);
+    let card = Rect::from_center_size(full.center(), vec2(w, 230.0));
+    plastic(root.painter(), card, 28.0, PAPER, EDGE, 5.0, 0.0);
+    root.scope_builder(UiBuilder::new().max_rect(card.shrink(20.0)), |ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 12.0);
+        ui.label(RichText::new("Time to update").font(font(EXTRA, 22.0)).color(INK));
+        let server = st.server_url().trim_start_matches("https://").to_owned();
+        let have = crate::net::CLIENT;
+        ui.label(RichText::new(format!("{server} needs sosh {} or newer. This is {have}.", u.min)).font(font(MEDIUM, 15.0)).color(INK_DIM));
+        let full_w = ui.available_width();
+        if text_button(ui, "Get the new version", vec2(full_w, 48.0), Tone::Orange).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(&u.download));
+        }
+        if ui.add(egui::Label::new(RichText::new("Use another server").font(font(BOLD, 13.0)).color(INK_LINK)).sense(egui::Sense::click())).clicked() {
+            st.update = None;
+            if st.me.is_some() {
+                st.logout();
+            }
+            v.auth.mode = auth::Mode::Server;
+        }
+    });
 }
 
 pub fn draw(root: &mut Ui, st: &mut State, v: &mut View) {
@@ -44,6 +72,11 @@ pub fn draw(root: &mut Ui, st: &mut State, v: &mut View) {
     st.world.hover = false;
     st.play.hover = false;
     theme::ground(root.painter(), full);
+
+    if let Some(u) = st.update.clone() {
+        update(root, st, v, full, &u);
+        return;
+    }
 
     if st.me.is_none() {
         if st.restoring {

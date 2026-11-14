@@ -22,7 +22,17 @@ pub struct ApiError {
     pub status: u16,
     pub reason: String,
     pub message: String,
+    /// The server's whole answer (`update_required` carries `min`, `download`).
+    pub body: Value,
 }
+
+/// Who we are, to the server (`X-Sosh-Client`): a release says its tag's
+/// version (`SOSH_VERSION`, set by release.yml); anything else is a
+/// development build, which servers never turn away.
+pub const CLIENT: &str = match option_env!("SOSH_VERSION") {
+    Some(v) => v,
+    None => concat!(env!("CARGO_PKG_VERSION"), "-dev"),
+};
 
 pub type ApiResult = Result<Value, ApiError>;
 
@@ -64,9 +74,11 @@ impl Api {
         let url = format!("{}/api{}", self.base, path);
         let agent = Self::agent();
         let auth = self.token.as_ref().map(|t| format!("Bearer {t}"));
+        let client = format!("desktop/{CLIENT}");
         let res = match method {
             "GET" | "DELETE" => {
                 let mut r = if method == "GET" { agent.get(&url) } else { agent.delete(&url) };
+                r = r.header("x-sosh-client", &client);
                 if let Some(a) = &auth {
                     r = r.header("authorization", a);
                 }
@@ -78,6 +90,7 @@ impl Api {
                     "PATCH" => agent.patch(&url),
                     _ => agent.post(&url),
                 };
+                r = r.header("x-sosh-client", &client);
                 if let Some(a) = &auth {
                     r = r.header("authorization", a);
                 }
@@ -90,10 +103,10 @@ impl Api {
     /// Upload a file (`POST /api/media`): the bytes are the body.
     pub fn upload(&self, bytes: Vec<u8>, name: &str) -> ApiResult {
         if bytes.len() > MAX_UPLOAD {
-            return Err(ApiError { status: 413, reason: "too_big".into(), message: describe("too_big", None) });
+            return Err(ApiError { status: 413, reason: "too_big".into(), message: describe("too_big", None), body: json!({}) });
         }
         let url = format!("{}/api/media?name={}", self.base, encode(name));
-        let mut r = Self::agent().post(&url).header("content-type", "application/octet-stream");
+        let mut r = Self::agent().post(&url).header("content-type", "application/octet-stream").header("x-sosh-client", &format!("desktop/{CLIENT}"));
         if let Some(t) = &self.token {
             r = r.header("authorization", &format!("Bearer {t}"));
         }
@@ -113,7 +126,7 @@ impl Api {
     }
 
     fn finish(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> ApiResult {
-        let res = res.map_err(|_| ApiError { status: 0, reason: "offline".into(), message: "Can't reach the server.".into() })?;
+        let res = res.map_err(|_| ApiError { status: 0, reason: "offline".into(), message: "Can't reach the server.".into(), body: json!({}) })?;
         let status = res.status().as_u16();
         let text = res.into_body().read_to_string().unwrap_or_default();
         let obj: Value = serde_json::from_str(&text).unwrap_or(json!({}));
@@ -122,7 +135,7 @@ impl Api {
         } else {
             let reason = obj.get("error").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| format!("http_{status}"));
             let message = describe(&reason, Some(&obj));
-            Err(ApiError { status, reason, message })
+            Err(ApiError { status, reason, message, body: obj })
         }
     }
 
@@ -180,6 +193,9 @@ pub fn describe(reason: &str, body: Option<&Value>) -> String {
         "bad_media" => "Only png, jpeg, gif and webp pictures (and games).",
         "too_big" => "That's over 8 MB.",
         "offline" => "Can't reach the server.",
+        "update_required" => "This app is too old for the server: update it.",
+        "bag_full" => "No room in your pockets.",
+        "not_in_a_server" => "Only server messages can be pinned.",
         _ => "",
     };
     if known.is_empty() { reason.replace('_', " ") } else { known.to_owned() }

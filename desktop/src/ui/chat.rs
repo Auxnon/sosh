@@ -8,7 +8,7 @@ use egui::{Align, Align2, Color32, CornerRadius, Frame, Id, Margin, Rect, RichTe
 
 use super::View;
 use crate::media::Pics;
-use crate::models::{Media, Message};
+use crate::models::{EMOJI, Media, Message};
 use crate::state::{GameCart, Pane, Place, Screen, State};
 use crate::theme::*;
 
@@ -240,9 +240,26 @@ fn bubble(ui: &mut Ui, st: &mut State, v: &mut View, m: &Message, time: f64) {
         let click = ui.interact(r, id, Sense::click());
         let mine = st.me.as_ref().map(|me| me.id) == m.author.as_ref().map(|a| a.id);
         let moderator = st.open_server().map(|s| s.can("manage_messages")).unwrap_or(false);
+        let in_server = matches!(st.place, Some(Place::InServer(_)));
         click.context_menu(|ui| {
+            ui.horizontal(|ui| {
+                for e in EMOJI {
+                    if ui.button(RichText::new(e).size(18.0)).clicked() {
+                        st.react(m, e);
+                        ui.close();
+                    }
+                }
+            });
             if !m.body.is_empty() && ui.button("Copy text").clicked() {
                 ui.ctx().copy_text(m.body.clone());
+                ui.close();
+            }
+            if in_server && ui.button("Pin as a sign").on_hover_text("A sign of it for your pockets, to place in the world").clicked() {
+                st.pin(m.id);
+                ui.close();
+            }
+            if mine && ui.button("Edit").clicked() {
+                v.editing = Some((m.id, m.body.clone()));
                 ui.close();
             }
             if (mine || moderator) && ui.button(RichText::new("Delete").color(DANGER_INK)).clicked() {
@@ -260,7 +277,9 @@ fn bubble(ui: &mut Ui, st: &mut State, v: &mut View, m: &Message, time: f64) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-            if !m.body.is_empty() {
+            if v.editing.as_ref().is_some_and(|(id, _)| *id == m.id) {
+                edit_box(ui, st, v, m);
+            } else if !m.body.is_empty() {
                 let me = st.me.as_ref().map(|m| m.handle.clone());
                 ui.label(mentions(&m.body, me.as_deref(), ui.available_width()));
             }
@@ -270,12 +289,61 @@ fn bubble(ui: &mut Ui, st: &mut State, v: &mut View, m: &Message, time: f64) {
             if m.gift.is_some() {
                 present_card(ui, st, m);
             }
+            if !m.reactions.is_empty() || m.pins > 0 {
+                reactions(ui, st, m);
+            }
         })
         .response;
     let r = resp.rect;
     name_tag_at(ui.painter(), pos2(r.left() + 14.0, r.top() - 2.0), &who, 13.0, -3.0);
-    ui.painter().text(pos2(r.right() - 14.0, r.top() + 9.0), Align2::RIGHT_TOP, m.time(), font(TECH, 9.0), INK_FAINT);
+    let time = if m.edited_at.is_some() { format!("{} · EDITED", m.time()) } else { m.time().to_owned() };
+    ui.painter().text(pos2(r.right() - 14.0, r.top() + 9.0), Align2::RIGHT_TOP, time, font(TECH, 9.0), INK_FAINT);
     ui.data_mut(|d| d.insert_temp(id, r));
+}
+
+/// Our message's text being changed: Enter saves, Escape (or Cancel) doesn't.
+fn edit_box(ui: &mut Ui, st: &mut State, v: &mut View, m: &Message) {
+    let Some((_, text)) = v.editing.as_mut() else { return };
+    let out = ui.add(egui::TextEdit::multiline(text).desired_rows(2).desired_width(f32::INFINITY).font(font(MEDIUM, 15.0)).text_color(INK));
+    out.request_focus();
+    let (enter, escape) = ui.input(|i| (i.key_pressed(egui::Key::Enter) && !i.modifiers.shift, i.key_pressed(egui::Key::Escape)));
+    let mut save = enter;
+    let mut cancel = escape;
+    ui.horizontal(|ui| {
+        save |= ui.button("Save").clicked();
+        cancel |= ui.button("Cancel").clicked();
+    });
+    if save {
+        let body = text.trim().to_owned();
+        if !body.is_empty() || m.media.is_some() || m.gift.is_some() {
+            st.edit_message(m.id, &body);
+        }
+        v.editing = None;
+    } else if cancel {
+        v.editing = None;
+    }
+}
+
+/// The emoji on a message, each with how many; ours ringed. A click adds
+/// ours or takes it off.
+fn reactions(ui: &mut Ui, st: &mut State, m: &Message) {
+    let me = st.me.as_ref().map(|me| me.id);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+        for r in &m.reactions {
+            let mine = me.is_some_and(|me| r.users.contains(&me));
+            let chip = egui::Button::new(RichText::new(format!("{} {}", r.emoji, r.users.len())).font(font(BOLD, 13.0)).color(INK_DIM))
+                .fill(if mine { ACCENT.gamma_multiply(0.35) } else { PAPER_DEEP })
+                .corner_radius(CornerRadius::same(12));
+            if ui.add(chip).clicked() {
+                st.react(m, &r.emoji);
+            }
+        }
+        if m.pins > 0 {
+            let t = if m.pins == 1 { "pinned".to_owned() } else { format!("pinned ×{}", m.pins) };
+            ui.label(RichText::new(t).font(font(MEDIUM, 12.0)).color(INK_FAINT));
+        }
+    });
 }
 
 /// @handles highlighted, ours most of all.

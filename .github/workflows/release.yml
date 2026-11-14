@@ -82,6 +82,9 @@ jobs:
           workspaces: desktop
       - run: cargo build --release
         working-directory: desktop
+        env:
+          # what it tells servers it is (desktop/src/net.rs)
+          SOSH_VERSION: ${{ needs.version.outputs.name }}
       - name: AppImage
         env:
           VERSION: ${{ needs.version.outputs.name }}
@@ -126,6 +129,9 @@ jobs:
       # windowed (no console) by main.rs's windows_subsystem in release builds
       - run: cargo build --release
         working-directory: desktop
+        env:
+          # what it tells servers it is (desktop/src/net.rs)
+          SOSH_VERSION: ${{ needs.version.outputs.name }}
       - shell: bash
         run: cp desktop/target/release/sosh.exe "sosh-${{ needs.version.outputs.name }}-windows.exe"
       - uses: actions/upload-artifact@v4
@@ -149,6 +155,7 @@ jobs:
       - name: both architectures
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
+          SOSH_VERSION: ${{ needs.version.outputs.name }}
         working-directory: desktop
         run: |
           for t in aarch64-apple-darwin x86_64-apple-darwin; do

@@ -36,6 +36,13 @@ been clicked) goes to it.
   chat and runs fenced off (`Policy::sandbox()`): no network, files,
   clipboard, console, other carts, microphone or host channel. Esc or the
   cross closes it.
+- **Messages**: right-click one to react, pin it (a sign for your pockets,
+  to place in the world: in a server only), or edit or delete your own.
+- **Updates**: every request says `X-Sosh-Client: desktop/<version>`, the
+  release's tag (`SOSH_VERSION`, set by `release.yml`), or
+  `<Cargo version>-dev` for any other build, which servers never turn away.
+  A server that needs a newer app (`SOSH_MIN_DESKTOP`) gets the update
+  screen and nothing else.
 
 ## Layout
 

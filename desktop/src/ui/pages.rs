@@ -184,10 +184,11 @@ pub fn bag(ui: &mut Ui, st: &mut State, v: &mut View) {
                 );
                 if let Some(s) = slot {
                     let tile = Rect::from_center_size(r.center() - vec2(0.0, 6.0), vec2(34.0, 34.0));
-                    p.rect_filled(tile, CornerRadius::same(8), handle_color(&s.item));
-                    let letter: String = s.item.chars().take(1).flat_map(|c| c.to_uppercase()).collect();
+                    let kind = crate::models::item_kind(&s.item);
+                    p.rect_filled(tile, CornerRadius::same(8), handle_color(kind));
+                    let letter: String = kind.chars().take(1).flat_map(|c| c.to_uppercase()).collect();
                     p.text(tile.center(), Align2::CENTER_CENTER, letter, font(EXTRA, 17.0), INK);
-                    p.text(r.center_bottom() - vec2(0.0, 8.0), Align2::CENTER_BOTTOM, &s.item, font(BOLD, 11.0), INK_DIM);
+                    p.text(r.center_bottom() - vec2(0.0, 8.0), Align2::CENTER_BOTTOM, kind, font(BOLD, 11.0), INK_DIM);
                     p.text(r.right_top() + vec2(-8.0, 6.0), Align2::RIGHT_TOP, s.count.to_string(), font(EXTRA, 12.0), INK);
                 }
                 if resp.hovered() {

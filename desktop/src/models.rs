@@ -194,6 +194,43 @@ pub struct Message {
     pub at: String,
     pub gift: Option<Gift>,
     pub media: Option<Media>,
+    pub edited_at: Option<String>,
+    pub reactions: Vec<Reaction>,
+    /// How many signs were made of it (pinned).
+    pub pins: i64,
+}
+
+/// What messages can be reacted with (`Sosh.Chat.reactions/0`).
+pub const EMOJI: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🎉"];
+
+/// One emoji on a message, and who put it there (user ids).
+#[derive(Clone, Debug)]
+pub struct Reaction {
+    pub emoji: String,
+    pub users: Vec<i64>,
+}
+
+impl Reaction {
+    pub fn list(v: Option<&Value>) -> Vec<Reaction> {
+        v.and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|r| Reaction {
+                        emoji: s(r, "emoji"),
+                        users: r.get("users").and_then(Value::as_array).map(|u| u.iter().filter_map(Value::as_i64).collect()).unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// What kind of thing an item is: a pinned message's sign is `sign:<id>`.
+pub fn item_kind(item: &str) -> &str {
+    match item.split_once(':') {
+        Some((k, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => k,
+        _ => item,
+    }
 }
 
 impl Message {
@@ -205,6 +242,9 @@ impl Message {
             at: s(v, "at"),
             gift: Gift::from(v.get("gift")),
             media: Media::from(v.get("media")),
+            edited_at: opt_s(v, "edited_at"),
+            reactions: Reaction::list(v.get("reactions")),
+            pins: i(v, "pins"),
         }
     }
 
