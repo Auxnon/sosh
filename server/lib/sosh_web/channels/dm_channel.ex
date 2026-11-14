@@ -3,7 +3,8 @@ defmodule SoshWeb.DmChannel do
   `dm:<conversation id>`: a direct conversation, for its two people (open
   one by handle with `user:<id>` `dm_open`). The join replies `%{with,
   messages}`. Events and requests as `SoshWeb.ServerChannel`: `message`,
-  `gift`, `deleted`; `post`, `history`.
+  `gift`, `edited`, `deleted`, `reactions`; `post`, `history`, `edit`,
+  `delete`, `react` (a DM can't be pinned).
   """
   use Phoenix.Channel
 
@@ -37,6 +38,9 @@ defmodule SoshWeb.DmChannel do
     msgs = Chat.dm_history(socket.assigns.conversation_id, socket.assigns.account, before)
     {:reply, {:ok, %{messages: msgs}}, socket}
   end
+
+  def handle_in(event, p, socket) when event in ~w(edit delete react pin),
+    do: {:reply, SoshWeb.MessageOps.handle(event, p, socket.assigns.account), socket}
 
   def handle_in(_, _, socket), do: {:reply, {:error, %{reason: "bad_request"}}, socket}
 end

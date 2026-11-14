@@ -74,6 +74,16 @@ pub const KINDS: &[Kind] = &[
         itemizable: false,
         recipe: &[("wood", 8), ("stone", 1)],
     },
+    // a pinned chat message, placed (its item is `sign:<pin id>`, kept in
+    // `Furniture::note`); never built, and it packs back into a bag
+    Kind {
+        name: "sign",
+        size: (1, 1, 1),
+        slots: 0,
+        carriers: 1,
+        itemizable: true,
+        recipe: &[],
+    },
     // what's left when furniture breaks and its contents don't fit the
     // breaker's bag; it goes when emptied
     Kind {
@@ -142,6 +152,9 @@ pub struct Furniture {
     pub origin: Pos,
     pub rot: u8,
     pub slots: Vec<Slot>,
+    /// What makes this one itself: a sign's pin id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// Who's holding it; it lifts once there are `carriers` of them.
     #[serde(skip)]
     pub grips: Vec<Grip>,
@@ -161,6 +174,7 @@ impl Furniture {
             origin,
             rot: rot % 4,
             slots: items::empty(kind.slots),
+            note: None,
             grips: Vec::new(),
             lifted: false,
             at: (0.0, 0.0, 0.0),
@@ -183,6 +197,14 @@ impl Furniture {
             .iter()
             .fold((0.0, 0.0), |(a, b), c| (a + c.0 as f64, b + c.1 as f64));
         (sx / n, sy / n, self.origin.2 as f64)
+    }
+
+    /// The item it packs into: its kind's, or a sign's own.
+    pub fn item(&self) -> String {
+        match &self.note {
+            Some(n) if self.kind == "sign" => format!("sign:{n}"),
+            _ => self.kind.clone(),
+        }
     }
 
     pub fn helpers(&self) -> impl Iterator<Item = u32> + '_ {

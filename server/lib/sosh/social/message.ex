@@ -8,11 +8,14 @@ defmodule Sosh.Social.Message do
     field :count, :integer
     field :claimed_at, :utc_datetime
     field :cancelled_at, :utc_datetime
+    field :edited_at, :utc_datetime
     belongs_to :server, Sosh.Social.Server
     belongs_to :conversation, Sosh.Social.Conversation
     belongs_to :author, Sosh.Accounts.User
     belongs_to :recipient, Sosh.Accounts.User
     belongs_to :media, Sosh.Social.Medium
+    has_many :reactions, Sosh.Social.Reaction
+    has_many :pins, Sosh.Social.Pin
 
     timestamps(type: :utc_datetime)
   end

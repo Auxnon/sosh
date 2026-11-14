@@ -815,6 +815,7 @@ impl Sim {
         let id = self.new_id();
         let mut f = Furniture::new(id, kind, p, rot);
         f.on = on;
+        f.note = items::sign_id(item).map(|n| n.to_string());
         self.put_furniture(f);
         Ok(())
     }
@@ -914,6 +915,10 @@ impl Sim {
             .map(|(i, n)| (i.to_string(), n))
             .collect();
         back.extend(f.slots.iter().flatten().map(|s| (s.item.clone(), s.n)));
+        // a sign isn't made of anything: breaking it gives it back whole
+        if f.note.is_some() {
+            back.push((f.item(), 1));
+        }
         self.remove_furniture(id);
         self.give(bag, back, on, origin, rot);
         Ok(())
@@ -1006,13 +1011,14 @@ impl Sim {
             return Err("already_carried");
         }
         let k = f.info();
+        let item = f.item();
         if k.itemizable
             && f.grips.is_empty()
             && items::is_empty(&f.slots)
-            && items::room_for(bag, k.name) > 0
+            && items::room_for(bag, &item) > 0
         {
             self.remove_furniture(id);
-            items::add(bag, k.name, 1);
+            items::add(bag, &item, 1);
             return Ok(Grabbed::Pocketed);
         }
         let f = self.furniture.get_mut(&id).expect("checked");

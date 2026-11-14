@@ -18,9 +18,17 @@ defmodule Sosh.Chat do
   A message can carry a picture or a cart (`media`, the key of something
   its author uploaded: `Sosh.Media`).
 
+  Its author can edit it (`edit/3`: `edited`) and delete it (`delete/2`,
+  as can a server's moderators: `deleted`). Anyone in the chat can react
+  with one of `reactions/0` (`react/4`: `reactions`), and pin a server
+  message (`pin/2`: `pins`), which puts a sign in their bag that shows the
+  message wherever they place it (`Sosh.Signs`).
+
   Messages as clients see them (`view/2`): `%{id, server_id,
-  conversation_id, author, body, at, gift, media}`, `author` public,
-  `media` nil or `Sosh.Media.view/1`, `gift` nil or
+  conversation_id, author, body, at, edited_at, gift, media, reactions,
+  pins}`, `author` public, `media` nil or `Sosh.Media.view/1`,
+  `reactions` `[%{emoji, users}]` (user ids, in `reactions/0` order),
+  `pins` how many signs were made of it, `gift` nil or
   `%{to, state, item, count}` with state `"sealed"`, `"opened"` or
   `"returned"`; `item` and `count` are only there for the author, and for
   the recipient once it's opened.
@@ -29,9 +37,11 @@ defmodule Sosh.Chat do
 
   alias Sosh.{Accounts, Friends, Lobby, Media, Players, RateLimit, Repo, Servers, Universe}
   alias Sosh.Accounts.User
-  alias Sosh.Social.{Conversation, Membership, Message, Server}
+  alias Sosh.Social.{Conversation, Membership, Message, Pin, Reaction, Server}
 
   @max_body 2000
+  @reactions ["👍", "❤️", "😂", "😮", "😢", "🎉"]
+  @preload [:author, :recipient, :media, :reactions, :pins]
   @page 50
   @max_count 999
 
@@ -84,7 +94,7 @@ defmodule Sosh.Chat do
             where: m.conversation_id == ^c.id,
             order_by: [desc: m.id],
             limit: 1,
-            preload: [:author, :recipient, :media]
+            preload: ^@preload
         )
 
       %{id: c.id, with: User.public(other), last: last && view(last, user)}
@@ -103,7 +113,7 @@ defmodule Sosh.Chat do
   defp page(q, viewer, before) do
     q = if is_integer(before), do: from(m in q, where: m.id < ^before), else: q
 
-    from(m in q, order_by: [desc: m.id], limit: @page, preload: [:author, :recipient, :media])
+    from(m in q, order_by: [desc: m.id], limit: @page, preload: ^@preload)
     |> Repo.all()
     |> Enum.reverse()
     |> Enum.map(&view(&1, viewer))
@@ -120,10 +130,24 @@ defmodule Sosh.Chat do
       author: m.author && User.public(m.author),
       body: m.body,
       at: m.inserted_at,
+      edited_at: m.edited_at,
       gift: gift_view(m, viewer_id),
-      media: media_view(m)
+      media: media_view(m),
+      reactions: reactions_view(m.reactions),
+      pins: if(is_list(m.pins), do: length(m.pins), else: 0)
     }
   end
+
+  @doc "The emoji messages can be reacted with."
+  def reactions, do: @reactions
+
+  defp reactions_view(rs) when is_list(rs) do
+    for e <- @reactions, users = for(r <- rs, r.emoji == e, do: r.user_id), users != [] do
+      %{emoji: e, users: users}
+    end
+  end
+
+  defp reactions_view(_), do: []
 
   defp media_view(%Message{media: %Sosh.Social.Medium{} = md}), do: Media.view(md)
   defp media_view(_), do: nil
@@ -318,7 +342,7 @@ defmodule Sosh.Chat do
         case Players.update_bag(me.handle, &Universe.bag_give(&1, m.item, m.count)) do
           {:ok, bag} ->
             bag_changed(me, bag)
-            m = Repo.preload(m, [:author, :recipient, :media])
+            m = Repo.preload(m, @preload)
             announce(place_of(m), "gift", view(m, nil))
             {:ok, view(m, me)}
 
@@ -351,8 +375,101 @@ defmodule Sosh.Chat do
       end
 
       Repo.delete!(m)
+      Sosh.Signs.forget()
       announce(place_of(m), "deleted", %{id: m.id})
       :ok
+    end
+  end
+
+  @doc "Change the text of your own message. `{:ok, view}` or `{:error, reason}`."
+  def edit(%User{} = me, message_id, body) do
+    body = body |> to_string() |> String.trim() |> String.slice(0, @max_body)
+
+    with :ok <- RateLimit.hit({:chat, me.id}, 20, 10_000),
+         %Message{} = m <- Repo.get(Message, message_id) || {:error, :no_such_message},
+         true <- m.author_id == me.id || {:error, :forbidden},
+         {:ok, _} <- may_post(me, where(m)),
+         true <- (body != "" or m.item != nil or m.media_id != nil) || {:error, :empty} do
+      m =
+        m
+        |> Ecto.Changeset.change(body: body, edited_at: DateTime.utc_now(:second))
+        |> Repo.update!()
+
+      Sosh.Signs.forget()
+      announce(place_of(m), "edited", %{id: m.id, body: m.body, edited_at: m.edited_at})
+      {:ok, view(Repo.preload(m, @preload), me)}
+    end
+  end
+
+  @doc """
+  Put your `emoji` (one of `reactions/0`) on a message you can see, or take
+  it off (`on` false). `{:ok, %{id, reactions}}` or `{:error, reason}`.
+  """
+  def react(%User{} = me, message_id, emoji, on \\ true) do
+    with :ok <- RateLimit.hit({:react, me.id}, 30, 10_000),
+         true <- emoji in @reactions || {:error, :bad_emoji},
+         %Message{} = m <- Repo.get(Message, message_id) || {:error, :no_such_message},
+         :ok <- may_see(me, m) do
+      if on do
+        Repo.insert(%Reaction{message_id: m.id, user_id: me.id, emoji: emoji},
+          on_conflict: :nothing,
+          conflict_target: [:message_id, :user_id, :emoji]
+        )
+      else
+        Repo.delete_all(
+          from r in Reaction,
+            where: r.message_id == ^m.id and r.user_id == ^me.id and r.emoji == ^emoji
+        )
+      end
+
+      rs = reactions_view(Repo.all(from r in Reaction, where: r.message_id == ^m.id, order_by: r.id))
+      announce(place_of(m), "reactions", %{id: m.id, reactions: rs})
+      {:ok, %{id: m.id, reactions: rs}}
+    end
+  end
+
+  @doc """
+  Pin a server message: a sign showing it goes into your bag, as the item
+  `sign:<pin id>` (`Sosh.Signs`), to place in the world like furniture.
+  `{:ok, %{id, pins, item}}`, or `{:error, reason}` (`:bag_full`, say).
+  """
+  def pin(%User{} = me, message_id) do
+    with :ok <- RateLimit.hit({:pin, me.id}, 10, 60_000),
+         %Message{} = m <- Repo.get(Message, message_id) || {:error, :no_such_message},
+         true <- m.server_id != nil || {:error, :not_in_a_server},
+         :ok <- may_see(me, m) do
+      pin = Repo.insert!(%Pin{message_id: m.id, user_id: me.id})
+      item = "sign:#{pin.id}"
+
+      case Players.update_bag(me.handle, &Universe.bag_give(&1, item, 1)) do
+        {:ok, bag} ->
+          bag_changed(me, bag)
+          n = Repo.aggregate(from(p in Pin, where: p.message_id == ^m.id), :count)
+          announce(place_of(m), "pins", %{id: m.id, pins: n})
+          {:ok, %{id: m.id, pins: n, item: item}}
+
+        {:error, why} ->
+          Repo.delete!(pin)
+          {:error, String.to_atom(why)}
+      end
+    end
+  end
+
+  defp where(%Message{server_id: nil, conversation_id: c}), do: {:dm, c}
+  defp where(%Message{server_id: s}), do: {:server, s}
+
+  # Can `me` read the chat `m` is in?
+  defp may_see(me, %Message{server_id: nil, conversation_id: c}) do
+    case get_conversation(c) do
+      %Conversation{} = conv -> if in_conversation?(conv, me.id), do: :ok, else: {:error, :forbidden}
+      nil -> {:error, :no_such_conversation}
+    end
+  end
+
+  defp may_see(me, %Message{server_id: s}) do
+    case Servers.get(s) do
+      nil -> {:error, :no_such_server}
+      server -> if Servers.can?(server, me.id, :chat), do: :ok, else: {:error, :forbidden}
     end
   end
 

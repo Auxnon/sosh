@@ -60,6 +60,14 @@ pub const ITEMS: &[ItemInfo] = &[
         block: None,
         furniture: Some("stool"),
     },
+    // a chat message pinned (Sosh.Chat.pin): one of a kind, so a bag holds
+    // it as `sign:<id>`, the pin's id; placed, it's a sign showing it
+    ItemInfo {
+        name: "sign",
+        stack: 1,
+        block: None,
+        furniture: Some("sign"),
+    },
 ];
 
 /// What a new player starts with: enough to build a few things.
@@ -72,7 +80,16 @@ pub const STARTER: &[(&str, u16)] = &[
 ];
 
 pub fn info(name: &str) -> Option<&'static ItemInfo> {
+    let name = match sign_id(name) {
+        Some(_) => "sign",
+        None => name,
+    };
     ITEMS.iter().find(|i| i.name == name)
+}
+
+/// The pin a `sign:<id>` item stands for.
+pub fn sign_id(name: &str) -> Option<u64> {
+    name.strip_prefix("sign:")?.parse().ok()
 }
 
 /// The item a dug block becomes.
@@ -221,6 +238,16 @@ mod tests {
         assert_eq!(add(&mut b, "drawer", 6), 2);
         assert_eq!(room_for(&b, "wood"), 64 - 16);
         assert_eq!(room_for(&b, "drawer"), 0);
+    }
+
+    #[test]
+    fn signs_are_one_of_a_kind() {
+        assert_eq!(info("sign:42").unwrap().furniture, Some("sign"));
+        assert!(info("sign:x").is_none());
+        let mut b = empty(2);
+        assert_eq!(add(&mut b, "sign:1", 1), 0);
+        assert_eq!(add(&mut b, "sign:1", 1), 0, "another of the same pin takes its own slot");
+        assert_eq!(add(&mut b, "sign:2", 1), 1, "no room left");
     }
 
     #[test]

@@ -477,5 +477,60 @@ defmodule SoshWeb.ApiTest do
       Servers.leave(Sosh.Accounts.get_by_handle("cat"), Servers.home().id)
       assert %{"error" => "forbidden"} = authed(ann) |> post("/api/dms/cat/messages", %{body: "hi"}) |> json_response(403)
     end
+
+    test "edit your own, react, delete: everyone in the chat hears", %{ann: ann, ben: ben, plaza: p} do
+      SoshWeb.Endpoint.subscribe("server:#{p.id}")
+
+      %{"message" => %{"id" => id, "edited_at" => nil, "reactions" => [], "pins" => 0}} =
+        authed(ann) |> post("/api/servers/#{p.id}/messages", %{body: "helo"}) |> json_response(200)
+
+      assert %{"error" => "forbidden"} = authed(ben) |> patch("/api/messages/#{id}", %{body: "mine now"}) |> json_response(403)
+      assert %{"message" => %{"body" => "hello", "edited_at" => at}} =
+               authed(ann) |> patch("/api/messages/#{id}", %{body: " hello "}) |> json_response(200)
+      assert at != nil
+      assert_receive %Phoenix.Socket.Broadcast{event: "edited", payload: %{id: ^id, body: "hello"}}
+
+      assert %{"reactions" => [%{"emoji" => "👍", "users" => [_]}]} =
+               authed(ben) |> post("/api/messages/#{id}/react", %{emoji: "👍"}) |> json_response(200)
+      # twice is still once
+      authed(ben) |> post("/api/messages/#{id}/react", %{emoji: "👍"}) |> json_response(200)
+      authed(ann) |> post("/api/messages/#{id}/react", %{emoji: "🎉"}) |> json_response(200)
+      # in the order reactions/0 lists them
+      assert %{"reactions" => [%{"emoji" => "👍", "users" => [_, _]}, %{"emoji" => "🎉"}]} =
+               authed(ann) |> post("/api/messages/#{id}/react", %{emoji: "👍"}) |> json_response(200)
+      assert_receive %Phoenix.Socket.Broadcast{event: "reactions", payload: %{id: ^id}}
+      assert %{"error" => "bad_emoji"} = authed(ben) |> post("/api/messages/#{id}/react", %{emoji: "x"}) |> json_response(422)
+      assert %{"reactions" => [%{"emoji" => "👍", "users" => [_]}, _]} =
+               authed(ben) |> post("/api/messages/#{id}/react", %{emoji: "👍", on: false}) |> json_response(200)
+
+      assert %{"messages" => [%{"body" => "hello", "reactions" => [_, _]}]} =
+               authed(ben) |> get("/api/servers/#{p.id}/messages") |> json_response(200)
+
+      assert %{"error" => "forbidden"} = authed(ben) |> delete("/api/messages/#{id}") |> json_response(403)
+      assert authed(ann) |> delete("/api/messages/#{id}") |> json_response(200)
+      assert_receive %Phoenix.Socket.Broadcast{event: "deleted", payload: %{id: ^id}}
+    end
+
+    test "pinning a server message makes a sign for your bag that shows it", %{ann: ann, ben: ben, plaza: p} do
+      %{"message" => %{"id" => id}} =
+        authed(ann) |> post("/api/servers/#{p.id}/messages", %{body: "meet at the dock"}) |> json_response(200)
+
+      assert %{"item" => "sign:" <> pin, "pins" => 1} = authed(ben) |> post("/api/messages/#{id}/pin") |> json_response(200)
+      assert {"sign:#{pin}", 1} in Players.bag("ben")
+      pin = String.to_integer(pin)
+
+      assert %{sign: %{author: "ann", body: "meet at the dock", server: _}} = Sosh.Signs.dress(%{id: 1, sign: pin})
+      assert %{"messages" => [%{"pins" => 1}]} = authed(ben) |> get("/api/servers/#{p.id}/messages") |> json_response(200)
+
+      # it follows edits, and says so once the message is gone
+      authed(ann) |> patch("/api/messages/#{id}", %{body: "meet at the mill"}) |> json_response(200)
+      assert %{body: "meet at the mill"} = Sosh.Signs.text(pin)
+      authed(ann) |> delete("/api/messages/#{id}") |> json_response(200)
+      assert %{removed: true} = Sosh.Signs.text(pin)
+
+      # direct messages stay private
+      %{"message" => %{"id" => dm}} = authed(ann) |> post("/api/dms/ben/messages", %{body: "psst"}) |> json_response(200)
+      assert %{"error" => "not_in_a_server"} = authed(ben) |> post("/api/messages/#{dm}/pin") |> json_response(422)
+    end
   end
 end

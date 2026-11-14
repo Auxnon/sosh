@@ -462,6 +462,32 @@ fn small_empty_furniture_packs_into_the_bag() {
 }
 
 #[test]
+fn a_sign_stays_itself_placed_pocketed_broken_and_saved() {
+    let mut s = flat();
+    let mut bag = bag_with(&[("sign:7", 1)]);
+    assert_eq!(s.place(0, (4, 4, 0), "sign:7", 1, &mut bag), Ok(()));
+    assert_eq!(count(&bag, "sign:7"), 0);
+    let id = s.furniture_at(0, (4, 4, 0)).unwrap();
+    assert_eq!(s.furniture[&id].note.as_deref(), Some("7"));
+
+    // it survives a save
+    let mut t = flat();
+    let json = serde_json::to_string(&s.save(0)).unwrap();
+    t.restore(serde_json::from_str(&json).unwrap());
+    assert_eq!(t.furniture[&id].note.as_deref(), Some("7"));
+
+    assert_eq!(s.grab("p", (4.0, 3.0, 0.0), id, &mut bag), Ok(Grabbed::Pocketed));
+    assert_eq!(count(&bag, "sign:7"), 1);
+    assert_eq!(count(&bag, "sign"), 0);
+
+    // broken, it comes back whole (it isn't made of anything)
+    s.place(0, (4, 4, 0), "sign:7", 0, &mut bag).unwrap();
+    s.dig("p", 0, (4, 4, 0), &mut bag).unwrap();
+    assert_eq!(count(&bag, "sign:7"), 1);
+    assert!(s.furniture.is_empty());
+}
+
+#[test]
 fn heavy_furniture_needs_two() {
     let (mut s, _, dresser) = furnished();
     let mut bag = bag_with(&[]);

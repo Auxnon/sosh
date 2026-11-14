@@ -183,6 +183,7 @@ fn furniture_term<'a>(env: Env<'a>, f: &Furniture) -> Term<'a> {
             ("lifted", f.lifted.encode(env)),
             ("carriers", carriers.encode(env)),
             ("helpers", helpers.encode(env)),
+            ("sign", opt(env, f.note.as_deref().and_then(|n| n.parse::<u64>().ok()))),
             ("slots", slots(env, &f.slots)),
         ],
     )

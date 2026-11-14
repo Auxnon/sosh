@@ -54,6 +54,14 @@ defmodule SoshWeb.Api.ChatController do
 
   def delete(conn, %{"id" => id}), do: reply(conn, Chat.delete(conn.assigns.user, to_int(id)))
 
+  def update(conn, %{"id" => id, "body" => body}),
+    do: reply(conn, Chat.edit(conn.assigns.user, to_int(id), body), &%{message: &1})
+
+  def react(conn, %{"id" => id, "emoji" => e} = p),
+    do: reply(conn, Chat.react(conn.assigns.user, to_int(id), e, p["on"] != false), & &1)
+
+  def pin(conn, %{"id" => id}), do: reply(conn, Chat.pin(conn.assigns.user, to_int(id)), & &1)
+
   @doc false
   def conversation(me, handle) do
     case Accounts.get_by_handle(handle) do

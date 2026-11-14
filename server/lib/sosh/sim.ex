@@ -31,7 +31,8 @@ defmodule Sosh.Sim do
     * `block_changed` `%{position, block, block_type}`
     * `carry` `%{user_id, block, cow, furniture}` - what someone holds now
     * `furniture` - a piece changed: `%{id, kind, on, origin, rot, lifted,
-      carriers, helpers, slots}`; `furniture_gone` `%{id}`
+      carriers, helpers, slots, sign}` (`sign` nil, or what a sign says:
+      `Sosh.Signs`); `furniture_gone` `%{id}`
     * `site` - a blueprint changed: `%{id, kind, on, origin, rot, have,
       need}`; `site_gone` `%{id}`
     * `travel` `%{ship, users, to: [gx, gy]}` - a ship flew into the
@@ -241,6 +242,7 @@ defmodule Sosh.Sim do
     snap =
       Map.merge(snap, %{
         cows: Enum.map(snap.cows, &row/1),
+        furniture: Enum.map(snap.furniture, &Sosh.Signs.dress/1),
         universe: [gx, gy],
         kind: state.kind
       })
@@ -588,6 +590,7 @@ defmodule Sosh.Sim do
     end
   end
 
+  defp emit(state, :furniture, f), do: broadcast(state, "furniture", Sosh.Signs.dress(f))
   defp emit(state, event, payload), do: broadcast(state, to_string(event), payload)
 
   defp broadcast(state, event, payload),

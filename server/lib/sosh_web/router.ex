@@ -62,6 +62,9 @@ defmodule SoshWeb.Router do
     post "/messages/:id/claim", ChatController, :claim
     post "/messages/:id/cancel", ChatController, :cancel
     delete "/messages/:id", ChatController, :delete
+    patch "/messages/:id", ChatController, :update
+    post "/messages/:id/react", ChatController, :react
+    post "/messages/:id/pin", ChatController, :pin
   end
 
   # Pictures and carts shared in chat: uploaded with the API, served by key
