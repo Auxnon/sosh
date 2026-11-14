@@ -57,6 +57,12 @@ The fonts are under the SIL Open Font License (`FONTS.md`).
   shows roles and lets you moderate as far as your role allows.
 - **Chat** is `server:<id>` or `dm:<id>` on the socket, with history over
   the API. Saying something in the world puts it in the server's chat too.
+  Hold a message down to react, pin it (a sign for your pockets, to place
+  in the world: in a server only), or edit or delete your own.
+- **Updates**: every request says which app this is (`X-Sosh-Client:
+  android/<version>`). A server that needs a newer one (`SOSH_MIN_ANDROID`)
+  answers `update_required`, and the app shows nothing but the way to the
+  download. Debug builds are never turned away.
 - **Pockets** are your bag. In a server, the backpack in the corner of
   the world opens them over it (tap it, or drag it up); the rail's
   backpack opens them as a page. Drag a pocket onto another to swap them

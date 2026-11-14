@@ -94,6 +94,18 @@ data class Gift(val to: Person?, val state: String, val item: String?, val count
     }
 }
 
+/** One emoji on a message, and who put it there (user ids). */
+data class Reaction(val emoji: String, val users: List<Long>) {
+    companion object {
+        fun list(a: JSONArray?): List<Reaction> = (0 until (a?.length() ?: 0)).mapNotNull { i ->
+            a!!.optJSONObject(i)?.let { o ->
+                val u = o.optJSONArray("users")
+                Reaction(o.optString("emoji"), (0 until (u?.length() ?: 0)).map { u!!.optLong(it) })
+            }
+        }
+    }
+}
+
 data class Message(
     val id: Long,
     val author: Person?,
@@ -101,11 +113,20 @@ data class Message(
     val at: String,
     val gift: Gift?,
     val media: Media? = null,
+    val editedAt: String? = null,
+    val reactions: List<Reaction> = emptyList(),
+    /** How many signs were made of it (pinned). */
+    val pins: Int = 0,
 ) {
     companion object {
+        /** What messages can be reacted with (`Sosh.Chat.reactions/0`). */
+        val EMOJI = listOf("👍", "❤️", "😂", "😮", "😢", "🎉")
+
         fun from(o: JSONObject) = Message(
             o.optLong("id"), Person.from(o.optJSONObject("author")), o.optString("body"),
             o.optString("at"), Gift.from(o.optJSONObject("gift")), Media.from(o.optJSONObject("media")),
+            o.optString("edited_at").takeIf { !o.isNull("edited_at") && it.isNotEmpty() },
+            Reaction.list(o.optJSONArray("reactions")), o.optInt("pins"),
         )
     }
 }

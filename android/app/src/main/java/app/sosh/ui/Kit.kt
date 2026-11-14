@@ -156,7 +156,7 @@ fun Label(text: String, modifier: Modifier = Modifier, color: Color = TextDim, s
 }
 
 @DrawableRes
-private fun iconOf(item: String): Int? = when (item) {
+private fun iconOf(item: String): Int? = when (itemKind(item)) {
     "grass" -> R.drawable.item_grass
     "dirt" -> R.drawable.item_dirt
     "stone" -> R.drawable.item_stone
@@ -171,8 +171,12 @@ private fun iconOf(item: String): Int? = when (item) {
     "carrot" -> R.drawable.item_carrot
     "drawer" -> R.drawable.item_drawer
     "stool" -> R.drawable.item_stool
+    "sign" -> R.drawable.item_sign
     else -> null
 }
+
+/** What kind of thing an item is: a pinned message's sign is `sign:<id>`. */
+fun itemKind(item: String): String = Regex("^([a-z]+):\\d+$").find(item)?.groupValues?.get(1) ?: item
 
 /** An item as the game draws it: its pixel icon, or a lettered tile. */
 @Composable

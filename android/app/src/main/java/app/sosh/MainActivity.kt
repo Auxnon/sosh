@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import app.sosh.ui.AuthScreen
+import app.sosh.ui.UpdateScreen
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
 import coil3.gif.AnimatedImageDecoder
@@ -57,6 +58,7 @@ class MainActivity : ComponentActivity() {
                 BackHandler(enabled = screen != Screen.Chat) { back() }
                 Box(Modifier.fillMaxSize().retro(app.look)) {
                     when {
+                        app.update != null -> UpdateScreen(app, app.update!!)
                         app.me == null && app.restoring -> Centered("signing in...")
                         app.me == null -> AuthScreen(app)
                         else -> when (screen) {

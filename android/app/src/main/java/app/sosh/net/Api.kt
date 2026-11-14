@@ -14,14 +14,23 @@ class ApiError(val status: Int, val reason: String, message: String) : Exception
 
 /**
  * The account API (`/api`, see the server's router): JSON in, JSON out,
- * signed in with `Authorization: Bearer <token>`.
+ * signed in with `Authorization: Bearer <token>`. Every request says which
+ * app this is (`X-Sosh-Client`); a server that needs a newer one answers
+ * `update_required` (with `min` and `download`), handed to `onUpdate`.
  */
-class Api(private val base: String, var token: String? = null) {
+class Api(private val base: String, var token: String? = null, private val onUpdate: (JSONObject) -> Unit = {}) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("X-Sosh-Client", CLIENT).build()) }
         .build()
     private val json = "application/json".toMediaType()
+
+    private fun refused(code: Int, obj: JSONObject): ApiError {
+        val reason = obj.optString("error", "http_$code")
+        if (reason == "update_required") onUpdate(obj)
+        return ApiError(code, reason, describe(reason, obj))
+    }
 
     suspend fun get(path: String): JSONObject = call("GET", path, null)
     suspend fun post(path: String, body: JSONObject = JSONObject()): JSONObject = call("POST", path, body)
@@ -37,10 +46,7 @@ class Api(private val base: String, var token: String? = null) {
         client.newCall(b.build()).execute().use { r ->
             val text = r.body?.string().orEmpty()
             val obj = try { JSONObject(text) } catch (e: Exception) { JSONObject() }
-            if (!r.isSuccessful) {
-                val reason = obj.optString("error", "http_${r.code}")
-                throw ApiError(r.code, reason, describe(reason, obj))
-            }
+            if (!r.isSuccessful) throw refused(r.code, obj)
             obj
         }
     }
@@ -58,16 +64,19 @@ class Api(private val base: String, var token: String? = null) {
             client.newCall(b.build()).execute().use { r ->
                 val text = r.body?.string().orEmpty()
                 val obj = try { JSONObject(text) } catch (e: Exception) { JSONObject() }
-                if (!r.isSuccessful) {
-                    val reason = obj.optString("error", "http_${r.code}")
-                    throw ApiError(r.code, reason, describe(reason, obj))
-                }
+                if (!r.isSuccessful) throw refused(r.code, obj)
                 obj
             }
         }
 
     companion object {
+        /** Who we are, to the server: `android/<version>`. */
+        val CLIENT = "android/" + app.sosh.BuildConfig.VERSION_NAME
+
         private val messages = mapOf(
+            "update_required" to "This app is too old for the server: update it.",
+            "bag_full" to "No room in your pockets.",
+            "not_in_a_server" to "Only server messages can be pinned.",
             "bad_login" to "Wrong email or password.",
             "unconfirmed" to "Confirm your email first: we sent a new code.",
             "bad_code" to "That code didn't work.",

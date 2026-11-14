@@ -60,6 +60,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
@@ -562,20 +564,66 @@ private fun Messages(app: AppState, drag: PocketDrag, modifier: Modifier) {
             )
         }
     }
-    menuFor?.let { m ->
-        val mine = m.author?.id == app.me?.id
-        val mod = (app.place as? Place.InServer)?.let { app.server(it.id)?.can("manage_messages") } == true
-        AlertDialog(
-            onDismissRequest = { menuFor = null },
-            containerColor = Paper, titleContentColor = Ink, textContentColor = InkDim,
-            title = { Text("Message") },
-            text = { Text(m.body.ifEmpty { m.media?.label ?: "(a present)" }) },
-            confirmButton = {
-                if (mine || mod) TextButton({ app.deleteMessage(m); menuFor = null }) { Text("Delete", color = Color(0xFFC2413A)) }
-            },
-            dismissButton = { TextButton({ menuFor = null }) { Text("Close", color = InkLink) } },
-        )
-    }
+    menuFor?.let { m -> MessageMenu(app, m) { menuFor = null } }
+}
+
+/**
+ * A message held down: react to it, pin it (a sign for the pockets, in a
+ * server), and for its author edit it; its author or a moderator deletes it.
+ */
+@Composable
+private fun MessageMenu(app: AppState, m: Message, close: () -> Unit) {
+    val mine = m.author?.id == app.me?.id
+    val inServer = app.place is Place.InServer
+    val mod = (app.place as? Place.InServer)?.let { app.server(it.id)?.can("manage_messages") } == true
+    var editing by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = close,
+        containerColor = Paper, titleContentColor = Ink, textContentColor = InkDim,
+        title = { Text(if (editing != null) "Edit" else "Message") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val e = editing
+                if (e != null) {
+                    OutlinedTextField(
+                        e, { editing = it }, Modifier.fillMaxWidth(), maxLines = 6, shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Ink, unfocusedTextColor = Ink, cursorColor = Ink,
+                            focusedContainerColor = Color(0xFFFFFBEE), unfocusedContainerColor = Color(0xFFFFFBEE),
+                        ),
+                    )
+                } else {
+                    Text(m.body.ifEmpty { m.media?.label ?: "(a present)" }, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Message.EMOJI.forEach { emoji ->
+                            val on = m.reactions.any { it.emoji == emoji && app.me?.id in it.users }
+                            Box(
+                                Modifier.size(40.dp).clip(RoundedCornerShape(20.dp))
+                                    .background(if (on) Accent.copy(alpha = 0.35f) else Color.Transparent)
+                                    .clickable(onClickLabel = emoji) { app.react(m, emoji); close() },
+                                contentAlignment = Alignment.Center,
+                            ) { Text(emoji, fontSize = 22.sp) }
+                        }
+                    }
+                    if (inServer) {
+                        TextButton({ app.pin(m); close() }) { Text("Pin as a sign", color = InkLink, fontWeight = FontWeight.Bold) }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val e = editing
+            if (e != null) {
+                TextButton({ app.editMessage(m, e); close() }, enabled = e.isNotBlank() || m.media != null || m.gift != null) {
+                    Text("Save", color = InkLink, fontWeight = FontWeight.Bold)
+                }
+            } else Row {
+                if (mine) TextButton({ editing = m.body }) { Text("Edit", color = InkLink) }
+                if (mine || mod) TextButton({ app.deleteMessage(m); close() }) { Text("Delete", color = Color(0xFFC2413A)) }
+            }
+        },
+        dismissButton = { TextButton(close) { Text(if (editing != null) "Cancel" else "Close", color = InkLink) } },
+    )
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -592,9 +640,33 @@ private fun Bubble(app: AppState, m: Message, onMenu: () -> Unit) {
             if (m.body.isNotEmpty()) Text(mentions(m.body, app.me?.handle), color = Ink, fontSize = 15.sp, lineHeight = 21.sp)
             m.media?.let { MediaCard(app, it) }
             if (m.gift != null) PresentCard(app, m)
+            if (m.reactions.isNotEmpty() || m.pins > 0) Reactions(app, m)
         }
         NameTag(who, Modifier.offset(14.dp, (-12).dp))
-        Label(m.at.drop(11).take(5), Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 14.dp), color = InkFaint)
+        val time = m.at.drop(11).take(5) + if (m.editedAt != null) " · edited" else ""
+        Label(time, Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 14.dp), color = InkFaint)
+    }
+}
+
+/** The emoji on a message, each with how many; ours ringed, a tap takes ours off or adds it. */
+@Composable
+private fun Reactions(app: AppState, m: Message) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        m.reactions.forEach { r ->
+            val mine = app.me?.id in r.users
+            Row(
+                Modifier.clip(RoundedCornerShape(12.dp))
+                    .background(if (mine) Accent.copy(alpha = 0.3f) else PaperDeep)
+                    .clickable(onClickLabel = r.emoji) { app.react(m, r.emoji) }
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(r.emoji, fontSize = 14.sp)
+                Text(r.users.size.toString(), color = InkDim, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (m.pins > 0) Text(if (m.pins == 1) "pinned" else "pinned ×${m.pins}", color = InkFaint, fontSize = 12.sp)
     }
 }
 

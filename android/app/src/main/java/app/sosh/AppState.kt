@@ -13,6 +13,7 @@ import app.sosh.data.Friends
 import app.sosh.data.Me
 import app.sosh.data.Member
 import app.sosh.data.Message
+import app.sosh.data.Reaction
 import app.sosh.data.Server
 import app.sosh.data.SessionStore
 import app.sosh.data.Slot
@@ -39,6 +40,9 @@ sealed class Place {
  * side (stacked, held upright), or all world with the chat over it.
  */
 enum class Pane { Chat, Both, World }
+
+/** A newer app the server needs: at least `min`, from `download` (a web page). */
+data class Update(val min: String, val download: String)
 
 /**
  * Everything the app knows and does. The REST API (`Api`) signs in and
@@ -86,12 +90,27 @@ class AppState(context: Context, private val scope: CoroutineScope) {
     /** A line to show briefly (errors, confirmations). */
     var notice: String? by mutableStateOf(null)
 
-    private var api = Api(serverUrl)
+    /** The server needs a newer app: the version, and where to get it. Nothing else shows. */
+    var update by mutableStateOf<Update?>(null)
+        private set
+
+    private fun newApi(base: String, token: String?) = Api(base, token) { o ->
+        scope.launch(Dispatchers.Main) { update = Update(o.optString("min"), o.optString("download")) }
+    }
+
+    /** Ask the server whether this app is new enough (before signing in). */
+    private fun checkVersion() = scope.launch {
+        update = null
+        try { api.get("/client") } catch (e: Exception) { }
+    }
+
+    private var api = newApi(serverUrl, null)
     private var socket: PhoenixSocket? = null
     private var user: PhoenixSocket.Channel? = null
     private var chat: PhoenixSocket.Channel? = null
 
     init {
+        checkVersion()
         store.token?.let { saved ->
             restoring = true
             api.token = saved
@@ -124,7 +143,8 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         val u = url.trim().trimEnd('/')
         serverUrl = u
         store.server = u
-        api = Api(u, token)
+        api = newApi(u, token)
+        checkVersion()
     }
 
     /** The websocket address for the API's server. */
@@ -198,6 +218,12 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         token = t
         me = m
         connect()
+    }
+
+    /** From the update screen: off this server, to sign in to another. */
+    fun signOutToServerPicker() {
+        update = null
+        if (me != null) logout()
     }
 
     fun logout() {
@@ -315,6 +341,45 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         ch.on("message") { m -> upsert(Message.from(m)) }
         ch.on("gift") { m -> upsert(Message.from(m), keepMine = true) }
         ch.on("deleted") { d -> messages.removeAll { it.id == d.optLong("id") } }
+        ch.on("edited") { d ->
+            change(d.optLong("id")) { it.copy(body = d.optString("body"), editedAt = d.optString("edited_at")) }
+        }
+        ch.on("reactions") { d -> change(d.optLong("id")) { it.copy(reactions = Reaction.list(d.optJSONArray("reactions"))) } }
+        ch.on("pins") { d -> change(d.optLong("id")) { it.copy(pins = d.optInt("pins")) } }
+    }
+
+    private fun change(id: Long, f: (Message) -> Message) {
+        val i = messages.indexOfFirst { it.id == id }
+        if (i >= 0) messages[i] = f(messages[i])
+    }
+
+    /** Push `event` about a message to the open chat; `done` with the reply. */
+    private fun act(event: String, payload: JSONObject, done: (JSONObject) -> Unit = {}) {
+        val ch = chat
+        if (ch == null) {
+            notice = "Not connected."
+            return
+        }
+        ch.push(event, payload) { status, r ->
+            if (status == "ok") done(r) else notice = Api.describe(r.optString("reason"))
+        }
+    }
+
+    fun editMessage(m: Message, body: String) =
+        act("edit", JSONObject().put("id", m.id).put("body", body)) { r -> upsert(Message.from(r.getJSONObject("message")), keepMine = true) }
+
+    /** Our `emoji` on `m`, or off it if it's there already. */
+    fun react(m: Message, emoji: String) {
+        val on = m.reactions.none { it.emoji == emoji && me?.id in it.users }
+        act("react", JSONObject().put("id", m.id).put("emoji", emoji).put("on", on)) { r ->
+            change(m.id) { it.copy(reactions = Reaction.list(r.optJSONArray("reactions"))) }
+        }
+    }
+
+    /** A sign of `m` into our pockets, to place in the world. */
+    fun pin(m: Message) = act("pin", JSONObject().put("id", m.id)) { r ->
+        change(m.id) { it.copy(pins = r.optInt("pins")) }
+        notice = "A sign of it is in your pockets: place it in the world."
     }
 
     private fun setMessages(a: JSONArray?) {
