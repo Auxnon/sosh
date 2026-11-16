@@ -74,6 +74,44 @@ pub const KINDS: &[Kind] = &[
         itemizable: false,
         recipe: &[("wood", 8), ("stone", 1)],
     },
+    // somewhere to lie down (the game lays you on it)
+    Kind {
+        name: "bed",
+        size: (1, 2, 1),
+        slots: 0,
+        carriers: 2,
+        itemizable: false,
+        recipe: &[("wood", 6)],
+    },
+    // a door to walk through (the game lets you pass its cells)
+    Kind {
+        name: "door",
+        size: (1, 1, 2),
+        slots: 0,
+        carriers: 1,
+        itemizable: true,
+        recipe: &[("wood", 3)],
+    },
+    // a door into a pocket room of its own (`Sim::use_door`): the room
+    // belongs to whoever first goes through, and outlives the door
+    Kind {
+        name: "hyperdoor",
+        size: (1, 1, 2),
+        slots: 0,
+        carriers: 1,
+        itemizable: true,
+        recipe: &[("wood", 4), ("stone", 6)],
+    },
+    // the way back out, inside a pocket room; part of the room, so it
+    // can't be broken or moved
+    Kind {
+        name: "hyperexit",
+        size: (1, 1, 2),
+        slots: 0,
+        carriers: 1,
+        itemizable: false,
+        recipe: &[],
+    },
     // a pinned chat message, placed (its item is `sign:<pin id>`, kept in
     // `Furniture::note`); never built, and it packs back into a bag
     Kind {
@@ -205,6 +243,32 @@ impl Furniture {
             Some(n) if self.kind == "sign" => format!("sign:{n}"),
             _ => self.kind.clone(),
         }
+    }
+
+    /// Part of where it stands: never broken, picked up or carried.
+    pub fn fixed(&self) -> bool {
+        self.kind == "hyperexit"
+    }
+
+    /// The pocket room a hyperdoor leads to, once someone's been through.
+    pub fn pocket(&self) -> Option<u32> {
+        if self.kind != "hyperdoor" {
+            return None;
+        }
+        self.note.as_deref()?.parse().ok()
+    }
+
+    /// One cell out from its front (-y, turned with it), at its base: where
+    /// someone coming out of it stands, in its frame.
+    pub fn front(&self) -> (f64, f64, f64) {
+        let (dx, dy) = match self.rot % 4 {
+            0 => (0, -1),
+            1 => (1, 0),
+            2 => (0, 1),
+            _ => (-1, 0),
+        };
+        let o = self.origin;
+        ((o.0 + dx) as f64, (o.1 + dy) as f64, o.2 as f64)
     }
 
     pub fn helpers(&self) -> impl Iterator<Item = u32> + '_ {

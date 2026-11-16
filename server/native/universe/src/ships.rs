@@ -21,7 +21,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::terrain::{
-    cell, Pos, Terrain, AIR, BALLOON, DECK, HALF, HELM, HULL, RAIL, WATER, WOOD, Z_MAX, Z_MIN,
+    cell, Pos, Terrain, AIR, BALLOON, DECK, HALF, HELM, HULL, RAIL, STONE, WATER, WOOD, Z_MAX,
+    Z_MIN,
 };
 
 pub const SPEED: f64 = 7.0; // tiles a second, flat out
@@ -158,6 +159,61 @@ pub struct Ship {
     pub pilot_gone: Option<i64>,
     #[serde(skip)]
     pub sent: Option<(f64, f64, f64, f64)>,
+    /// Not a ship at all but a pocket room behind a hyperdoor: it never
+    /// moves, and it sits far off where nothing outside can reach it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pocket: Option<Pocket>,
+}
+
+/// A room behind a hyperdoor. It's whose went through first, and outlives
+/// its door: without one, nobody gets in until its owner goes through a new
+/// hyperdoor, which leads back to it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pocket {
+    /// The owner's name (account handle).
+    pub owner: String,
+    /// The hyperdoor that leads in, by furniture id.
+    #[serde(default)]
+    pub door: Option<u32>,
+}
+
+/// A pocket room's inside runs -ROOM..=ROOM across, its floor at local z -1
+/// and its ceiling at ROOM_H.
+pub const ROOM: i32 = 4;
+pub const ROOM_H: i32 = 5;
+/// Pocket rooms sit this high over the universe, this far apart: out of
+/// sight, and out of anything's reach.
+pub const POCKET_Z: f64 = 1000.0;
+pub const POCKET_GAP: f64 = 40.0;
+
+/// A pocket room's shell: a floor of planks, stone walls and a ceiling.
+pub fn room_blocks() -> BTreeMap<Pos, u8> {
+    let mut b = BTreeMap::new();
+    let r = ROOM + 1;
+    for x in -r..=r {
+        for y in -r..=r {
+            b.insert((x, y, -1), DECK);
+            b.insert((x, y, ROOM_H), WOOD);
+            if x.abs() == r || y.abs() == r {
+                for z in 0..ROOM_H {
+                    b.insert((x, y, z), STONE);
+                }
+            }
+        }
+    }
+    b
+}
+
+/// Is `p` part of a pocket room's shell, which nothing breaks?
+pub fn shell(p: Pos) -> bool {
+    let r = ROOM + 1;
+    p.2 <= -1 || p.2 >= ROOM_H || p.0.abs() >= r || p.1.abs() >= r
+}
+
+/// Inside a pocket room's walls.
+pub fn inside(l: (f64, f64, f64)) -> bool {
+    let r = ROOM as f64 + 0.5;
+    l.0.abs() < r && l.1.abs() < r && l.2 > -0.5 && l.2 < ROOM_H as f64
 }
 
 /// Blocks as a list of `[x, y, z, block]`: JSON keys can't be tuples.
@@ -265,6 +321,7 @@ impl Ship {
             riders: Vec::new(),
             pilot_gone: None,
             sent: None,
+            pocket: None,
         }
     }
 

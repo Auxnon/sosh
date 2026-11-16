@@ -60,6 +60,18 @@ pub const ITEMS: &[ItemInfo] = &[
         block: None,
         furniture: Some("stool"),
     },
+    ItemInfo {
+        name: "door",
+        stack: 4,
+        block: None,
+        furniture: Some("door"),
+    },
+    ItemInfo {
+        name: "hyperdoor",
+        stack: 1,
+        block: None,
+        furniture: Some("hyperdoor"),
+    },
     // a chat message pinned (Sosh.Chat.pin): one of a kind, so a bag holds
     // it as `sign:<id>`, the pin's id; placed, it's a sign showing it
     ItemInfo {

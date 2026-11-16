@@ -415,6 +415,69 @@ defmodule SoshWeb.ActionChannelTest do
       assert count(bag, "stool") == 0
       assert_broadcast("furniture", %{kind: "stool", origin: [3, 3, 0], rot: 2})
     end
+
+    test "a hyperdoor leads into a room of its own and back out", %{actions: actions} do
+      ref = push(actions, "build_action", %{"kind" => "hyperdoor", "position" => [2, 2, 0]})
+      assert_reply(ref, :ok, _)
+
+      for _ <- 1..2 do
+        ref = push(actions, "deposit_action", %{"position" => [2, 2, 0]})
+        assert_reply(ref, :ok, %{built: built})
+        if built, do: send(self(), {:built, built})
+      end
+
+      assert_received {:built, door}
+
+      stand(actions, [2.0, 1.0, 0])
+      ref = push(actions, "door_action", %{"furniture" => door})
+      assert_reply(ref, :ok, %{on: room, at: [x, y, z]})
+      assert_broadcast("ship", %{id: ^room, pocket: "builder", door: ^door})
+      assert_broadcast("furniture", %{kind: "hyperexit", on: ^room, id: exit})
+
+      # inside: its walls hold, and its way out leads back to the door
+      Lobby.update(actions.assigns.user_id, %{on: room, local: [x, y, z], v: [0, 0]})
+      ref = push(actions, "dig_action", %{"position" => [0, 0, -1], "on" => room})
+      assert_reply(ref, :error, %{reason: "the_walls_hold"})
+      ref = push(actions, "door_action", %{"furniture" => exit})
+      assert_reply(ref, :ok, %{on: 0, at: [2.0, 1.0, +0.0]})
+
+      # broken with someone inside: they're put out, and the room shuts
+      Lobby.update(actions.assigns.user_id, %{on: room, local: [x, y, z], v: [0, 0]})
+      Sim.tick(@plaza, System.os_time(:millisecond))
+      Lobby.update(actions.assigns.user_id, %{on: 0, local: nil, at: [2.0, 1.0, 0]})
+      ref = push(actions, "dig_action", %{"position" => [2, 2, 0]})
+      assert_reply(ref, :ok, _)
+      assert_broadcast("evicted", %{ship: ^room, on: 0, at: [2.0, 1.0, +0.0]})
+      assert_broadcast("ship", %{id: ^room, door: nil})
+    end
+
+    test "a player picked up can wiggle free", %{actions: actions} do
+      {:ok, other} = connect(SoshWeb.UserSocket, %{})
+      {:ok, _, theirs} = enter(other, "lifted", [1.5, 0.5, 0])
+      them = theirs.assigns.user_id
+
+      ref = push(actions, "pick_up_action", %{"player" => them})
+      assert_reply(ref, :ok, %{how: "player"})
+      assert_broadcast("carry", %{player: ^them})
+
+      now = System.os_time(:millisecond)
+
+      for n <- 1..20, reduce: :carried do
+        :free ->
+          :free
+
+        :carried ->
+          :ok = Sim.tick(@plaza, now + n * 100)
+          ref = push(theirs, "wiggle", %{})
+          assert_reply(ref, :ok, %{free: free})
+          if free, do: :free, else: :carried
+      end
+      |> then(&assert(&1 == :free))
+
+      assert %{held: []} = Sim.snapshot(@plaza)
+      ref = push(theirs, "wiggle", %{})
+      assert_reply(ref, :error, %{reason: "not_carried"})
+    end
   end
 
   describe "airships" do

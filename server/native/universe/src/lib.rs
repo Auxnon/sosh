@@ -22,7 +22,7 @@ mod terrain;
 use furniture::{Furniture, Grip, Site};
 use items::{Slot, Stack};
 use ships::{Helm, Ship, Side};
-use sim::{Cargo, Event, Grabbed, Held, Sim, Walker};
+use sim::{Cargo, Door, Event, Grabbed, Held, Sim, Walker};
 
 rustler::atoms! {
     ok,
@@ -41,6 +41,7 @@ rustler::atoms! {
     ship,
     ship_block,
     departed,
+    evicted,
 }
 
 struct SimLock(Mutex<Sim>);
@@ -144,11 +145,12 @@ fn pairs<'a>(env: Env<'a>, p: &[(impl AsRef<str>, u16)]) -> Term<'a> {
 }
 
 fn held_term<'a>(env: Env<'a>, user: &str, h: Option<Held>) -> Term<'a> {
-    let (mut b, mut c, mut f) = (None, None, None);
+    let (mut b, mut c, mut f, mut p) = (None, None, None, None);
     match h {
         Some(Held::Block(id)) => b = Some(id as u32),
         Some(Held::Cow(id)) => c = Some(id),
         Some(Held::Furniture(id)) => f = Some(id),
+        Some(Held::Player(who)) => p = Some(who),
         None => {}
     }
     map(
@@ -158,6 +160,19 @@ fn held_term<'a>(env: Env<'a>, user: &str, h: Option<Held>) -> Term<'a> {
             ("block", opt(env, b)),
             ("cow", opt(env, c)),
             ("furniture", opt(env, f)),
+            ("player", opt(env, p)),
+        ],
+    )
+}
+
+/// Where a door put someone: `%{on, at, heading}`.
+fn door_term<'a>(env: Env<'a>, d: Door) -> Term<'a> {
+    map(
+        env,
+        &[
+            ("on", d.on.encode(env)),
+            ("at", vec![d.at.0, d.at.1, d.at.2].encode(env)),
+            ("heading", d.heading.encode(env)),
         ],
     )
 }
@@ -223,6 +238,9 @@ fn ship_term<'a>(env: Env<'a>, s: &Ship) -> Term<'a> {
             ("heading", s.pose.h.encode(env)),
             ("v", vec![vx, vy, vz, spin].encode(env)),
             ("pilot", opt(env, s.pilot.as_deref())),
+            // a pocket room: whose, and whether a door leads in
+            ("pocket", opt(env, s.pocket.as_ref().map(|p| p.owner.as_str()))),
+            ("door", opt(env, s.pocket.as_ref().and_then(|p| p.door))),
             ("blocks", blocks.encode(env)),
         ],
     )
@@ -261,6 +279,18 @@ fn event_term<'a>(env: Env<'a>, sim: &Sim, e: Event) -> Option<Term<'a>> {
             ),
         ),
         Event::Ship(id) => (ship(), ship_term(env, sim.ship(id)?)),
+        Event::Evicted(room, d) => (
+            evicted(),
+            map(
+                env,
+                &[
+                    ("ship", room.encode(env)),
+                    ("on", d.on.encode(env)),
+                    ("at", vec![d.at.0, d.at.1, d.at.2].encode(env)),
+                    ("heading", d.heading.encode(env)),
+                ],
+            ),
+        ),
         Event::Departed(cargo, side) => {
             let json = serde_json::to_string(&*cargo).ok()?;
             let riders: Vec<&str> = cargo.riders.iter().map(|r| r.0.as_str()).collect();
@@ -537,6 +567,31 @@ fn pick_block(env: Env, u: Uni, user: String, at: Feet, on: u32, p: Pos) -> NifR
 #[rustler::nif]
 fn pick_cow(env: Env, u: Uni, user: String, at: Feet, id: u32) -> NifResult<Term> {
     Ok(done(env, lock(&u)?.pick_cow(&user, at, id)))
+}
+
+/// `user`, at `at`, lifts player `who`, at `their_at` (world feet).
+#[rustler::nif]
+fn pick_player(env: Env, u: Uni, user: String, at: Feet, who: String, their_at: Feet) -> NifResult<Term> {
+    Ok(done(env, lock(&u)?.pick_player(&user, at, &who, their_at)))
+}
+
+/// `user`, carried, wiggles: `{:ok, free?}`.
+#[rustler::nif]
+fn wiggle(env: Env, u: Uni, user: String) -> NifResult<Term> {
+    Ok(match lock(&u)?.wiggle(&user) {
+        Ok(free) => (ok(), free).encode(env),
+        Err(e) => fail(env, e),
+    })
+}
+
+/// `user` (named `name`), at `at`, goes through door `id`:
+/// `{:ok, %{on, at, heading}}`, where they land.
+#[rustler::nif]
+fn use_door(env: Env, u: Uni, user: String, name: String, at: Feet, id: u32) -> NifResult<Term> {
+    Ok(match lock(&u)?.use_door(&user, &name, at, id) {
+        Ok(d) => (ok(), door_term(env, d)).encode(env),
+        Err(e) => fail(env, e),
+    })
 }
 
 /// Put down what's carried at `p`, turned `rot`.

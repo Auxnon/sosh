@@ -165,6 +165,15 @@ defmodule Sosh.Sim do
   """
   def pick_up(u, user, name, what, at), do: call(u, {:pick_up, user, name, what, at})
 
+  @doc """
+  `user` (named `name`) goes through door `id`: a hyperdoor into its pocket
+  room, or a room's way out. `{:ok, %{on, at, heading}}`, where they land.
+  """
+  def use_door(u, user, name, id), do: call(u, {:door, user, name, id})
+
+  @doc "`user`, carried by someone, wiggles. `{:ok, true}` once they're free."
+  def wiggle(u, user), do: call(u, {:wiggle, user})
+
   @doc "`user` puts down what they hold at `pos` of frame `on`, turned `rot`."
   def put_down(u, user, on, pos, rot \\ 0), do: call(u, {:put_down, user, on, pos, rot})
 
@@ -318,6 +327,11 @@ defmodule Sosh.Sim do
         {:cow, id} ->
           with :ok <- Universe.pick_cow(uni, user, at, id), do: {:ok, :cow, nil}
 
+        {:player, who} ->
+          with {:ok, their_at} <- feet_of(state, who),
+               :ok <- Universe.pick_player(uni, user, at, who, their_at),
+               do: {:ok, :player, nil}
+
         {:furniture, id} ->
           with_bag(name, Universe.grab(uni, user, at, id, Players.bag(name)))
 
@@ -334,6 +348,15 @@ defmodule Sosh.Sim do
 
     reply(state, result)
   end
+
+  defp act({:door, user, name, id}, state) do
+    result =
+      with {:ok, at} <- feet_of(state, user), do: Universe.use_door(state.uni, user, name, at, id)
+
+    reply(state, result)
+  end
+
+  defp act({:wiggle, user}, state), do: reply(state, Universe.wiggle(state.uni, user))
 
   defp act({:put_down, user, on, pos, rot}, state),
     do: reply(state, Universe.put_down(state.uni, user, on, pos, rot))

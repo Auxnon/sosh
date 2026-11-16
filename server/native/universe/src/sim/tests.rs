@@ -863,3 +863,199 @@ fn the_new_universe_has_room_to_stand_and_a_ship() {
         let _ = (WOOD, STONE);
     }
 }
+
+/// Through a hyperdoor at (4, 4, 0) facing -y: the room it leads to.
+fn through(s: &mut Sim, user: &str, name: &str, door: u32) -> Door {
+    s.use_door(user, name, (4.0, 3.0, 0.0), door).unwrap()
+}
+
+#[test]
+fn a_hyperdoor_leads_to_a_room_that_outlives_it() {
+    let mut s = flat();
+    let mut bag = bag_with(&[("hyperdoor", 3)]);
+    s.place(0, (4, 4, 0), "hyperdoor", 0, &mut bag).unwrap();
+    let door = s.furniture_at(0, (4, 4, 1)).unwrap();
+    let inside = through(&mut s, "p", "ann", door);
+    let room = inside.on;
+    let pocket = s.pocket(room).unwrap();
+    assert_eq!((pocket.owner.as_str(), pocket.door), ("ann", Some(door)));
+    assert_eq!(s.furniture[&door].pocket(), Some(room));
+    // the same door, the same room, whoever goes through
+    assert_eq!(through(&mut s, "q", "bob", door).on, room);
+
+    // its walls hold, its way out stays, and nothing's built past them
+    assert_eq!(s.dig("p", room, (5, 0, 1), &mut bag), Err("the_walls_hold"));
+    assert_eq!(s.dig("p", room, (0, 0, -1), &mut bag), Err("the_walls_hold"));
+    let exit = s.furniture_at(room, (0, -4, 0)).unwrap();
+    assert_eq!(s.dig("p", room, (0, -4, 0), &mut bag), Err("the_walls_hold"));
+    assert_eq!(s.grab("p", inside.at, exit, &mut bag), Err("the_walls_hold"));
+    let mut stone = bag_with(&[("stone", 2)]);
+    assert_eq!(s.place(room, (8, 0, 0), "stone", 0, &mut stone), Err("edge_of_the_world"));
+    assert_eq!(s.place(room, (1, 1, 0), "stone", 0, &mut stone), Ok(()));
+
+    // out the way it came, in front of the door
+    s.tick(100, &[aboard(room, inside.at)]);
+    let at = s.world_of(room, inside.at).unwrap();
+    let out = s.use_door("p", "ann", at, exit).unwrap();
+    assert_eq!((out.on, out.at), (0, (4.0, 3.0, 0.0)));
+
+    // broken, the room shuts with its things in it, and whoever's inside
+    // is put out where the door was
+    s.tick(200, &[aboard(room, inside.at)]);
+    s.drain_events();
+    s.dig("p", 0, (4, 4, 0), &mut bag).unwrap();
+    assert!(s.drain_events().iter().any(|e| matches!(e,
+        Event::Evicted(r, d) if *r == room && d.on == 0 && d.at == (4.0, 3.0, 0.0))));
+    assert_eq!(s.pocket(room).unwrap().door, None);
+    assert_eq!(s.get(room, (1, 1, 0)), Some(STONE));
+
+    // someone else's new door makes them a room of their own...
+    s.place(0, (4, 4, 0), "hyperdoor", 0, &mut bag).unwrap();
+    let second = s.furniture_at(0, (4, 4, 0)).unwrap();
+    let theirs = through(&mut s, "q", "bob", second).on;
+    assert_ne!(theirs, room);
+    // ...and the owner's next door leads back to theirs
+    s.place(0, (6, 4, 0), "hyperdoor", 0, &mut bag).unwrap();
+    let third = s.furniture_at(0, (6, 4, 0)).unwrap();
+    let back = s.use_door("p", "ann", (6.0, 3.0, 0.0), third).unwrap();
+    assert_eq!(back.on, room);
+
+    // rooms are kept, and they never count as the universe's ship
+    let mut t = flat();
+    let json = serde_json::to_string(&s.save(0)).unwrap();
+    t.restore(serde_json::from_str(&json).unwrap());
+    assert_eq!(t.pocket(room).unwrap().door, Some(third));
+    assert_eq!(t.get(room, (1, 1, 0)), Some(STONE));
+    // (this flat universe has nowhere to dock one)
+    assert!(!t.has_ship());
+}
+
+#[test]
+fn no_room_inside_a_room_and_doors_stay_doors() {
+    let mut s = flat();
+    let mut bag = bag_with(&[("hyperdoor", 2), ("door", 1)]);
+    s.place(0, (4, 4, 0), "hyperdoor", 0, &mut bag).unwrap();
+    let door = s.furniture_at(0, (4, 4, 0)).unwrap();
+    let inside = through(&mut s, "p", "ann", door);
+    s.place(inside.on, (2, 2, 0), "hyperdoor", 0, &mut bag).unwrap();
+    let nested = s.furniture_at(inside.on, (2, 2, 0)).unwrap();
+    let at = s.world_of(inside.on, (2.0, 1.0, 0.0)).unwrap();
+    assert_eq!(s.use_door("p", "ann", at, nested), Err("no_room_in_a_room"));
+    s.place(0, (8, 4, 0), "door", 0, &mut bag).unwrap();
+    let plain = s.furniture_at(0, (8, 4, 0)).unwrap();
+    assert_eq!(s.use_door("p", "ann", (8.0, 3.0, 0.0), plain), Err("not_a_door"));
+    // picked up, a hyperdoor comes back as a plain one and its room shuts
+    assert_eq!(s.grab("p", (4.0, 3.0, 0.0), door, &mut bag), Ok(Grabbed::Pocketed));
+    assert_eq!(count(&bag, "hyperdoor"), 1);
+    assert_eq!(s.pocket(inside.on).unwrap().door, None);
+}
+
+#[test]
+fn a_cow_carried_into_a_room_wanders_it() {
+    let mut s = flat();
+    let cow = s.spawn_cow(4.0, 2.0);
+    let mut bag = bag_with(&[("hyperdoor", 1)]);
+    s.place(0, (4, 4, 0), "hyperdoor", 0, &mut bag).unwrap();
+    let door = s.furniture_at(0, (4, 4, 0)).unwrap();
+    s.pick_cow("p", (4.0, 3.0, 0.0), cow).unwrap();
+    let inside = through(&mut s, "p", "ann", door);
+    let room = inside.on;
+    s.tick(100, &[aboard(room, inside.at)]);
+    let w = s.world_of(room, inside.at).unwrap();
+    let c = s.cows.iter().find(|c| c.id == cow).unwrap();
+    assert_eq!((c.x, c.y, c.z), (w.0, w.1, w.2 + CARRY_Z));
+    assert_eq!(s.put_down("p", room, (2, 2, 0), 0), Ok(Held::Cow(cow)));
+    let pose = s.ship(room).unwrap().pose;
+    for t in 0..300 {
+        s.tick(200 + t * 100, &[]);
+        let c = s.cows.iter().find(|c| c.id == cow).unwrap();
+        assert_eq!(c.pen, Some(room));
+        let l = pose.to_local((c.x, c.y, c.z));
+        assert!(ships::inside(l), "the cow left the room: {l:?}");
+        assert!((l.2 - 0.0).abs() < 1e-6, "the cow isn't on the floor: {l:?}");
+    }
+}
+
+#[test]
+fn a_helper_carrying_with_you_comes_through_and_goes_home_after() {
+    let mut s = flat();
+    let (hid, home) = (s.new_id(), (8.0, 8.0, 0.0));
+    s.helpers.push(Helper {
+        id: hid,
+        name: "Hob",
+        x: home.0,
+        y: home.1,
+        z: home.2,
+        vz: 0.0,
+        heading: 0.0,
+        home,
+        task: Task::Idle,
+        task_ms: 0,
+        sent: None,
+        pen: None,
+    });
+    let mut bag = bag_with(&[("hyperdoor", 1), ("wood", 12)]);
+    s.place(0, (4, 4, 0), "hyperdoor", 0, &mut bag).unwrap();
+    let door = s.furniture_at(0, (4, 4, 0)).unwrap();
+    let id = s.new_id();
+    let mut bed = Furniture::new(id, furniture::kind("bed").unwrap(), (4, 1, 0), 1);
+    bed.on = 0;
+    s.put_furniture(bed);
+    s.grab("p", (4.0, 2.0, 0.0), id, &mut bag).unwrap();
+    s.call_helper("p", hid).unwrap();
+    let mut t = 0;
+    while !s.furniture[&id].lifted {
+        t += 100;
+        s.tick(t, &[p(4.0, 2.0, 0.0)]);
+        assert!(t < 20_000, "the helper never lifted it");
+    }
+    // anyone else on the other end would have to come too
+    let inside = through(&mut s, "p", "ann", door);
+    let h = s.helpers.iter().find(|h| h.id == hid).unwrap();
+    assert_eq!(h.pen, Some(inside.on));
+    s.tick(t + 100, &[aboard(inside.on, inside.at)]);
+    assert!(s.furniture[&id].lifted, "dropped on the way through");
+    assert_eq!(s.put_down("p", inside.on, (-2, 0, 0), 0), Ok(Held::Furniture(id)));
+    assert_eq!(s.furniture[&id].on, inside.on);
+    // done, it heads straight home: no walking out of a pocket room
+    s.tick(t + 200, &[aboard(inside.on, inside.at)]);
+    let h = s.helpers.iter().find(|h| h.id == hid).unwrap();
+    assert_eq!((h.pen, (h.x, h.y, h.z)), (None, home));
+}
+
+#[test]
+fn a_carried_player_wiggles_free() {
+    let mut s = flat();
+    assert_eq!(s.pick_player("p", (4.0, 4.0, 0.0), "p", (4.0, 4.0, 0.0)), Err("cannot_carry"));
+    assert_eq!(s.pick_player("p", (4.0, 4.0, 0.0), "q", (14.0, 4.0, 0.0)), Err("out_of_reach"));
+    s.pick_player("p", (4.0, 4.0, 0.0), "q", (5.0, 4.0, 0.0)).unwrap();
+    assert_eq!(s.held("p"), Some(Held::Player("q".into())));
+    // carried, they can't pick anyone up, nor be picked up again
+    assert_eq!(s.pick_player("q", (5.0, 4.0, 0.0), "r", (5.0, 5.0, 0.0)), Err("carried"));
+    assert_eq!(s.pick_player("r", (5.0, 5.0, 0.0), "q", (5.0, 4.0, 0.0)), Err("already_carried"));
+    s.drain_events();
+    let mut t = 100;
+    for n in 1..WIGGLES_FREE {
+        s.tick(t, &[]);
+        assert_eq!(s.wiggle("q"), Ok(false), "free after {n}");
+        // twice in one tick counts once
+        assert_eq!(s.wiggle("q"), Ok(false));
+        t += 100;
+    }
+    s.tick(t, &[]);
+    assert_eq!(s.wiggle("q"), Ok(true));
+    assert_eq!(s.held("p"), None);
+    assert_eq!(s.drain_events(), vec![Event::Carry("p".into(), None)]);
+    assert_eq!(s.wiggle("q"), Err("not_carried"));
+
+    // slow wiggles never add up
+    s.pick_player("p", (4.0, 4.0, 0.0), "q", (5.0, 4.0, 0.0)).unwrap();
+    for _ in 0..WIGGLES_FREE * 2 {
+        t += 2000;
+        s.tick(t, &[]);
+        assert_eq!(s.wiggle("q"), Ok(false));
+    }
+    // whoever's carried leaving frees the carrier's hands
+    s.release("q");
+    assert_eq!(s.held("p"), None);
+}

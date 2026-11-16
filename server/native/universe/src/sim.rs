@@ -15,13 +15,20 @@
 //! home). Growth doesn't tick at all; on waking it catches up on every tick
 //! it slept through at once, since crops grow on the tick count alone.
 //!
-//! **Hands.** A player holds one thing: a carryable block, a cow, or a
-//! piece of furniture. Furniture that takes two (`Kind::carriers`) stays put
+//! **Hands.** A player holds one thing: a carryable block, a cow, a piece
+//! of furniture, or another player (who can wiggle free: `wiggle`). Furniture that takes two (`Kind::carriers`) stays put
 //! when grabbed until a second player, or a helper, takes the other end.
 //!
 //! **Bags.** Players' bags belong to the caller (they follow players from
 //! one universe to the next). Anything that gives or takes items is passed
 //! the bag and changes it in place.
+//!
+//! **Pocket rooms.** A hyperdoor leads into a room of its own: a `Ship`
+//! with a `Pocket`, parked far over the universe where nothing reaches it,
+//! that never flies. The room is whose went through first, and stays
+//! theirs when its door is broken: nobody gets in until they go through a
+//! new hyperdoor, which leads back to it (`use_door`). Cows carried in stay
+//! and wander it; helpers carrying with someone come along.
 //!
 //! Changes come out as `Event`s (`drain_events`) for the caller to
 //! broadcast; continuous motion (cows, ships, helpers) comes out of `tick`.
@@ -32,7 +39,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::furniture::{self, Furniture, Grip, Site};
 use crate::items::{self, Slot};
-use crate::ships::{self, Helm, Pose, Ship, Side};
+use crate::ships::{self, Helm, Pocket, Pose, Ship, Side};
 use crate::terrain::{
     self, cell, Island, Pos, Rng, Terrain, AIR, DIRT, FURNITURE, GRASS, POT, SCAFFOLD,
     WATER,
@@ -55,6 +62,10 @@ const COW_TURN: f64 = 4.0; // radians per second
 const COW_RADIUS: f64 = 0.55;
 const PLAYER_RADIUS: f64 = 0.35;
 const COW_LEASH: f64 = 13.0; // how far from home a cow wanders
+/// Someone carried gets free after this many wiggles, each within
+/// WIGGLE_WINDOW_MS of the last.
+pub const WIGGLES_FREE: u32 = 8;
+const WIGGLE_WINDOW_MS: i64 = 1500;
 const GRAVITY: f64 = 18.0;
 const MOO_COOLDOWN_MS: i64 = 4000;
 // a shove moves a cow at most this fast: a little over a player's walk, so a
@@ -93,6 +104,8 @@ pub struct Cow {
     last_moo_ms: i64,
     sent: Option<(f64, f64, f64, f64)>,
     pub carried: bool,
+    /// The pocket room it was set down in, if any: it wanders that.
+    pub pen: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -118,20 +131,46 @@ pub struct Helper {
     pub task: Task,
     task_ms: i64,
     sent: Option<(f64, f64, f64, f64)>,
+    /// The pocket room it came into, carrying with someone.
+    pub pen: Option<u32>,
 }
 
 /// What a player has in their hands.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Held {
     Block(u8),
     Cow(u32),
     Furniture(u32),
+    /// Another player, by id.
+    Player(String),
 }
 
 struct Holder {
     held: Held,
     /// Where they last stood (feet), from the last tick or the pick up.
     at: (f64, f64, f64),
+    /// A carried player's wiggles so far, and when the last one was.
+    wiggles: u32,
+    wiggle_ms: i64,
+}
+
+impl Holder {
+    fn new(held: Held, at: (f64, f64, f64)) -> Self {
+        Holder {
+            held,
+            at,
+            wiggles: 0,
+            wiggle_ms: i64::MIN / 2,
+        }
+    }
+}
+
+/// Where going through a door puts you: frame, feet in it, facing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Door {
+    pub on: u32,
+    pub at: (f64, f64, f64),
+    pub heading: f64,
 }
 
 /// Something changed, for everyone in the universe to hear about.
@@ -154,6 +193,8 @@ pub enum Event {
     /// A ship flew into the neighbouring universe on `side`, with everyone
     /// and everything aboard.
     Departed(Box<Cargo>, Side),
+    /// Pocket room `0` lost its door: everyone in it goes to `1`.
+    Evicted(u32, Door),
 }
 
 /// A ship leaving for the next universe, and all it takes along.
@@ -317,6 +358,7 @@ impl Sim {
                     task: Task::Idle,
                     task_ms: 0,
                     sent: None,
+                    pen: None,
                 });
             }
             if let Some(dock) = s.dock_by(&home) {
@@ -394,6 +436,16 @@ impl Sim {
 
     pub fn drain_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)
+    }
+
+    /// A real ship, not counting pocket rooms.
+    fn has_ship(&self) -> bool {
+        self.ships.iter().any(|s| s.pocket.is_none())
+    }
+
+    /// Pocket room `id`, if that's what it is.
+    pub fn pocket(&self, id: u32) -> Option<&Pocket> {
+        self.ship(id)?.pocket.as_ref()
     }
 
     pub fn ship(&self, id: u32) -> Option<&Ship> {
@@ -534,7 +586,7 @@ impl Sim {
     /// a universe left without a ship builds one, helpers put down what they
     /// hold and go home, cows amble home.
     pub fn ambient(&mut self, now_ms: i64) {
-        if self.ships.is_empty() {
+        if !self.has_ship() {
             if let Some(dock) = self.home_dock() {
                 let id = self.new_id();
                 self.ships.push(Ship::standard(id, dock));
@@ -566,6 +618,7 @@ impl Sim {
         for h in self.helpers.iter_mut() {
             (h.x, h.y, h.z) = h.home;
             h.task = Task::Idle;
+            h.pen = None;
         }
         for c in self.cows.iter_mut() {
             if !c.carried {
@@ -658,7 +711,7 @@ impl Sim {
                 self.terrain.set(p.0, p.1, p.2, AIR);
             }
         }
-        if self.ships.is_empty() {
+        if !self.has_ship() {
             if let Some(dock) = self.home_dock() {
                 let id = self.new_id();
                 self.ships.push(Ship::standard(id, dock));
@@ -747,6 +800,9 @@ impl Sim {
     /// (`break_furniture`) and scaffolding gives back what was put into it.
     /// A ship keeps its last block.
     pub fn dig(&mut self, user: &str, on: u32, p: Pos, bag: &mut Bag) -> R<()> {
+        if self.pocket(on).is_some() && ships::shell(p) {
+            return Err("the_walls_hold");
+        }
         match self.get(on, p) {
             None => Err("edge_of_the_world"),
             Some(AIR) => Err("nothing_there"),
@@ -823,6 +879,9 @@ impl Sim {
     /// Is `p` a cell of frame `on` at all: in the universe, or in a ship's
     /// reach?
     fn holds(&self, on: u32, p: Pos) -> bool {
+        if self.pocket(on).is_some() && ships::shell(p) {
+            return false;
+        }
         self.get(on, p).is_some()
     }
 
@@ -899,6 +958,14 @@ impl Sim {
             }
         }
         self.events.push(Event::FurnitureGone(id));
+        if let Some(pid) = f.pocket() {
+            let out = Door {
+                on: f.on,
+                at: f.front(),
+                heading: facing(f.rot),
+            };
+            self.shut(pid, id, out);
+        }
         Some(f)
     }
 
@@ -906,6 +973,9 @@ impl Sim {
     /// held go into `bag`, and what doesn't fit is left in a sack.
     pub fn break_furniture(&mut self, _user: &str, id: u32, bag: &mut Bag) -> R<()> {
         let f = self.furniture.get(&id).ok_or("no_such_furniture")?;
+        if f.fixed() {
+            return Err("the_walls_hold");
+        }
         if f.lifted || !f.grips.is_empty() {
             return Err("in_use");
         }
@@ -916,7 +986,7 @@ impl Sim {
             .collect();
         back.extend(f.slots.iter().flatten().map(|s| (s.item.clone(), s.n)));
         // a sign isn't made of anything: breaking it gives it back whole
-        if f.note.is_some() {
+        if f.kind == "sign" && f.note.is_some() {
             back.push((f.item(), 1));
         }
         self.remove_furniture(id);
@@ -1003,7 +1073,13 @@ impl Sim {
         if self.holders.contains_key(user) {
             return Err("hands_full");
         }
+        if self.carried_by(user).is_some() {
+            return Err("carried");
+        }
         let f = self.furniture.get(&id).ok_or("no_such_furniture")?;
+        if f.fixed() {
+            return Err("the_walls_hold");
+        }
         if dist(at, self.furniture_middle(f)) > REACH {
             return Err("out_of_reach");
         }
@@ -1024,7 +1100,7 @@ impl Sim {
         let f = self.furniture.get_mut(&id).expect("checked");
         f.grips.push(Grip::Player(user.to_string()));
         let held = Held::Furniture(id);
-        self.holders.insert(user.to_string(), Holder { held, at });
+        self.holders.insert(user.to_string(), Holder::new(held.clone(), at));
         self.events.push(Event::Carry(user.to_string(), Some(held)));
         if self.try_lift(id) {
             Ok(Grabbed::Lifted)
@@ -1162,26 +1238,32 @@ impl Sim {
 
     /// What `holder` carries, if anything.
     pub fn held(&self, holder: &str) -> Option<Held> {
-        self.holders.get(holder).map(|h| h.held)
+        self.holders.get(holder).map(|h| h.held.clone())
+    }
+
+    /// Who's carrying player `user`, if anyone.
+    pub fn carried_by(&self, user: &str) -> Option<&String> {
+        self.holders
+            .iter()
+            .find(|(_, h)| matches!(&h.held, Held::Player(p) if p == user))
+            .map(|(k, _)| k)
     }
 
     /// Everyone carrying something.
     pub fn holding(&self) -> impl Iterator<Item = (&String, Held)> {
-        self.holders.iter().map(|(k, h)| (k, h.held))
+        self.holders.iter().map(|(k, h)| (k, h.held.clone()))
     }
 
     /// `holder`, standing at `at`, lifts the block at `p` in frame `on`.
     pub fn pick_block(&mut self, holder: &str, at: (f64, f64, f64), on: u32, p: Pos) -> R<u8> {
-        if self.holders.contains_key(holder) {
-            return Err("hands_full");
-        }
+        self.free_hands(holder)?;
         let id = self.get(on, p).unwrap_or(AIR);
         if !Self::carryable(id) {
             return Err("cannot_carry");
         }
         self.set_block(on, p, AIR);
         let held = Held::Block(id);
-        self.holders.insert(holder.to_string(), Holder { held, at });
+        self.holders.insert(holder.to_string(), Holder::new(held.clone(), at));
         self.events
             .push(Event::Carry(holder.to_string(), Some(held)));
         Ok(id)
@@ -1189,9 +1271,7 @@ impl Sim {
 
     /// `holder`, standing at `at`, lifts cow `id` over their head.
     pub fn pick_cow(&mut self, holder: &str, at: (f64, f64, f64), id: u32) -> R<()> {
-        if self.holders.contains_key(holder) {
-            return Err("hands_full");
-        }
+        self.free_hands(holder)?;
         let Some(cow) = self.cows.iter_mut().find(|c| c.id == id) else {
             return Err("no_such_cow");
         };
@@ -1203,15 +1283,79 @@ impl Sim {
             return Err("out_of_reach");
         }
         cow.carried = true;
+        cow.pen = None;
         cow.target = None;
         cow.vz = 0.0;
         (cow.x, cow.y, cow.z) = (at.0, at.1, at.2 + CARRY_Z);
         self.lifted.push(id);
         let held = Held::Cow(id);
-        self.holders.insert(holder.to_string(), Holder { held, at });
+        self.holders.insert(holder.to_string(), Holder::new(held.clone(), at));
         self.events
             .push(Event::Carry(holder.to_string(), Some(held)));
         Ok(())
+    }
+
+    /// Nothing in their hands, and nobody carrying them.
+    fn free_hands(&self, holder: &str) -> R<()> {
+        if self.holders.contains_key(holder) {
+            return Err("hands_full");
+        }
+        if self.carried_by(holder).is_some() {
+            return Err("carried");
+        }
+        Ok(())
+    }
+
+    /// `holder`, standing at `at`, lifts player `who` (standing at
+    /// `their_at`) over their head. They can wiggle free.
+    pub fn pick_player(
+        &mut self,
+        holder: &str,
+        at: (f64, f64, f64),
+        who: &str,
+        their_at: (f64, f64, f64),
+    ) -> R<()> {
+        if holder == who {
+            return Err("cannot_carry");
+        }
+        self.free_hands(holder)?;
+        if self.carried_by(who).is_some() {
+            return Err("already_carried");
+        }
+        // nobody carries someone carrying someone
+        if matches!(self.held(who), Some(Held::Player(_))) {
+            return Err("cannot_carry");
+        }
+        if dist(at, their_at) > REACH {
+            return Err("out_of_reach");
+        }
+        let held = Held::Player(who.to_string());
+        self.holders
+            .insert(holder.to_string(), Holder::new(held.clone(), at));
+        self.events.push(Event::Carry(holder.to_string(), Some(held)));
+        Ok(())
+    }
+
+    /// Player `user`, carried, wiggles: enough wiggles close enough together
+    /// and they're free (true). One a tick counts at most.
+    pub fn wiggle(&mut self, user: &str) -> R<bool> {
+        let carrier = self.carried_by(user).cloned().ok_or("not_carried")?;
+        let now = self.last_ms.unwrap_or(0);
+        let h = self.holders.get_mut(&carrier).expect("found");
+        if now == h.wiggle_ms {
+            return Ok(false);
+        }
+        if now - h.wiggle_ms > WIGGLE_WINDOW_MS {
+            h.wiggles = 0;
+        }
+        h.wiggle_ms = now;
+        h.wiggles += 1;
+        if h.wiggles < WIGGLES_FREE {
+            return Ok(false);
+        }
+        self.holders.remove(&carrier);
+        self.events.push(Event::Carry(carrier, None));
+        Ok(true)
     }
 
     /// `holder` puts what they carry at cell `p` of frame `on` (furniture
@@ -1221,7 +1365,7 @@ impl Sim {
         let Some(h) = self.holders.get(holder) else {
             return Err("hands_empty");
         };
-        let held = h.held;
+        let held = h.held.clone();
         match held {
             Held::Block(id) => {
                 if !self.free(on, p) {
@@ -1229,10 +1373,22 @@ impl Sim {
                 }
                 self.set_block(on, p, id);
             }
-            Held::Cow(id) => {
-                if on != 0 {
-                    return Err("cows_stay_ashore");
+            Held::Cow(id) if on != 0 => {
+                // into a pocket room, to wander it; never aboard a ship
+                let s = self
+                    .ship(on)
+                    .filter(|s| s.pocket.is_some())
+                    .ok_or("cows_stay_ashore")?;
+                let w = s.pose.to_world((p.0 as f64, p.1 as f64, p.2 as f64));
+                let home = (s.pose.x, s.pose.y);
+                let ground = pocket_ground(s, w.0, w.1, w.2).ok_or("no_room_for_a_cow")?;
+                self.land_cow(id, w.0, w.1, ground);
+                if let Some(c) = self.cows.iter_mut().find(|c| c.id == id) {
+                    c.pen = Some(on);
+                    c.home = home;
                 }
+            }
+            Held::Cow(id) => {
                 if !self.free(0, p) {
                     return Err("occupied");
                 }
@@ -1243,13 +1399,15 @@ impl Sim {
                 let ground = self.terrain.ground(x, y, z).unwrap_or(z);
                 self.land_cow(id, x, y, ground);
             }
+            // set down where they're carried: they land on their own feet
+            Held::Player(_) => {}
             Held::Furniture(id) => {
                 let lifted = self.furniture.get(&id).is_some_and(|f| f.lifted);
                 if lifted {
-                    return self.set_down(id, on, p, rot).map(|_| held);
+                    return self.set_down(id, on, p, rot).map(|_| held.clone());
                 }
                 self.let_go(holder, id);
-                return Ok(held);
+                return Ok(held.clone());
             }
         }
         self.holders.remove(holder);
@@ -1284,6 +1442,10 @@ impl Sim {
     pub fn release(&mut self, holder: &str) {
         self.leave_helm(holder);
         self.set_down_held(holder);
+        if let Some(c) = self.carried_by(holder).cloned() {
+            self.holders.remove(&c);
+            self.events.push(Event::Carry(c, None));
+        }
     }
 
     /// Whatever `holder` carries is set down where they stand.
@@ -1291,8 +1453,9 @@ impl Sim {
         let Some(h) = self.holders.get(holder) else {
             return;
         };
-        let (held, (x, y, z)) = (h.held, h.at);
+        let (held, (x, y, z)) = (h.held.clone(), h.at);
         match held {
+            Held::Player(_) => {}
             Held::Block(id) => {
                 // back where they stood (on deck, if they were), or the
                 // first free cell above; else it's lost
@@ -1303,6 +1466,22 @@ impl Sim {
                 }
             }
             Held::Cow(id) => {
+                // in a pocket room, it stays in it
+                let (on, _) = self.frame_at((x, y, z));
+                if let Some(s) = self.ship(on).filter(|s| s.pocket.is_some()) {
+                    if let Some(g) = pocket_ground(s, x, y, z) {
+                        let home = (s.pose.x, s.pose.y);
+                        self.land_cow(id, x, y, g);
+                        if let Some(c) = self.cows.iter_mut().find(|c| c.id == id) {
+                            c.pen = Some(on);
+                            c.home = home;
+                        }
+                        if self.holders.remove(holder).is_some() {
+                            self.events.push(Event::Carry(holder.to_string(), None));
+                        }
+                        return;
+                    }
+                }
                 let spot = match self.terrain.ground(x, y, z) {
                     Some(g) if self.terrain.walkable(x, y, z) => Some((x, y, g)),
                     _ => None,
@@ -1347,6 +1526,202 @@ impl Sim {
             cow.vz = 0.0;
             cow.target = None;
             cow.idle_until_ms = now + 1500;
+        }
+    }
+
+    // -- doors
+
+    /// `user` (named `name`), standing at `at`, goes through door `id`: a
+    /// hyperdoor into its pocket room (theirs, if nobody's been through
+    /// it yet), or a room's way out back to its door. Whatever they carry
+    /// comes too, helpers on the other end included. Where they land.
+    pub fn use_door(&mut self, user: &str, name: &str, at: (f64, f64, f64), id: u32) -> R<Door> {
+        if self.carried_by(user).is_some() {
+            return Err("carried");
+        }
+        let f = self.furniture.get(&id).ok_or("no_such_furniture")?;
+        if f.lifted {
+            return Err("in_use");
+        }
+        if dist(at, self.furniture_middle(f)) > REACH {
+            return Err("out_of_reach");
+        }
+        let (kind, on) = (f.kind.clone(), f.on);
+        if let Some(Held::Furniture(fid)) = self.held(user) {
+            let others = self.furniture.get(&fid).is_some_and(|c| {
+                c.lifted
+                    && c
+                        .grips
+                        .iter()
+                        .any(|g| matches!(g, Grip::Player(p) if p != user))
+            });
+            if others {
+                return Err("others_holding_it");
+            }
+        }
+        let dest = match kind.as_str() {
+            "hyperdoor" => {
+                if self.pocket(on).is_some() {
+                    return Err("no_room_in_a_room");
+                }
+                let pid = self.attune(id, name);
+                Door {
+                    on: pid,
+                    at: (0.0, -(ships::ROOM as f64) + 1.0, 0.0),
+                    heading: std::f64::consts::FRAC_PI_2,
+                }
+            }
+            "hyperexit" => {
+                let out = self
+                    .pocket(on)
+                    .and_then(|p| p.door)
+                    .and_then(|d| self.furniture.get(&d))
+                    .filter(|d| !d.lifted)
+                    .map(|d| Door {
+                        on: d.on,
+                        at: d.front(),
+                        heading: facing(d.rot),
+                    });
+                match out {
+                    Some(d) => d,
+                    None => self.way_home(),
+                }
+            }
+            _ => return Err("not_a_door"),
+        };
+        self.bring_along(user, dest);
+        Ok(dest)
+    }
+
+    /// The home island, for someone with nowhere else to go.
+    fn way_home(&mut self) -> Door {
+        let (at, _) = self.spawn("", None);
+        Door {
+            on: 0,
+            at,
+            heading: 0.0,
+        }
+    }
+
+    /// The pocket room hyperdoor `door` leads to: its own, else `name`'s
+    /// that lost its door, else a new one of theirs.
+    fn attune(&mut self, door: u32, name: &str) -> u32 {
+        if let Some(pid) = self.furniture.get(&door).and_then(|f| f.pocket()) {
+            if self.pocket(pid).is_some_and(|p| p.door == Some(door)) {
+                return pid;
+            }
+        }
+        let shut = self
+            .ships
+            .iter()
+            .filter(|s| {
+                s.pocket
+                    .as_ref()
+                    .is_some_and(|p| p.owner == name && p.door.is_none())
+            })
+            .map(|s| s.id)
+            .min();
+        let pid = match shut {
+            Some(p) => p,
+            None => self.new_pocket(name),
+        };
+        if let Some(p) = self.ship_mut(pid).and_then(|s| s.pocket.as_mut()) {
+            p.door = Some(door);
+        }
+        if let Some(f) = self.furniture.get_mut(&door) {
+            f.note = Some(pid.to_string());
+        }
+        self.events.push(Event::Ship(pid));
+        self.events.push(Event::Furniture(door));
+        pid
+    }
+
+    /// A new pocket room for `owner`, its way out against the south wall.
+    fn new_pocket(&mut self, owner: &str) -> u32 {
+        let x = self
+            .ships
+            .iter()
+            .filter(|s| s.pocket.is_some())
+            .map(|s| s.pose.x + ships::POCKET_GAP)
+            .fold(0.0, f64::max);
+        let id = self.new_id();
+        let mut room = Ship::new(id, ships::room_blocks(), Pose::new(x, 0.0, ships::POCKET_Z, 0.0));
+        room.pocket = Some(Pocket {
+            owner: owner.to_string(),
+            door: None,
+        });
+        self.ships.push(room);
+        self.events.push(Event::Ship(id));
+        let exit = furniture::kind("hyperexit").expect("exits exist");
+        let fid = self.new_id();
+        let mut f = Furniture::new(fid, exit, (0, -ships::ROOM, 0), 2);
+        f.on = id;
+        self.put_furniture(f);
+        id
+    }
+
+    /// Pocket room `pid` lost its door `door`: it shuts, and everyone in it
+    /// goes to `out` (or home, if that's gone too). Helpers in it go home;
+    /// cows and everything else stay.
+    fn shut(&mut self, pid: u32, door: u32, out: Door) {
+        let Some(p) = self.ship_mut(pid).and_then(|s| s.pocket.as_mut()) else {
+            return;
+        };
+        if p.door != Some(door) {
+            return;
+        }
+        p.door = None;
+        self.events.push(Event::Ship(pid));
+        let out = if self.world_of(out.on, out.at).is_some() {
+            out
+        } else {
+            self.way_home()
+        };
+        self.events.push(Event::Evicted(pid, out));
+        for h in self.helpers.iter_mut().filter(|h| h.pen == Some(pid)) {
+            (h.x, h.y, h.z) = h.home;
+            h.task = Task::Home;
+            h.pen = None;
+        }
+    }
+
+    /// `user` went through a door to `dest`: what they carry goes too.
+    fn bring_along(&mut self, user: &str, dest: Door) {
+        let Some(w) = self.world_of(dest.on, dest.at) else {
+            return;
+        };
+        let pen = self.pocket(dest.on).map(|_| dest.on);
+        let Some(h) = self.holders.get_mut(user) else {
+            return;
+        };
+        h.at = w;
+        match h.held.clone() {
+            Held::Cow(cid) => {
+                if let Some(c) = self.cows.iter_mut().find(|c| c.id == cid) {
+                    (c.x, c.y, c.z) = (w.0, w.1, w.2 + CARRY_Z);
+                }
+            }
+            Held::Furniture(fid) => {
+                let Some(f) = self.furniture.get(&fid) else {
+                    return;
+                };
+                let (lifted, helpers): (bool, Vec<u32>) = (f.lifted, f.helpers().collect());
+                if !lifted {
+                    self.let_go(user, fid);
+                    return;
+                }
+                for h in self.helpers.iter_mut().filter(|h| helpers.contains(&h.id)) {
+                    (h.x, h.y, h.z) = w;
+                    h.vz = 0.0;
+                    h.pen = pen;
+                }
+                if let Some(f) = self.furniture.get_mut(&fid) {
+                    f.at = w;
+                    f.on = dest.on;
+                }
+                self.events.push(Event::Furniture(fid));
+            }
+            _ => {}
         }
     }
 
@@ -1622,6 +1997,14 @@ impl Sim {
                 }
             }
         };
+        if self.helpers[i].pen.is_some() && self.helpers[i].task == Task::Home {
+            // no walking home from a pocket room
+            let h = &mut self.helpers[i];
+            (h.x, h.y, h.z) = h.home;
+            h.pen = None;
+            h.task = Task::Idle;
+            return;
+        }
         let Some((tx, ty)) = target else {
             return;
         };
@@ -1634,8 +2017,8 @@ impl Sim {
         h.heading = ey.atan2(ex);
         let step = (HELPER_SPEED * dt).min(d);
         let (dx, dy) = (ex / d * step, ey / d * step);
-        let mut body = (h.x, h.y, h.z, h.vz);
-        move_body(&self.terrain, &mut body, dx, dy, dt);
+        let (pen, mut body) = (h.pen, (h.x, h.y, h.z, h.vz));
+        self.move_npc(pen, &mut body, dx, dy, dt);
         let h = &mut self.helpers[i];
         (h.x, h.y, h.z, h.vz) = body;
     }
@@ -1660,6 +2043,7 @@ impl Sim {
             last_moo_ms: i64::MIN / 2,
             sent: None,
             carried: false,
+            pen: None,
         });
         id
     }
@@ -1855,6 +2239,9 @@ impl Sim {
     fn fly(&mut self, dt: f64) {
         let mut departed = Vec::new();
         for i in 0..self.ships.len() {
+            if self.ships[i].pocket.is_some() {
+                continue;
+            }
             // out of the list while it moves, so the rest are what it bumps
             let mut s = self.ships.remove(i);
             let others: Vec<&Ship> = self.ships.iter().collect();
@@ -1903,6 +2290,12 @@ impl Sim {
             let mut f = self.furniture.remove(&fid).expect("listed");
             f.grips.clear();
             self.events.push(Event::FurnitureGone(fid));
+            // a hyperdoor's room stays in this universe, shut
+            if let Some(pid) = f.pocket() {
+                let home = self.way_home();
+                self.shut(pid, fid, home);
+                f.note = None;
+            }
             furniture.push(f);
         }
         let sids: Vec<u32> = self
@@ -1940,7 +2333,8 @@ impl Sim {
                 let a = self.rng.next() * std::f64::consts::TAU;
                 let r = self.rng.next().sqrt() * COW_LEASH;
                 let (tx, ty) = (hx + a.cos() * r, hy + a.sin() * r);
-                if self.terrain.walkable(tx, ty, self.cows[i].z) {
+                let c = &self.cows[i];
+                if self.walkable_npc(c.pen, tx, ty, c.z) {
                     self.cows[i].target = Some((tx, ty));
                 }
             }
@@ -2020,14 +2414,51 @@ impl Sim {
         }
 
         let c = &self.cows[i];
-        let mut body = (c.x, c.y, c.z, c.vz);
-        let blocked = move_body(&self.terrain, &mut body, dx, dy, dt);
+        let (pen, mut body) = (c.pen, (c.x, c.y, c.z, c.vz));
+        let blocked = self.move_npc(pen, &mut body, dx, dy, dt);
         let c = &mut self.cows[i];
         (c.x, c.y, c.z, c.vz) = body;
         if blocked && c.target.is_some() {
             // walked into something: pick another plan
             c.target = None;
         }
+    }
+
+    /// Could a cow or helper in pocket room `pen` (or the world) stand at
+    /// (x, y), from height z?
+    fn walkable_npc(&self, pen: Option<u32>, x: f64, y: f64, z: f64) -> bool {
+        match pen.and_then(|p| self.ship(p)) {
+            Some(s) => pocket_ground(s, x, y, z).is_some(),
+            None => self.terrain.walkable(x, y, z),
+        }
+    }
+
+    /// `move_body`, in pocket room `pen` if it's in one.
+    fn move_npc(
+        &self,
+        pen: Option<u32>,
+        b: &mut (f64, f64, f64, f64),
+        dx: f64,
+        dy: f64,
+        dt: f64,
+    ) -> bool {
+        let Some(s) = pen.and_then(|p| self.ship(p)) else {
+            return move_body(&self.terrain, b, dx, dy, dt);
+        };
+        let (x, y, z, _) = *b;
+        let (mut nx, mut ny) = (x, y);
+        if dx != 0.0 && pocket_ground(s, x + dx, y, z).is_some() {
+            nx = x + dx;
+        }
+        if dy != 0.0 && pocket_ground(s, nx, y + dy, z).is_some() {
+            ny = y + dy;
+        }
+        let blocked = nx != x + dx || ny != y + dy;
+        (b.0, b.1) = (nx, ny);
+        if let Some(g) = pocket_ground(s, nx, ny, z) {
+            (b.2, b.3) = (g, 0.0);
+        }
+        blocked
     }
 
     fn separate_cows(&mut self) {
@@ -2052,8 +2483,8 @@ impl Sim {
                 let (nx, ny) = (ox / d * push, oy / d * push);
                 for (i, sx, sy) in [(a, -nx, -ny), (b, nx, ny)] {
                     let c = &self.cows[i];
-                    let mut body = (c.x, c.y, c.z, c.vz);
-                    move_body(&self.terrain, &mut body, sx, sy, 0.0);
+                    let (pen, mut body) = (c.pen, (c.x, c.y, c.z, c.vz));
+                    self.move_npc(pen, &mut body, sx, sy, 0.0);
                     let c = &mut self.cows[i];
                     (c.x, c.y, c.z, c.vz) = body;
                 }
@@ -2091,6 +2522,34 @@ fn move_body(t: &Terrain, b: &mut (f64, f64, f64, f64), dx: f64, dy: f64, dt: f6
         }
     }
     blocked
+}
+
+/// Where feet rest in pocket room `s` at world (x, y), from height z (a
+/// step up at most), with two clear cells over them; None outside its
+/// walls or with no room there. World height.
+fn pocket_ground(s: &Ship, x: f64, y: f64, z: f64) -> Option<f64> {
+    let l = s.pose.to_local((x, y, z));
+    if !ships::inside(l) {
+        return None;
+    }
+    let g = s.ground_local((l.0, l.1, l.2 + 1.0))?;
+    if g > l.2 + 1.01 {
+        return None;
+    }
+    let c = (cell(l.0), cell(l.1), g.round() as i32);
+    let clear = s.get(c) == AIR && s.get((c.0, c.1, c.2 + 1)) == AIR;
+    clear.then_some(s.pose.z + g)
+}
+
+/// The heading of something facing a door's front (-y, turned `rot`).
+fn facing(rot: u8) -> f64 {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    match rot % 4 {
+        0 => -FRAC_PI_2,
+        1 => 0.0,
+        2 => FRAC_PI_2,
+        _ => PI,
+    }
 }
 
 /// Whether (x, y, z, heading) moved noticeably from what was last sent;

@@ -101,8 +101,9 @@ defmodule SoshWeb.ActionChannel do
     |> answer(socket)
   end
 
-  # Pick up the cow `cow`, the furniture `furniture`, or what's at
-  # `position` (a pot, or furniture). The universe decides: one thing at a
+  # Pick up the cow `cow`, the furniture `furniture`, the player `player`
+  # (by user id; they can wiggle free), or what's at `position` (a pot, or
+  # furniture). The universe decides: one thing at a
   # time; heavy furniture waits for a second carrier (`how: "gripped"`);
   # small empty furniture packs into the bag (`how: "pocketed"`).
   def handle_in("pick_up_action", params, socket) do
@@ -177,6 +178,24 @@ defmodule SoshWeb.ActionChannel do
     |> answer(socket)
   end
 
+  # Go through the door `furniture`: a hyperdoor into its pocket room, or a
+  # room's way out. Replies where we land, `%{on, at, heading}`; whatever
+  # we carry comes too.
+  def handle_in("door_action", %{"furniture" => id}, socket) when is_integer(id) do
+    with {:ok, to} <- Sim.use_door(u(socket), user(socket), name(socket), id) do
+      {:reply, {:ok, to}, socket}
+    end
+    |> answer(socket)
+  end
+
+  # Carried by someone: wriggle. `free: true` once we're out of their arms.
+  def handle_in("wiggle", _params, socket) do
+    with {:ok, free} <- Sim.wiggle(u(socket), user(socket)) do
+      {:reply, {:ok, %{free: free}}, socket}
+    end
+    |> answer(socket)
+  end
+
   # Take the helm of the airship we stand at (`ship` in the reply), or let
   # go of the one we hold (`ship: nil`).
   def handle_in("helm_action", _params, socket) do
@@ -234,6 +253,9 @@ defmodule SoshWeb.ActionChannel do
 
   defp pick_target(%{"cow" => id}) when is_integer(id), do: {:ok, {:cow, id}}
   defp pick_target(%{"furniture" => id}) when is_integer(id), do: {:ok, {:furniture, id}}
+
+  defp pick_target(%{"player" => id}) when is_binary(id) and byte_size(id) <= 64,
+    do: {:ok, {:player, id}}
 
   defp pick_target(%{"position" => pos} = params) do
     with {:ok, p} <- cell(pos), do: {:ok, {:cell, on(params), p}}
