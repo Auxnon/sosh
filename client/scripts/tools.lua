@@ -397,6 +397,14 @@ function world_pointer(me)
 		cell = nil
 	end
 	APP.target = cell
+	-- where something dragged out of the bag would be set down
+	APP.aim = nil
+	if hit ~= nil and hit.before ~= nil and in_reach(me, hit.before, hit.on) then
+		local aim = {}
+		aim.cell = hit.before
+		aim.on = hit.on
+		APP.aim = aim
+	end
 	-- hoisted: a call in the first argument miscompiles (SILT-BUGS.md #1)
 	local spot, spot_on = walk_spot(me, tool, hit, on, box or use, helm)
 	Marker.hover(spot, spot_on)
@@ -525,7 +533,12 @@ REASONS = {
 	bag_full = "your bag is full",
 	not_marbles = "that isn't a bag of marbles",
 	wallet_full = "your wallet can't hold any more",
-	invalid_amount = "that isn't a number of marbles",
+	invalid_amount = "that's not an amount you can use",
+	empty_slot = "that pocket's empty",
+	no_room = "there's no empty pocket for it",
+	no_such_slot = "that pocket isn't there",
+	no_room_to_drop = "there's no room to set it down",
+	not_in_world = "you're not in the world",
 	none_left = "you have none left",
 	missing_ingredients = "you don't have what it needs",
 	out_of_reach = "too far away",

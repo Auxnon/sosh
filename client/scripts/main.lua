@@ -696,6 +696,11 @@ function world_frame()
 			if me:driven() then
 				me:stop() -- the keys are for typing now
 			end
+		elseif Bag.amount ~= nil then
+			Bag.amount_keys()
+			if me:driven() then
+				me:stop()
+			end
 		else
 			world_keys(me)
 		end
