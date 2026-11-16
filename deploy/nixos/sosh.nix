@@ -159,9 +159,10 @@ in
           TRUST_PROXY = "1";
         } // cfg.environment;
         environmentFiles = [ cfg.environmentFile ];
-        # a registry image: check for a newer one on every (re)start
-        pull = if local then "never" else "newer";
-        extraOptions = [ "--network=sosh" ]
+        # a registry image: check for a newer one on every (re)start. As a
+        # flag, not oci-containers' `pull` option: NixOS 24.05 doesn't have
+        # it (and where it does, a later --pull wins)
+        extraOptions = [ "--network=sosh" (if local then "--pull=never" else "--pull=newer") ]
           ++ autoUpdate ++ [ "--label=PODMAN_SYSTEMD_UNIT=podman-sosh.service" ];
       };
     };
