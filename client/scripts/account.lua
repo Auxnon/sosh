@@ -656,6 +656,15 @@ function Account.enter(s, u)
 			chat_dress(l)
 		end
 	end
+	-- a message's links were looked up (Sosh.Embeds): a link's shape on its
+	-- line, unless it carries a picture or cart
+	SERVER.on["embeds"] = function(p)
+		local l = chat_line(p.id)
+		if l ~= nil and (l.media == nil or l.media.kind == "link") then
+			l.media = Media.from_embeds(p.embeds)
+			l.pane_cols = nil
+		end
+	end
 	SERVER.on["deleted"] = function(p)
 		for i = #APP.chat, 1, -1 do
 			if APP.chat[i].id == p.id then
@@ -721,8 +730,12 @@ function chat_message(m, old)
 	if m.author ~= nil then
 		col = U.hex_for(who)
 	end
-	if (m.body ~= nil and m.body ~= "") or m.media ~= nil then
-		local l = add_chat(who, m.body, col, m.media)
+	local media = m.media
+	if media == nil then
+		media = Media.from_embeds(m.embeds)
+	end
+	if (m.body ~= nil and m.body ~= "") or media ~= nil then
+		local l = add_chat(who, m.body, col, media)
 		l.id = m.id
 		l.who = who
 		l.raw = m.body or ""
