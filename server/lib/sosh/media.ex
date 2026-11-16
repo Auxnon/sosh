@@ -51,6 +51,29 @@ defmodule Sosh.Media do
     end
   end
 
+  @doc """
+  Keep `bytes` the server fetched on behalf of user `owner_id` (a link's
+  preview picture, `Sosh.Embeds`): checked like an upload, not rate limited.
+  """
+  def keep(owner_id, bytes, name \\ nil) when is_binary(bytes) do
+    with :ok <- check_size(bytes),
+         {:ok, info} <- sniff(bytes) do
+      %Medium{
+        key: key(),
+        owner_id: owner_id,
+        kind: info.kind,
+        mime: info.mime,
+        animated: info.animated,
+        width: info.w,
+        height: info.h,
+        size: byte_size(bytes),
+        name: clean_name(name),
+        data: bytes
+      }
+      |> Repo.insert()
+    end
+  end
+
   defp check_size(""), do: {:error, :empty}
   defp check_size(b) when byte_size(b) > @max_size, do: {:error, :too_big}
   defp check_size(_), do: :ok

@@ -227,6 +227,12 @@ looks, the way home and the bag, which the app has as its own screens). The clie
   `/edit`, `/delete`, `/react +1` (or `<3`, `lol`, `wow`, `sad`, `yay`) and
   `/pin`, each on the latest message. **`dm:<id>`** is the same for a
   conversation, except a DM can't be pinned.
+  Links to posts and videos (X, Instagram, Threads, Bluesky, Mastodon,
+  YouTube, TikTok, Reddit, Spotify, Vimeo, SoundCloud) get previews a
+  moment after the message: `embeds` (`id`, `embeds`: `[{url, provider,
+  title, author, text, thumb}]`), and every message's `embeds` from then
+  on (`Sosh.Embeds`). The apps show them as cards; the game shows the
+  link's app as a small coloured shape on the message's line.
 
 Inside a server, the client also joins two channels for its universe:
 

@@ -9,6 +9,8 @@ defmodule Sosh.Social.Message do
     field :claimed_at, :utc_datetime
     field :cancelled_at, :utc_datetime
     field :edited_at, :utc_datetime
+    # link previews (`Sosh.Embeds`)
+    field :embeds, {:array, :map}, default: []
     belongs_to :server, Sosh.Social.Server
     belongs_to :conversation, Sosh.Social.Conversation
     belongs_to :author, Sosh.Accounts.User

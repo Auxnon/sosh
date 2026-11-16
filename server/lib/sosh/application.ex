@@ -16,6 +16,7 @@ defmodule Sosh.Application do
       Sosh.Lobby,
       Sosh.Players,
       Sosh.Signs,
+      Sosh.Embeds,
       # one Sosh.Sim per universe of the grid, by {gx, gy}
       {Registry, keys: :unique, name: Sosh.Sims},
       {DynamicSupervisor, name: Sosh.SimSup, strategy: :one_for_one},

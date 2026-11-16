@@ -38,3 +38,6 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
+
+# link previews: never the network in tests, and straight away
+config :sosh, Sosh.Embeds, fetch: false, sync: true

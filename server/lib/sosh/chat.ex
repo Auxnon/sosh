@@ -16,7 +16,9 @@ defmodule Sosh.Chat do
   speech bubble over them (`room:gx,gy` `new_msg`).
 
   A message can carry a picture or a cart (`media`, the key of something
-  its author uploaded: `Sosh.Media`).
+  its author uploaded: `Sosh.Media`). Links to posts and videos on the
+  big social apps get previews (`embeds`, filled in after it's sent:
+  `Sosh.Embeds`).
 
   Its author can edit it (`edit/3`: `edited`) and delete it (`delete/2`,
   as can a server's moderators: `deleted`). Anyone in the chat can react
@@ -25,8 +27,8 @@ defmodule Sosh.Chat do
   message wherever they place it (`Sosh.Signs`).
 
   Messages as clients see them (`view/2`): `%{id, server_id,
-  conversation_id, author, body, at, edited_at, gift, media, reactions,
-  pins}`, `author` public, `media` nil or `Sosh.Media.view/1`,
+  conversation_id, author, body, at, edited_at, gift, media, embeds,
+  reactions, pins}`, `author` public, `media` nil or `Sosh.Media.view/1`,
   `reactions` `[%{emoji, users}]` (user ids, in `reactions/0` order),
   `pins` how many signs were made of it, `gift` nil or
   `%{to, state, item, count}` with state `"sealed"`, `"opened"` or
@@ -133,6 +135,7 @@ defmodule Sosh.Chat do
       edited_at: m.edited_at,
       gift: gift_view(m, viewer_id),
       media: media_view(m),
+      embeds: Sosh.Embeds.view(m.embeds),
       reactions: reactions_view(m.reactions),
       pins: if(is_list(m.pins), do: length(m.pins), else: 0)
     }
@@ -204,6 +207,7 @@ defmodule Sosh.Chat do
 
       with {:ok, m} <- result do
         announce(place, "message", view(%{m | author: me}, nil))
+        Sosh.Embeds.attach(m)
         if match?({:server, _}, place) and (body != "" or media != nil),
           do: bubble(place, me, body, media)
         {:ok, view(%{m | author: me}, me)}
@@ -397,6 +401,7 @@ defmodule Sosh.Chat do
 
       Sosh.Signs.forget()
       announce(place_of(m), "edited", %{id: m.id, body: m.body, edited_at: m.edited_at})
+      Sosh.Embeds.attach(m)
       {:ok, view(Repo.preload(m, @preload), me)}
     end
   end
