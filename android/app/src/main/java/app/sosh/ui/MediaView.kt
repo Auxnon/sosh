@@ -95,7 +95,7 @@ fun EmbedCard(app: AppState, e: Embed) {
         Box(Modifier.width(6.dp).heightIn(min = 64.dp).background(providerColor(e.provider)))
         Column(Modifier.weight(1f).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                e.app + (e.author?.let { " · $it" } ?: ""),
+                (if (e.video && e.thumb == null) "▶ " else "") + e.app + (e.author?.let { " · $it" } ?: ""),
                 color = providerColor(e.provider), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
@@ -106,13 +106,26 @@ fun EmbedCard(app: AppState, e: Embed) {
             }
             e.thumb?.let { t ->
                 val ratio = (t.w.toFloat() / t.h.coerceAtLeast(1)).coerceIn(0.5f, 2.5f)
-                AsyncImage(
-                    ImageRequest.Builder(context).data(app.resolve(t.url)).crossfade(true).build(),
-                    e.title ?: e.app,
+                Box(
                     Modifier.padding(top = 4.dp).widthIn(max = 300.dp).heightIn(max = 240.dp)
                         .aspectRatio(ratio, matchHeightConstraintsFirst = ratio < 1f).clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Crop,
-                )
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AsyncImage(
+                        ImageRequest.Builder(context).data(app.resolve(t.url)).crossfade(true).build(),
+                        e.title ?: e.app,
+                        Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                    // a video plays on its own app: the mark says so, the tap goes there
+                    if (e.video) {
+                        Box(
+                            Modifier.size(52.dp).clip(RoundedCornerShape(26.dp)).background(Color(0xB3120F2A))
+                                .border(2.dp, Color(0xCCFFFFFF), RoundedCornerShape(26.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(Icons.Filled.PlayArrow, "play on ${e.app}", Modifier.size(32.dp), tint = Color.White) }
+                    }
+                }
             }
         }
     }

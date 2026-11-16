@@ -5,6 +5,8 @@
 use egui::{Align2, Color32, CornerRadius, Rect, RichText, Sense, Ui, UiBuilder, pos2, vec2};
 
 use super::View;
+use crate::media::Pics;
+use crate::models::Media;
 use crate::state::{Pane, Place, Screen, State};
 use crate::theme::*;
 
@@ -30,6 +32,8 @@ fn rail_contents(ui: &mut Ui, st: &mut State, v: &mut View) {
         egui::ScrollArea::vertical().max_height(h).auto_shrink([false, true]).show(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.spacing_mut().item_spacing = vec2(0.0, 12.0);
+                // room for the open card's ring, which the scroll area would clip
+                ui.add_space(4.0);
                 let slots: Vec<(i64, String)> = st.servers.iter().filter(|s| s.is_member()).map(|s| (s.id, s.name.clone())).collect();
                 for (id, name) in slots {
                     let on = !v.dms && st.place == Some(Place::InServer(id));
@@ -94,6 +98,7 @@ fn page_contents(ui: &mut Ui, st: &mut State, v: &mut View, page: Rect) {
         } else if let Some(s) = st.open_server().cloned() {
             let banner = Rect::from_min_size(page.min, vec2(page.width(), 116.0));
             island_banner(ui.painter(), banner);
+            map_banner(ui, st, s.map.as_deref(), banner);
             ui.add_space(116.0 + 14.0);
             ui.scope_builder(
                 UiBuilder::new()
@@ -244,4 +249,32 @@ fn preview(m: &crate::models::Message) -> String {
     } else {
         String::new()
     }
+}
+
+/// A server's map (its universe's islands, drawn by the server) over the
+/// banner once it's loaded, cropped to fill it.
+fn map_banner(ui: &mut Ui, st: &mut State, path: Option<&str>, r: Rect) {
+    let Some(path) = path else { return };
+    let m = Media {
+        key: format!("map:{path}"),
+        url: path.to_owned(),
+        kind: "image".into(),
+        animated: false,
+        w: 0,
+        h: 0,
+        size: 0,
+        name: None,
+    };
+    let time = ui.input(|i| i.time);
+    let Some(tex) = Pics::frame(st, &m, time) else { return };
+    let [tw, th] = tex.size();
+    let (ta, ra) = (tw as f32 / th.max(1) as f32, r.width() / r.height());
+    let uv = if ra > ta {
+        let f = ta / ra;
+        Rect::from_min_max(pos2(0.0, (1.0 - f) / 2.0), pos2(1.0, (1.0 + f) / 2.0))
+    } else {
+        let f = ra / ta;
+        Rect::from_min_max(pos2((1.0 - f) / 2.0, 0.0), pos2((1.0 + f) / 2.0, 1.0))
+    };
+    egui::Image::new(&tex).uv(uv).corner_radius(CornerRadius { nw: 24, ne: 24, sw: 0, se: 0 }).paint_at(ui, r);
 }

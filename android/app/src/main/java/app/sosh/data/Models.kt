@@ -33,6 +33,8 @@ data class Server(
     val status: String?,
     val role: String?,
     val members: Int,
+    /** Its universe's map, a picture of its islands (`/map/gx,gy`): the banner. */
+    val map: String? = null,
 ) {
     val isMember get() = status == "member"
 
@@ -57,6 +59,7 @@ data class Server(
                 o.optString("status").takeIf { !o.isNull("status") && it.isNotEmpty() },
                 o.optString("role").takeIf { !o.isNull("role") && it != "false" && it.isNotEmpty() },
                 o.optInt("members"),
+                o.optString("map").takeIf { !o.isNull("map") && it.startsWith("/") },
             )
         }
     }
@@ -182,6 +185,8 @@ data class Embed(
     val author: String?,
     val text: String?,
     val thumb: Media?,
+    /** A video: its picture gets a play mark, and opening it goes to the app. */
+    val video: Boolean = false,
 ) {
     /** The app it's from, as people call it. */
     val app: String
@@ -206,7 +211,7 @@ data class Embed(
         fun list(a: JSONArray?): List<Embed> = (0 until (a?.length() ?: 0)).mapNotNull { i ->
             val o = a!!.optJSONObject(i) ?: return@mapNotNull null
             val url = o.str("url") ?: return@mapNotNull null
-            Embed(url, o.optString("provider"), o.str("title"), o.str("author"), o.str("text"), Media.from(o.optJSONObject("thumb")))
+            Embed(url, o.optString("provider"), o.str("title"), o.str("author"), o.str("text"), Media.from(o.optJSONObject("thumb")), o.optBoolean("video"))
         }
     }
 }

@@ -443,9 +443,10 @@ fn embed_card(ui: &mut Ui, st: &mut State, e: &Embed, time: f64) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width().min(420.0));
             ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
+            let mark = if e.video && e.thumb.is_none() { "▶ " } else { "" };
             let head = match &e.author {
-                Some(a) => format!("{} · {a}", e.app()),
-                None => e.app().to_owned(),
+                Some(a) => format!("{mark}{} · {a}", e.app()),
+                None => format!("{mark}{}", e.app()),
             };
             ui.label(RichText::new(head).font(font(EXTRA, 13.0)).color(col));
             if let Some(t) = &e.title {
@@ -467,7 +468,14 @@ fn embed_card(ui: &mut Ui, st: &mut State, e: &Embed, time: f64) {
                     w = h * ratio;
                 }
                 if let Some(tex) = Pics::frame(st, t, time) {
-                    ui.add(egui::Image::new(&tex).fit_to_exact_size(vec2(w, h)).corner_radius(CornerRadius::same(12)));
+                    let img = ui.add(egui::Image::new(&tex).fit_to_exact_size(vec2(w, h)).corner_radius(CornerRadius::same(12)));
+                    // a video plays on its own app: the mark says so, the click goes there
+                    if e.video {
+                        let c = img.rect.center();
+                        let p = ui.painter();
+                        p.circle(c, 26.0, Color32::from_rgba_unmultiplied(0x12, 0x0F, 0x2A, 0xB3), Stroke::new(2.0, Color32::from_white_alpha(0xCC)));
+                        Icon::Play.paint(p, Rect::from_center_size(c + vec2(2.0, 0.0), vec2(28.0, 28.0)), Color32::WHITE);
+                    }
                 }
             }
         })

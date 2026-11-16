@@ -52,6 +52,8 @@ pub struct Server {
     pub status: Option<String>,
     pub role: Option<String>,
     pub members: i64,
+    /// Its universe's map, a picture of its islands (`/map/gx,gy`): the banner.
+    pub map: Option<String>,
 }
 
 const RANKS: [&str; 4] = ["member", "moderator", "admin", "owner"];
@@ -70,6 +72,7 @@ impl Server {
             status: opt_s(v, "status"),
             role: opt_s(v, "role"),
             members: i(v, "members"),
+            map: opt_s(v, "map").filter(|m| m.starts_with('/')),
         }
     }
 
@@ -212,6 +215,8 @@ pub struct Embed {
     pub author: Option<String>,
     pub text: Option<String>,
     pub thumb: Option<Media>,
+    /// A video: its picture gets a play mark; opening it goes to the app.
+    pub video: bool,
 }
 
 impl Embed {
@@ -227,6 +232,7 @@ impl Embed {
                             author: opt_s(e, "author"),
                             text: opt_s(e, "text"),
                             thumb: Media::from(e.get("thumb")),
+                            video: e.get("video").and_then(Value::as_bool).unwrap_or(false),
                         })
                     })
                     .collect()

@@ -9,6 +9,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -377,7 +379,8 @@ private fun Drawer(app: AppState, go: (Screen) -> Unit, close: () -> Unit) {
             IconPlastic(Icons.Filled.Mail, "direct messages", if (dms) Tone.Green else Tone.Plastic) { dms = true }
             Label("slots", style = TechLabel.copy(fontSize = 8.sp))
             Column(
-                Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                // padded inside the scroll, so its clip doesn't cut the open card's ring or a card's shadow
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -423,7 +426,13 @@ private fun Drawer(app: AppState, go: (Screen) -> Unit, close: () -> Unit) {
             } else {
                 val s = (app.place as? Place.InServer)?.let { app.server(it.id) }
                 if (s != null) {
-                    IslandBanner(Modifier.fillMaxWidth().height(116.dp))
+                    // its universe's map, over the drawn islands until it loads
+                    Box(Modifier.fillMaxWidth().height(116.dp)) {
+                        IslandBanner(Modifier.matchParentSize())
+                        s.map?.let { m ->
+                            AsyncImage(app.resolve(m), "map of ${s.name}", Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+                        }
+                    }
                     Column(Modifier.padding(18.dp, 14.dp, 18.dp, 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Label("universe ${s.universe.first},${s.universe.second} · ${s.policy} · ${s.role ?: "member"}", color = InkFaint)
                         Text(s.name, color = Ink, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
