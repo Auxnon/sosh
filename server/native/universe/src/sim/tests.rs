@@ -1059,3 +1059,55 @@ fn a_carried_player_wiggles_free() {
     s.release("q");
     assert_eq!(s.held("p"), None);
 }
+
+#[test]
+fn a_bag_of_marbles_is_set_down_and_picked_up_whole() {
+    let mut s = flat();
+    let mut bag = bag_with(&[("marbles:250", 1)]);
+    assert_eq!(s.place(0, (4, 4, 0), "marbles:250", 0, &mut bag), Ok(()));
+    assert_eq!(count(&bag, "marbles:250"), 0);
+    let id = s.furniture_at(0, (4, 4, 0)).unwrap();
+    assert_eq!(s.furniture[&id].note.as_deref(), Some("250"));
+    assert_eq!(s.grab("p", (4.0, 3.0, 0.0), id, &mut bag), Ok(Grabbed::Pocketed));
+    assert_eq!(count(&bag, "marbles:250"), 1);
+    s.place(0, (4, 4, 0), "marbles:250", 0, &mut bag).unwrap();
+    s.dig("p", 0, (4, 4, 0), &mut bag).unwrap();
+    assert_eq!(count(&bag, "marbles:250"), 1, "broken, it's given back whole");
+    assert_eq!(s.place(0, (4, 4, 0), "marbles", 0, &mut bag), Err("cannot_place"));
+}
+
+#[test]
+fn digging_stone_sometimes_turns_up_marbles() {
+    let mut s = flat();
+    for x in 0..16 {
+        for y in 0..16 {
+            s.terrain.set(x, y, -2, STONE);
+        }
+    }
+    s.drain_events();
+    let mut bag = items::empty(items::BAG_SLOTS);
+    let mut found = 0;
+    for x in 0..16 {
+        for y in 0..16 {
+            s.dig("p", 0, (x, y, -1), &mut bag).unwrap();
+            s.dig("p", 0, (x, y, -2), &mut bag).unwrap();
+            // keep the bag from filling with stone and grass
+            for slot in bag.iter_mut() {
+                if slot.as_ref().is_some_and(|st| items::marbles_in(&st.item).is_none()) {
+                    *slot = None;
+                }
+            }
+        }
+        for e in s.drain_events() {
+            if let Event::Found(who, n) = e {
+                assert_eq!(who, "p");
+                assert!((MARBLE_FIND.0..=MARBLE_FIND.1).contains(&n));
+                found += n;
+            }
+        }
+    }
+    assert!(found > 0, "256 stones and no marbles");
+    let have: u32 = bag.iter().flatten().filter_map(|st| items::marbles_in(&st.item)).sum();
+    assert_eq!(have, found);
+    assert_eq!(bag.iter().flatten().count(), 1, "they top up one bag");
+}

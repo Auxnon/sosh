@@ -80,7 +80,19 @@ pub const ITEMS: &[ItemInfo] = &[
         block: None,
         furniture: Some("sign"),
     },
+    // a bag of marbles, the money: a bag holds it as `marbles:<n>`, one bag
+    // to a slot; set down, it's a bag of marbles in the world. Marbles kept
+    // in a wallet aren't items at all (Sosh.Players)
+    ItemInfo {
+        name: "marbles",
+        stack: 1,
+        block: None,
+        furniture: Some("marbles"),
+    },
 ];
+
+/// Most marbles one bag of them holds.
+pub const MARBLE_BAG_MAX: u32 = 99_999;
 
 /// What a new player starts with: enough to build a few things.
 pub const STARTER: &[(&str, u16)] = &[
@@ -92,11 +104,69 @@ pub const STARTER: &[(&str, u16)] = &[
 ];
 
 pub fn info(name: &str) -> Option<&'static ItemInfo> {
-    let name = match sign_id(name) {
-        Some(_) => "sign",
-        None => name,
+    let name = if sign_id(name).is_some() {
+        "sign"
+    } else if marbles_in(name).is_some() {
+        "marbles"
+    } else if name == "marbles" {
+        // a bag of marbles always says how many
+        return None;
+    } else {
+        name
     };
     ITEMS.iter().find(|i| i.name == name)
+}
+
+/// How many marbles a `marbles:<n>` bag holds.
+pub fn marbles_in(name: &str) -> Option<u32> {
+    let n: u32 = name.strip_prefix("marbles:")?.parse().ok()?;
+    (1..=MARBLE_BAG_MAX).contains(&n).then_some(n)
+}
+
+pub fn marble_bag(n: u32) -> String {
+    format!("marbles:{n}")
+}
+
+/// Put `n` marbles in `slots`: topping up the bags of them already there,
+/// then in new bags. Returns how many didn't fit.
+pub fn add_marbles(slots: &mut [Slot], mut n: u32) -> u32 {
+    for s in slots.iter_mut().flatten() {
+        if n == 0 {
+            break;
+        }
+        if let Some(have) = marbles_in(&s.item) {
+            let k = n.min(MARBLE_BAG_MAX - have);
+            if k > 0 {
+                s.item = marble_bag(have + k);
+                n -= k;
+            }
+        }
+    }
+    for s in slots.iter_mut() {
+        if n == 0 {
+            break;
+        }
+        if s.is_none() {
+            let k = n.min(MARBLE_BAG_MAX);
+            *s = Some(Stack {
+                item: marble_bag(k),
+                n: 1,
+            });
+            n -= k;
+        }
+    }
+    n
+}
+
+/// How many marbles would fit.
+pub fn room_for_marbles(slots: &[Slot]) -> u64 {
+    slots
+        .iter()
+        .map(|s| match s {
+            None => MARBLE_BAG_MAX as u64,
+            Some(s) => marbles_in(&s.item).map_or(0, |h| (MARBLE_BAG_MAX - h) as u64),
+        })
+        .sum()
 }
 
 /// The pin a `sign:<id>` item stands for.
@@ -260,6 +330,21 @@ mod tests {
         assert_eq!(add(&mut b, "sign:1", 1), 0);
         assert_eq!(add(&mut b, "sign:1", 1), 0, "another of the same pin takes its own slot");
         assert_eq!(add(&mut b, "sign:2", 1), 1, "no room left");
+    }
+
+    #[test]
+    fn marbles_come_in_bags_that_top_up() {
+        assert_eq!(info("marbles:5").unwrap().furniture, Some("marbles"));
+        assert!(info("marbles").is_none());
+        assert!(info("marbles:0").is_none());
+        assert!(info("marbles:100000").is_none());
+        let mut b = empty(2);
+        assert_eq!(add_marbles(&mut b, 99_990), 0);
+        assert_eq!(add_marbles(&mut b, 20), 0);
+        assert_eq!(b[0].as_ref().unwrap().item, "marbles:99999");
+        assert_eq!(b[1].as_ref().unwrap().item, "marbles:11");
+        assert_eq!(room_for_marbles(&b), 99_988);
+        assert_eq!(add_marbles(&mut b, 100_000), 12);
     }
 
     #[test]

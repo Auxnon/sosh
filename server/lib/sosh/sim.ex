@@ -301,8 +301,7 @@ defmodule Sosh.Sim do
     do: act({:bag, name, fun, before, []}, state)
 
   defp act({:bag, name, fun, before, rest}, state) do
-    args = [state.uni | before] ++ [Players.bag(name) | rest]
-    reply(state, with_bag(name, apply(Universe, fun, args)))
+    reply(state, with_bag(name, &apply(Universe, fun, [state.uni | before] ++ [&1 | rest])))
   end
 
   defp act({:build, kind, on, pos, rot}, state),
@@ -312,7 +311,7 @@ defmodule Sosh.Sim do
     result =
       case Universe.site_at(state.uni, on, pos) do
         nil -> {:error, "no_blueprint_there"}
-        site -> with_bag(name, Universe.deposit(state.uni, site, Players.bag(name)))
+        site -> with_bag(name, &Universe.deposit(state.uni, site, &1))
       end
 
     reply(state, result)
@@ -333,7 +332,7 @@ defmodule Sosh.Sim do
                do: {:ok, :player, nil}
 
         {:furniture, id} ->
-          with_bag(name, Universe.grab(uni, user, at, id, Players.bag(name)))
+          with_bag(name, &Universe.grab(uni, user, at, id, &1))
 
         {:cell, on, pos} ->
           case Universe.furniture_at(uni, on, pos) do
@@ -342,7 +341,7 @@ defmodule Sosh.Sim do
                    do: {:ok, :block, nil}
 
             id ->
-              with_bag(name, Universe.grab(uni, user, at, id, Players.bag(name)))
+              with_bag(name, &Universe.grab(uni, user, at, id, &1))
           end
       end
 
@@ -559,14 +558,14 @@ defmodule Sosh.Sim do
     {result, state}
   end
 
-  # Keep a changed bag and reply with it as JSON wants it.
-  defp with_bag(name, {:ok, bag}) when is_list(bag), do: {:ok, keep(name, bag)}
-  defp with_bag(name, {:ok, x, bag}) when is_list(bag), do: {:ok, x, keep(name, bag)}
-  defp with_bag(_name, other), do: other
-
-  defp keep(name, bag) do
-    Players.put_bag(name, bag)
-    Players.bag_json(bag)
+  # Change the bag with `fun` in one step (nothing else changes it in
+  # between, `Sosh.Players.change_bag/2`) and reply with it as JSON wants it.
+  defp with_bag(name, fun) do
+    case Players.change_bag(name, fun) do
+      {:ok, bag} when is_list(bag) -> {:ok, Players.bag_json(bag)}
+      {:ok, x, bag} when is_list(bag) -> {:ok, x, Players.bag_json(bag)}
+      other -> other
+    end
   end
 
   defp flush(state) do

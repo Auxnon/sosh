@@ -21,7 +21,8 @@ defmodule SoshWeb.UserChannel do
   description?, policy?}, `dm_open` {handle} -> {conversation_id,
   messages}, `dm_post` {handle, body, gift?}, `enter` {id} (go to that
   server's universe) -> {universe, server}, `claim` / `cancel` / `delete`
-  {id} (a message), `bag_swap` {a, b} (two slot indexes) -> {bag}, `hold`
+  {id} (a message), `bag_swap` {a, b} (two slot indexes) -> {bag},
+  `wallet` {deposit: slot} | {withdraw: n} -> {bag, wallet}, `hold`
   {item} (an item name or nil; not kept, only passed on), `logout`.
   """
   use Phoenix.Channel
@@ -136,6 +137,8 @@ defmodule SoshWeb.UserChannel do
   end
 
   defp answer("bag_swap", %{"a" => a, "b" => b}, me, _), do: wrap(Me.bag_swap(me, a, b), &%{bag: &1})
+
+  defp answer("wallet", p, me, _), do: wrap(Me.wallet(me, Me.wallet_op(p)), & &1)
 
   defp answer("hold", %{"item" => item}, _, socket) when is_nil(item) or (is_binary(item) and byte_size(item) <= 32) do
     broadcast!(socket, "hold", %{item: item})

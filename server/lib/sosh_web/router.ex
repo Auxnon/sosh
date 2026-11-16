@@ -47,6 +47,7 @@ defmodule SoshWeb.Router do
     get "/me", MeController, :show
     put "/me/character", MeController, :character
     get "/me/bag", MeController, :bag
+    post "/me/wallet", MeController, :wallet
 
     get "/friends", FriendController, :index
     post "/friends", FriendController, :create

@@ -122,6 +122,16 @@ pub const KINDS: &[Kind] = &[
         itemizable: true,
         recipe: &[],
     },
+    // a bag of marbles set down (its item is `marbles:<n>`, the count kept
+    // in `Furniture::note`); never built, and it packs back into a bag
+    Kind {
+        name: "marbles",
+        size: (1, 1, 1),
+        slots: 0,
+        carriers: 1,
+        itemizable: true,
+        recipe: &[],
+    },
     // what's left when furniture breaks and its contents don't fit the
     // breaker's bag; it goes when emptied
     Kind {
@@ -190,7 +200,8 @@ pub struct Furniture {
     pub origin: Pos,
     pub rot: u8,
     pub slots: Vec<Slot>,
-    /// What makes this one itself: a sign's pin id.
+    /// What makes this one itself: a sign's pin id, how many marbles a bag
+    /// of them holds, the room a hyperdoor leads to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     /// Who's holding it; it lifts once there are `carriers` of them.
@@ -237,12 +248,17 @@ impl Furniture {
         (sx / n, sy / n, self.origin.2 as f64)
     }
 
-    /// The item it packs into: its kind's, or a sign's own.
+    /// The item it packs into: its kind's, or a sign's or a marble bag's own.
     pub fn item(&self) -> String {
         match &self.note {
-            Some(n) if self.kind == "sign" => format!("sign:{n}"),
+            Some(n) if self.whole() => format!("{}:{n}", self.kind),
             _ => self.kind.clone(),
         }
+    }
+
+    /// Not made of anything, so breaking it gives it back whole.
+    pub fn whole(&self) -> bool {
+        matches!(self.kind.as_str(), "sign" | "marbles")
     }
 
     /// Part of where it stands: never broken, picked up or carried.

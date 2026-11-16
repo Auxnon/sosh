@@ -61,6 +61,33 @@ defmodule SoshWeb.ActionChannelTest do
              })
   end
 
+  test "marbles go into the wallet and back out into bags of them", %{actions: actions} do
+    {:ok, _} = Players.update_bag("builder", &Sosh.Universe.bag_give(&1, "marbles:300", 1))
+    slot = Enum.find_index(Players.bag("builder"), &(&1 == {"marbles:300", 1}))
+
+    ref = push(actions, "wallet_action", %{"deposit" => slot})
+    assert_reply(ref, :ok, %{wallet: 300, bag: bag})
+    assert Enum.at(bag, slot) == []
+
+    ref = push(actions, "wallet_action", %{"deposit" => slot})
+    assert_reply(ref, :error, %{reason: "not_marbles"})
+    ref = push(actions, "wallet_action", %{"withdraw" => 301})
+    assert_reply(ref, :error, %{reason: "not_enough"})
+
+    ref = push(actions, "wallet_action", %{"withdraw" => 120})
+    assert_reply(ref, :ok, %{wallet: 180, bag: bag})
+    assert count(bag, "marbles:120") == 1
+    assert Players.get("builder").wallet == 180
+
+    # what a full wallet can't take stays in its bag
+    :sys.replace_state(Players, fn st -> put_in(st["builder"].wallet, Players.wallet_max() - 20) end)
+    slot = Enum.find_index(Players.bag("builder"), &(&1 == {"marbles:120", 1}))
+    ref = push(actions, "wallet_action", %{"deposit" => slot})
+    assert_reply(ref, :ok, %{bag: bag, wallet: max})
+    assert max == Players.wallet_max()
+    assert Enum.at(bag, slot) == ["marbles:100", 1]
+  end
+
   test "get_chunks returns the plaza, run-length encoded", %{actions: actions} do
     ref = push(actions, "get_chunks", %{"keys" => [[0, 0, -1], [0, 0, 0], ["bad"], [9, 9, 9]]})
     assert_reply(ref, :ok, %{chunks: [floor, sky]})

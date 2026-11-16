@@ -29,6 +29,7 @@ defmodule SoshWeb.ActionChannel do
       reply =
         Sim.snapshot(u)
         |> Map.put(:bag, Players.bag_json(Players.bag(name)))
+        |> Map.put(:wallet, Players.wallet(name))
         |> Map.put(:catalog, Universe.catalog())
 
       {:ok, reply, socket |> assign(:universe, u) |> assign(:name, name)}
@@ -48,6 +49,16 @@ defmodule SoshWeb.ActionChannel do
       end)
 
     {:reply, {:ok, %{chunks: Sim.chunks(u(socket), keys)}}, socket}
+  end
+
+  # Marbles between the bag and the wallet: `deposit` (a slot holding a bag
+  # of them) or `withdraw` (how many). Replies {bag, wallet}.
+  def handle_in("wallet_action", params, socket) do
+    case Sosh.Me.wallet(socket.assigns.account, Sosh.Me.wallet_op(params)) do
+      {:ok, r} -> {:reply, {:ok, r}, socket}
+      {:error, why} -> {:error, to_string(why)}
+    end
+    |> answer(socket)
   end
 
   # Dig the block at `position` into the bag. Furniture there breaks apart:

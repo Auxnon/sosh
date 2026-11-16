@@ -42,6 +42,7 @@ rustler::atoms! {
     ship_block,
     departed,
     evicted,
+    found,
 }
 
 struct SimLock(Mutex<Sim>);
@@ -198,10 +199,19 @@ fn furniture_term<'a>(env: Env<'a>, f: &Furniture) -> Term<'a> {
             ("lifted", f.lifted.encode(env)),
             ("carriers", carriers.encode(env)),
             ("helpers", helpers.encode(env)),
-            ("sign", opt(env, f.note.as_deref().and_then(|n| n.parse::<u64>().ok()))),
+            ("sign", opt(env, note_of(f, "sign"))),
+            ("marbles", opt(env, note_of(f, "marbles"))),
             ("slots", slots(env, &f.slots)),
         ],
     )
+}
+
+/// A sign's pin id, or how many marbles a bag of them holds.
+fn note_of(f: &Furniture, kind: &str) -> Option<u64> {
+    if f.kind != kind {
+        return None;
+    }
+    f.note.as_deref()?.parse().ok()
 }
 
 fn site_term<'a>(env: Env<'a>, s: &Site) -> Term<'a> {
@@ -290,6 +300,10 @@ fn event_term<'a>(env: Env<'a>, sim: &Sim, e: Event) -> Option<Term<'a>> {
                     ("heading", d.heading.encode(env)),
                 ],
             ),
+        ),
+        Event::Found(user, n) => (
+            found(),
+            map(env, &[("user_id", user.encode(env)), ("marbles", n.encode(env))]),
         ),
         Event::Departed(cargo, side) => {
             let json = serde_json::to_string(&*cargo).ok()?;
@@ -825,6 +839,18 @@ fn bag_give<'a>(env: Env<'a>, bag: BagTerm, item: String, n: u16) -> Term<'a> {
         return fail(env, "no_room");
     }
     items::add(&mut b, &item, n);
+    (ok(), bag_out(b)).encode(env)
+}
+
+/// Put `n` marbles in a bag, topping up its bags of them first, all or
+/// nothing: `{:ok, bag}` or `{:error, "no_room"}`.
+#[rustler::nif]
+fn bag_add_marbles<'a>(env: Env<'a>, bag: BagTerm, n: u32) -> Term<'a> {
+    let mut b = bag_in(bag);
+    if n == 0 || items::room_for_marbles(&b) < n as u64 {
+        return fail(env, "no_room");
+    }
+    items::add_marbles(&mut b, n);
     (ok(), bag_out(b)).encode(env)
 }
 

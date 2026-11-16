@@ -42,8 +42,12 @@ use crate::items::{self, Slot};
 use crate::ships::{self, Helm, Pocket, Pose, Ship, Side};
 use crate::terrain::{
     self, cell, Island, Pos, Rng, Terrain, AIR, DIRT, FURNITURE, GRASS, POT, SCAFFOLD,
-    WATER,
+    STONE, WATER,
 };
+
+/// How often digging stone turns up a bag of marbles, and how many are in it.
+pub const MARBLE_FIND_CHANCE: f64 = 1.0 / 12.0;
+pub const MARBLE_FIND: (u32, u32) = (5, 60);
 
 /// A world tick; growth counts these.
 pub const TICK_MS: i64 = 100;
@@ -195,6 +199,8 @@ pub enum Event {
     Departed(Box<Cargo>, Side),
     /// Pocket room `0` lost its door: everyone in it goes to `1`.
     Evicted(u32, Door),
+    /// Someone dug up a bag of marbles: how many.
+    Found(String, u32),
 }
 
 /// A ship leaving for the next universe, and all it takes along.
@@ -832,6 +838,9 @@ impl Sim {
                 }
                 items::add(bag, item, 1);
                 self.set_block(on, p, AIR);
+                if id == STONE {
+                    self.find_marbles(user, bag);
+                }
                 // whatever grew on it goes too
                 if on == 0 {
                     self.uproot((p.0, p.1, p.2 + 1));
@@ -839,6 +848,22 @@ impl Sim {
                 Ok(())
             }
         }
+    }
+
+    /// Sometimes there are marbles in the stone; into the bag with them, if
+    /// they fit.
+    fn find_marbles(&mut self, user: &str, bag: &mut Bag) {
+        if self.rng.next() >= MARBLE_FIND_CHANCE {
+            return;
+        }
+        let (lo, hi) = MARBLE_FIND;
+        let n = lo + (self.rng.next() * (hi - lo + 1) as f64) as u32;
+        let n = n.min(hi);
+        if items::room_for_marbles(bag) < n as u64 {
+            return;
+        }
+        items::add_marbles(bag, n);
+        self.events.push(Event::Found(user.to_string(), n));
     }
 
     /// Place one `item` from `bag` at `p` in frame `on`: a block, or
@@ -871,7 +896,9 @@ impl Sim {
         let id = self.new_id();
         let mut f = Furniture::new(id, kind, p, rot);
         f.on = on;
-        f.note = items::sign_id(item).map(|n| n.to_string());
+        f.note = items::sign_id(item)
+            .map(|n| n.to_string())
+            .or_else(|| items::marbles_in(item).map(|n| n.to_string()));
         self.put_furniture(f);
         Ok(())
     }
@@ -985,8 +1012,9 @@ impl Sim {
             .map(|(i, n)| (i.to_string(), n))
             .collect();
         back.extend(f.slots.iter().flatten().map(|s| (s.item.clone(), s.n)));
-        // a sign isn't made of anything: breaking it gives it back whole
-        if f.kind == "sign" && f.note.is_some() {
+        // a sign or a bag of marbles isn't made of anything: breaking it
+        // gives it back whole
+        if f.whole() && f.note.is_some() {
             back.push((f.item(), 1));
         }
         self.remove_furniture(id);

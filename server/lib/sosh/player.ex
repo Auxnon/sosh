@@ -10,6 +10,8 @@ defmodule Sosh.Player do
     field :at, {:array, :float}
     # %{"slots" => [[item, count] | []]}
     field :bag, :map, default: %{}
+    # marbles, not in the bag (`Sosh.Players.deposit/2`)
+    field :wallet, :integer, default: 0
 
     timestamps(type: :utc_datetime)
   end

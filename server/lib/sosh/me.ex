@@ -30,6 +30,7 @@ defmodule Sosh.Me do
     %{
       user: user(u),
       bag: bag(u),
+      wallet: Players.wallet(u.handle),
       servers: Servers.list(u),
       friends: Friends.list(u),
       conversations: Chat.conversations(u),
@@ -62,6 +63,33 @@ defmodule Sosh.Me do
   end
 
   def bag_swap(_, _, _), do: {:error, :no_such_slot}
+
+  @doc """
+  Marbles between the bag and the wallet: `{:deposit, slot}` empties the
+  bag of marbles in that slot into the wallet, `{:withdraw, n}` takes `n`
+  out into the bag. `{:ok, %{bag, wallet}}`, also told to every client of
+  the account (`user:<id>` `bag` and `wallet`).
+  """
+  def wallet(%User{handle: h, id: id}, op) do
+    result =
+      case op do
+        {:deposit, slot} -> Players.deposit(h, slot)
+        {:withdraw, n} -> Players.withdraw(h, n)
+        _ -> {:error, :bad_request}
+      end
+
+    with {:ok, bag, wallet} <- result do
+      json = Players.bag_json(bag)
+      SoshWeb.Endpoint.broadcast("user:#{id}", "bag", %{bag: json})
+      SoshWeb.Endpoint.broadcast("user:#{id}", "wallet", %{wallet: wallet})
+      {:ok, %{bag: json, wallet: wallet}}
+    end
+  end
+
+  @doc "What the wallet's params (`deposit` a slot or `withdraw` a count) ask for."
+  def wallet_op(%{"deposit" => slot}) when is_integer(slot), do: {:deposit, slot}
+  def wallet_op(%{"withdraw" => n}) when is_integer(n), do: {:withdraw, n}
+  def wallet_op(_), do: :bad_request
 
   def universe(%User{handle: h}) do
     {gx, gy} = Players.get(h).universe
