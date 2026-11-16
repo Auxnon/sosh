@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "Petrichor64"
 version = "0.4.3"
-source = "git+https://github.com/Auxnon/Petrichor64?rev=efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa#efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa"
+source = "git+https://github.com/Auxnon/Petrichor64?rev=7a92a82ac4533c9419e40a816d7e748caf4aaac7#7a92a82ac4533c9419e40a816d7e748caf4aaac7"
 dependencies = [
  "android-activity",
  "android_logger",
@@ -3499,7 +3499,7 @@ dependencies = [
 [[package]]
 name = "petrichor-synth"
 version = "0.1.0"
-source = "git+https://github.com/Auxnon/Petrichor64?rev=efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa#efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa"
+source = "git+https://github.com/Auxnon/Petrichor64?rev=7a92a82ac4533c9419e40a816d7e748caf4aaac7#7a92a82ac4533c9419e40a816d7e748caf4aaac7"
 dependencies = [
  "anyhow",
  "cpal",

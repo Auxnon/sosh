@@ -37,7 +37,7 @@ env:
   # The engine the client is known to work with; keep in step with the
   # Containerfile's P64_REF. (It takes silt-lua from silt-lua's GitHub main.)
   P64_REPO: Auxnon/Petrichor64
-  P64_REF: 9c69fb2cac56b58d7761a84b96a48849f08810a8
+  P64_REF: 7a92a82ac4533c9419e40a816d7e748caf4aaac7
   CARGO_TERM_COLOR: always
 
 jobs:

@@ -25,7 +25,7 @@ rfd = "0.18"
 log = "0.4"
 # The engine, as a library (its src/instance.rs): the world and shared carts.
 # Its own window, console and `chor` binary stay out (no default features).
-petrichor64 = { package = "Petrichor64", git = "https://github.com/Auxnon/Petrichor64", rev = "efb59f2979c97c08815ed4e7ff5a8eb34c1e55aa", default-features = false, features = ["headed", "silt", "audio", "studio", "ws"] }
+petrichor64 = { package = "Petrichor64", git = "https://github.com/Auxnon/Petrichor64", rev = "7a92a82ac4533c9419e40a816d7e748caf4aaac7", default-features = false, features = ["headed", "silt", "audio", "studio", "ws"] }
 env_logger = "0.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]

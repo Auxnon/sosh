@@ -4,6 +4,23 @@ For the agent taking over the character look and posing in the Petrichor64
 game (`client/`). Written 2026-11-15 against `main` @ `706c57e`. Line numbers
 are as of that commit.
 
+## Update, 2026-11-16: the engine's rig attachments are in use
+
+Petrichor64 `feat/rig-attach` (7a92a82, pinned in the Containerfile,
+`release.yml` and `desktop/Cargo.toml`) added `lot(parent, child, "bone")`,
+`lot(parent, child, true)` (wear the parent's pose), `ent.zyx`, crossfades
+and `ent:ik`. `Character` now uses them, so §2 and several defects below are
+out of date:
+- Only the body is posed each frame. Clothes wear its pose, the head rides
+  the `head` bone, hair, hat and face sprites ride the head (placed once, in
+  the head's terms), and the held item rides `hand.r`.
+- Clip changes fade over `CLIP_FADE` (0.2 s).
+- The body's heading is applied last (`zyx`), so `Avatar.lie` lies at any
+  angle: `rz = a + π, ry = -π/2`.
+- Fixed by this: defects 1, 2, 3 (the face now shows lying down), 4, 5 and 8.
+  Still open: 6, 7, 9 to 13.
+- Not yet looked at in the running game.
+
 ## 1. The pipeline end to end
 
 **Spec (what a character is).** A JSON map, owned by the server:

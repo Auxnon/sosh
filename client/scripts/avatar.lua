@@ -843,29 +843,18 @@ function Avatar:pose()
 	self.hold = hold
 end
 
--- How to tip the model flat on its back with its head toward `a` (radians,
--- snapped to a quarter turn): {rx, ry, rz}. Entities turn by rz, then ry,
--- then rx about the world's axes (XYZ Euler), so only the world's axes
--- can be lain along.
+-- How to tip the model flat on its back with its head toward `a`
+-- (radians, any angle): {a, rx, ry, rz}, for a body whose heading is
+-- applied last (Character sets `zyx`), so a carried player turns smoothly
+-- with the one carrying them.
 function Avatar.lie(a)
-	local q = flr(a / (math.pi / 2) + 0.5) % 4
+	-- the body's heading comes last (Character: zyx): pitched back a quarter
+	-- turn its head points to its -x, which the heading then turns to `a`
 	local t = {}
-	t.a = q * math.pi / 2
+	t.a = a
 	t.rx = 0
-	t.ry = 0
-	if q == 0 then
-		t.ry = math.pi / 2 -- head to +x
-		t.rz = math.pi
-	elseif q == 1 then
-		t.rx = -math.pi / 2 -- head to +y
-		t.rz = -math.pi / 2
-	elseif q == 2 then
-		t.ry = -math.pi / 2 -- head to -x
-		t.rz = 0
-	else
-		t.rx = math.pi / 2 -- head to -y
-		t.rz = math.pi / 2
-	end
+	t.ry = -math.pi / 2
+	t.rz = a + math.pi
 	return t
 end
 
