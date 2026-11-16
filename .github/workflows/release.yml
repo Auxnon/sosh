@@ -5,8 +5,15 @@
 #   (sosh-<version>-...)
 # - the world alone (the Petrichor64 engine with the game baked in), the same
 #   three (sosh-world-<version>-...)
-# - the Android APK Run it by hand
-# (workflow_dispatch) to get the files as workflow artifacts without a release.
+# - the Android APK
+# - the server: the container image (Containerfile), for x86_64 and arm64,
+#   pushed to ghcr.io/<owner>/sosh (a v* tag, say v1.2.0, publishes 1.2.0,
+#   1.2, 1 and latest; a pre-release, v1.3.0-rc1, only its own tag, never
+#   latest), and the same images as files on the release
+#   (sosh-server-amd64.tar.gz, -arm64), for `sosh-deploy release` when the
+#   registry can't be reached (deploy/README.md)
+# Run it by hand (workflow_dispatch) to get the files as workflow artifacts
+# without a release; nothing is pushed then.
 #
 # Android signing secrets (optional, but without them every release is signed
 # with a throwaway debug key and won't install over the last one):
@@ -23,8 +30,10 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 env:
+  NAME: sosh
   # The engine the client is known to work with; keep in step with the
   # Containerfile's P64_REF. (It takes silt-lua from silt-lua's GitHub main.)
   P64_REPO: Auxnon/Petrichor64
@@ -456,9 +465,124 @@ jobs:
           name: android
           path: sosh-*.apk
 
+  # The server image, one platform per native runner (no emulation). Pushed
+  # by digest only; server-image puts the tags on both.
+  server:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # registry names are lowercase; the owner (Auxnon) isn't
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${NAME}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - if: github.ref_type == 'tag'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: ${{ matrix.platform }}
+          # what sosh-deploy status shows
+          labels: org.opencontainers.image.version=${{ needs.version.outputs.name }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.ref_type == 'tag' }}
+          cache-from: type=gha,scope=server-${{ matrix.arch }}
+          cache-to: type=gha,scope=server-${{ matrix.arch }},mode=max
+
+      # The same image as a file for the release (from the build cache, so
+      # quick): podman load names it ghcr.io/<owner>/sosh:<version>.
+      - name: image file
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: ${{ matrix.platform }}
+          labels: org.opencontainers.image.version=${{ needs.version.outputs.name }}
+          outputs: type=docker,name=${{ env.IMAGE }}:${{ needs.version.outputs.name }},dest=sosh-server-${{ matrix.arch }}.tar
+          cache-from: type=gha,scope=server-${{ matrix.arch }}
+      - run: gzip -6 sosh-server-${{ matrix.arch }}.tar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.arch }}
+          path: sosh-server-*.tar.gz
+          compression-level: 0
+
+      - if: github.ref_type == 'tag'
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          d='${{ steps.build.outputs.digest }}'; touch "$RUNNER_TEMP/digests/${d#sha256:}"
+      - if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          retention-days: 1
+
+  # Both platforms under one set of tags on ghcr.io.
+  server-image:
+    if: github.ref_type == 'tag'
+    needs: server
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${NAME}" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # latest comes with a release (flavor latest=auto: not for a pre-release)
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: tag both platforms as one image
+        working-directory: ${{ runner.temp }}/digests
+        # word splitting wanted: one -t per tag, one argument per digest
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:$(jq -r '.tags[0] | split(":")[1]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+
   release:
     if: github.ref_type == 'tag'
-    needs: [app-linux, app-windows, app-macos, linux, windows, macos, android]
+    needs: [app-linux, app-windows, app-macos, linux, windows, macos, android, server, server-image]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -471,6 +595,7 @@ jobs:
             **Desktop:** `sosh-<version>-…`, the app: chat, servers, friends and the world. Windows `.exe`, Linux `.AppImage` (`chmod +x` it first), macOS `.dmg` (Apple Silicon and Intel).
             **The world alone:** `sosh-world-<version>-…`, the game by itself, for the same three.
             **Android:** the `.apk`. Or play in the browser at https://sosh.makeavoy.com.
+            **Server:** `ghcr.io/auxnon/sosh:<version>`, or `sosh-server-amd64.tar.gz` / `-arm64` to `podman load`. On the server: `sosh-deploy release <version>` (deploy/README.md).
 
             The macOS and Windows builds aren't signed by a paid developer account, so the first launch gets a warning:
             - **macOS:** open Sosh (or Sosh World) once, then System Settings > Privacy & Security > Open Anyway (before macOS 15: right-click > Open). The dmg has the steps.
@@ -480,3 +605,4 @@ jobs:
             sosh-*.exe
             sosh-*.dmg
             sosh-*.apk
+            sosh-server-*.tar.gz
