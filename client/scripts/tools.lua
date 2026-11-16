@@ -523,6 +523,9 @@ end
 -- The server's reasons, readable.
 REASONS = {
 	bag_full = "your bag is full",
+	not_marbles = "that isn't a bag of marbles",
+	wallet_full = "your wallet can't hold any more",
+	invalid_amount = "that isn't a number of marbles",
 	none_left = "you have none left",
 	missing_ingredients = "you don't have what it needs",
 	out_of_reach = "too far away",

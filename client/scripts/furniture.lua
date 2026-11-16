@@ -92,7 +92,7 @@ function Furn.set_catalog(c)
 end
 
 -- What `item` is (the catalog's entry): a sign is `sign:<pin id>`, one of
--- a kind, but placed as any sign is.
+-- a kind, but placed as any sign is; a bag of marbles `marbles:<n>`.
 function Furn.item(item)
 	if item == nil then
 		return nil
@@ -241,6 +241,8 @@ function Furn.set(p)
 	f.slots = p.slots or {}
 	-- a sign: what it says, {author, body, server} or {removed = true}
 	f.sign = p.sign
+	-- a bag of marbles: how many
+	f.marbles = p.marbles
 	if f.ent == nil then
 		local model = p.kind
 		local ent = make(model, 0, 0, -1000, 1)
@@ -551,14 +553,15 @@ function Furn.show_ghost(cells, on)
 	end
 end
 
--- Labels over signs nearby: the message pinned to each. {p, text, col} each.
+-- Labels over signs nearby (the message pinned to each) and bags of
+-- marbles (how many). {p, text, col} each.
 function Furn.sign_labels(me)
 	local out = {}
 	if me == nil then
 		return out
 	end
 	for id, f in pairs(Furn.pieces) do
-		if f.sign ~= nil and not f.lifted then
+		if (f.sign ~= nil or f.marbles ~= nil) and not f.lifted then
 			local o = f.origin
 			local tx, ty, tz = Ships.frame_pos(f.on, o[1], o[2], o[3])
 			if tx ~= nil then
@@ -569,7 +572,11 @@ function Furn.sign_labels(me)
 					if p ~= nil then
 						local l = {}
 						l.p = p
-						l.text = Furn.sign_text(f.sign)
+						if f.marbles ~= nil then
+							l.text = tostring(f.marbles) .. " marbles"
+						else
+							l.text = Furn.sign_text(f.sign)
+						end
 						l.col = C_TEXT
 						table.insert(out, l)
 					end

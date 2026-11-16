@@ -447,6 +447,17 @@ def furniture_models():
             box(0, 0, 8.25 * s, 1.5 * s, 30.5 * s, 32 * s, uv(12)),
             box(0, 0, 6.75 * s, 0.5 * s, 0.0, 30.5 * s, uv(13)),
         ),
+        # a bag of marbles (placeholder): a blue pouch tied with a brass cord,
+        # a few marbles spilled out in front
+        "marbles": merge(
+            box(0, 0, 4 * s, 4 * s, 0.0, 5 * s, uv(9), top=(3 * s, 3 * s)),
+            box(0, 0, 3 * s, 3 * s, 5 * s, 7 * s, uv(9), top=(1.2 * s, 1.2 * s)),
+            box(0, 0, 1.4 * s, 1.4 * s, 7 * s, 7.6 * s, uv(12)),
+            box(0, 0, 1.8 * s, 1.8 * s, 7.6 * s, 9 * s, uv(9)),
+            box(-3 * s, -5.5 * s, 0.8 * s, 0.8 * s, 0.0, 1.6 * s, uv(11)),
+            box(1.5 * s, -6 * s, 0.8 * s, 0.8 * s, 0.0, 1.6 * s, uv(13)),
+            box(4 * s, -4.5 * s, 0.8 * s, 0.8 * s, 0.0, 1.6 * s, uv(12)),
+        ),
         "sack": merge(
             box(0, 0, 5 * s, 5 * s, 0.0, 6 * s, uv(6), top=(4 * s, 4 * s)),
             box(0, 0, 4 * s, 4 * s, 6 * s, 9 * s, uv(6), top=(1.5 * s, 1.5 * s)),

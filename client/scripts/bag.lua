@@ -10,6 +10,11 @@
 -- bag slot to put that stack in, a furniture slot to take it out. Without
 -- one open, clicking a slot picks that item to build with.
 --
+-- Marbles are the money: in the bag they're bags of them (`marbles:<n>`,
+-- set down in the world like furniture), in the wallet just a number
+-- (Bag.wallet). The panel's last row shows the wallet: "in" empties every
+-- bag of marbles into it, "out" takes 100 back out; /marbles does either.
+--
 -- In the Android app its pockets are the bag (they pick what's in hand,
 -- passed on by `hold`), so the panel only shows beside an open box.
 
@@ -31,7 +36,10 @@ ITEM_COLORS = {
 	drawer = "965A3C",
 	stool = "C4966A",
 	sign = "E8D8A8",
+	marbles = "5C8EE0",
 }
+
+WALLET_OUT = 100 -- marbles the bag panel's "out" takes from the wallet
 
 function Bag.init()
 	Bag.slots = {}
@@ -39,6 +47,9 @@ function Bag.init()
 	-- the furniture id whose insides are showing, or nil
 	Bag.box = nil
 	Bag.tip = nil
+	if Bag.wallet == nil then
+		Bag.wallet = 0
+	end
 end
 
 function Bag.set(slots)
@@ -56,6 +67,56 @@ function Bag.count(item)
 		end
 	end
 	return n
+end
+
+-- How many marbles the bag of them `item` holds, or nil.
+function Bag.marbles_in(item)
+	if item == nil then
+		return nil
+	end
+	local n = item:match("^marbles:(%d+)$")
+	if n == nil then
+		return nil
+	end
+	return tonumber(n)
+end
+
+-- A count short enough for a slot: 12345 is 12k.
+function Bag.short(n)
+	if n >= 1000000 then
+		return tostring(flr(n / 1000000)) .. "m"
+	end
+	if n >= 10000 then
+		return tostring(flr(n / 1000)) .. "k"
+	end
+	return tostring(n)
+end
+
+-- Every bag of marbles in the bag, into the wallet.
+function Bag.deposit_all()
+	local any = false
+	for i = 1, #Bag.slots do
+		if Bag.marbles_in(Bag.slots[i][1]) ~= nil then
+			any = true
+			local p = {}
+			p.deposit = i - 1
+			Account.ask("wallet", p, Bag.wallet_reply)
+		end
+	end
+	if not any then
+		add_chat(nil, "no marbles in your bag", C_DIM)
+	end
+end
+
+function Bag.withdraw(n)
+	local p = {}
+	p.withdraw = n
+	Account.ask("wallet", p, Bag.wallet_reply)
+end
+
+function Bag.wallet_reply(r)
+	Bag.set(r.bag)
+	Bag.wallet = r.wallet
 end
 
 -- Items in the bag that can be placed (blocks, furniture that packs away),
@@ -97,7 +158,8 @@ function Bag.layout(bottom)
 	end
 	L.w = cols * SLOT_W + PAD * 2
 	L.x = flr((VIEW_W - L.w) / 2)
-	L.bag_h = rows * SLOT_H + LH + PAD * 3
+	-- the slots, then the wallet's row
+	L.bag_h = rows * SLOT_H + LH * 2 + PAD * 5
 	L.bag_y = bottom - L.bag_h
 	L.box = nil
 	local f = nil
@@ -155,6 +217,10 @@ function Bag.grid(title, slots, x, y, w, h)
 			local c = ITEM_COLORS[name] or "DDDDDD"
 			gui:rrect(sx + 3, sy + 3, 8, 8, 1, c)
 			local n = tostring(s[2])
+			local marbles = Bag.marbles_in(s[1])
+			if marbles ~= nil then
+				n = Bag.short(marbles)
+			end
 			-- calls hoisted out of argument lists (petrichor64 SILT-BUGS.md #1)
 			local nw = UI.text_w(n)
 			UI.text(n, sx + SLOT_W - 3 - nw, sy + SLOT_H - LH - 3, C_INK)
@@ -163,6 +229,9 @@ function Bag.grid(title, slots, x, y, w, h)
 				if name == "sign" then
 					Bag.tip = "a pinned message: place it like furniture"
 				end
+				if marbles ~= nil then
+					Bag.tip = tostring(marbles) .. " marbles: press in to put them in your wallet"
+				end
 			end
 		end
 		if over and UI.clicked then
@@ -170,6 +239,26 @@ function Bag.grid(title, slots, x, y, w, h)
 		end
 	end
 	return clicked
+end
+
+-- The wallet: how many marbles, and buttons to move them.
+function Bag.wallet_row(x, y, w)
+	local text = "wallet: " .. tostring(Bag.wallet or 0) .. " marbles"
+	UI.text(text, x + PAD, y + 2, C_TEXT)
+	if UI.button("in", x + w - PAD - 64, y, 30, 12) then
+		Bag.deposit_all()
+	end
+	if UI.button("out", x + w - PAD - 30, y, 30, 12) then
+		local n = WALLET_OUT
+		if (Bag.wallet or 0) < n then
+			n = Bag.wallet or 0
+		end
+		if n > 0 then
+			Bag.withdraw(n)
+		else
+			add_chat(nil, "your wallet's empty", C_DIM)
+		end
+	end
 end
 
 -- Draw the panels and act on clicks; `bottom` is the y they sit above.
@@ -183,6 +272,7 @@ function Bag.draw(bottom)
 	end
 	local L = Bag.layout(bottom)
 	local clicked = Bag.grid("bag", Bag.slots, L.x, L.bag_y, L.w, L.bag_h)
+	Bag.wallet_row(L.x, L.bag_y + L.bag_h - LH - PAD * 2, L.w)
 	if clicked ~= nil then
 		local s = Bag.slots[clicked]
 		if L.box ~= nil then

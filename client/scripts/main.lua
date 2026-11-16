@@ -403,6 +403,9 @@ function bind_actions(ch)
 		-- what there is, and what's in our bag
 		Furn.set_catalog(reply.catalog)
 		Bag.set(reply.bag)
+		if reply.wallet ~= nil then
+			Bag.wallet = reply.wallet
+		end
 		if APP.build_item == nil or Bag.count(APP.build_item) == 0 then
 			APP.build_item = Bag.placeable()[1]
 		end
@@ -470,6 +473,12 @@ function bind_actions(ch)
 	-- so do we
 	-- the ship flew into a server we aren't in: we stay, on the home island
 	-- the door into the room we're in was broken: out where it stood
+	-- marbles turned up in stone we dug
+	ch.on["found"] = function(p)
+		if p.user_id == APP.my_id then
+			add_chat(nil, "you found a bag of " .. tostring(p.marbles) .. " marbles!", C_OK)
+		end
+	end
 	ch.on["evicted"] = function(p)
 		if APP.me ~= nil and APP.me.on == p.ship then
 			arrive_through(p)

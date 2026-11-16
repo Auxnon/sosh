@@ -206,14 +206,16 @@ looks, the way home and the bag, which the app has as its own screens). The clie
   character catalog. Requests: `enter` (go to a server's universe),
   `join_server`, `leave_server`, `friend_add`/`friend_accept`/`friend_remove`,
   `character`, `dm_post`, `claim`/`cancel` (open or take back a gift),
-  `bag_swap` (`a`, `b`: sort the bag by swapping two slots), `hold`
+  `bag_swap` (`a`, `b`: sort the bag by swapping two slots), `wallet`
+  (`deposit`: a slot holding a bag of marbles, or `withdraw`: how many;
+  replies `bag` and `wallet`), `hold`
   (`item`: the item in hand, passed on to your other clients), `members`,
   `member` (moderation), `invite`, `server_update`, `media_ticket`
   (`place`: `"server:<id>"`: a ticket for the web page to share pictures
   there), `upload` (`data` in base64, `name`: a picture or cart to attach,
   for clients that can't make HTTP requests). Events tell you
-  when servers, friends, your bag, the item in hand or your character
-  change, and about DMs and gifts. See `SoshWeb.UserChannel`.
+  when servers, friends, your bag, your `wallet`, the item in hand or
+  your character change, and about DMs and gifts. See `SoshWeb.UserChannel`.
 - **`server:<id>`**: a server's chat, for its members. `post` (`body`, and
   optionally `gift: {item, count, to}` and `media`, the key of an upload) and `history`; `message`, `gift`,
   `edited`, `deleted`, `reactions`, `pins` and `members` come in. Gifts go out wrapped: who they're for,
@@ -258,6 +260,13 @@ Inside a server, the client also joins two channels for its universe:
     which leads back to it. Whatever you carry comes through with you (a
     cow, a player, furniture and the helper on its other end).
   - `stash_action` and `take_action` move stacks in and out of furniture.
+  - Marbles are the money. In the bag they're bags of them, the item
+    `marbles:<n>` (up to 99,999 a bag, one bag a slot), placed and picked
+    up like furniture (`marbles` in a `furniture` broadcast is how many);
+    digging stone sometimes turns one up (`found`: `user_id`, `marbles`).
+    The wallet holds them as a number, up to 999,999,999: the join reply's
+    `wallet`, and `wallet_action` (as `wallet` on `user:<id>`) moves them.
+    In the game: the bag panel's wallet row, or `/marbles [in | out n]`.
   - `helm_action` takes the helm we stand at or lets go; `steer` (`helm`
     [thrust, turn, lift], each -1..1) flies the ship.
 

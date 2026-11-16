@@ -20,6 +20,8 @@
 --   /edit text, /delete  change or remove your latest message
 --   /react +1|<3|lol|wow|sad|yay   on the latest message (again: off)
 --   /pin                 a sign of the latest message, for your bag
+--   /marbles [in | out n] how many in the wallet; bags of them into it, or
+--                        n out of it into the bag
 --   /friend @name, /accept @name, /unfriend @name, /friends
 --   /home                back to the server list
 --
@@ -129,6 +131,7 @@ function Account.bind_user(ch)
 		APP.catalog = r.catalog
 		APP.convos = r.conversations or {}
 		Bag.set(r.bag or {})
+		Bag.wallet = r.wallet or 0
 		APP.home_status = ""
 		if APP.me ~= nil then
 			APP.me:set_character(r.user.character)
@@ -158,6 +161,9 @@ function Account.bind_user(ch)
 	end
 	ch.on["bag"] = function(p)
 		Bag.set(p.bag)
+	end
+	ch.on["wallet"] = function(p)
+		Bag.wallet = p.wallet
 	end
 	-- the item in hand, chosen in another of our clients (the app's pockets)
 	ch.on["hold"] = function(p)
@@ -914,6 +920,21 @@ function Account.command(text)
 		chat_act("pin", p, function(r)
 			add_chat(nil, "a sign of it is in your bag: place it like furniture", C_OK)
 		end)
+		return true
+	end
+	if cmd == "/marbles" then
+		if words[2] == "in" then
+			Bag.deposit_all()
+		elseif words[2] == "out" then
+			local n = flr(tonumber(words[3] or "") or 0)
+			if n < 1 then
+				add_chat(nil, "/marbles out <how many>", C_DIM)
+			else
+				Bag.withdraw(n)
+			end
+		else
+			add_chat(nil, tostring(Bag.wallet or 0) .. " marbles in your wallet (/marbles in, /marbles out n)", C_DIM)
+		end
 		return true
 	end
 	if cmd == "/dm" or cmd == "/w" then
