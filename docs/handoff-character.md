@@ -6,7 +6,7 @@ are as of that commit.
 
 ## Update, 2026-11-16: the engine's rig attachments are in use
 
-Petrichor64 `feat/rig-attach` (7a92a82, pinned in the Containerfile,
+Petrichor64 `feat/rig-attach` merged to its main (db2792e, pinned in the Containerfile,
 `release.yml` and `desktop/Cargo.toml`) added `lot(parent, child, "bone")`,
 `lot(parent, child, true)` (wear the parent's pose), `ent.zyx`, crossfades
 and `ent:ik`. `Character` now uses them, so §2 and several defects below are
