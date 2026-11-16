@@ -8,14 +8,18 @@ browser / desktop / app ──https──▶ Cloudflare (proxied) ──▶ site
 - **The server** is one container image, built by the `Containerfile` at the
   repo root: the Phoenix release with the Rust NIF, and the web game (the
   Petrichor64 wasm engine plus the packed client) in `priv/static`.
-  `.github/workflows/image.yml` builds it on GitHub, for x86_64 and arm64
-  (native runners), and pushes it to `ghcr.io/auxnon/sosh` for every release:
-  a `v*` tag, say `v1.2.0`, publishes `1.2.0`, `1.2`, `1` and `latest`.
-  Pushes to main publish nothing. The server only pulls it; nothing compiles
-  there.
-- **The clients** come from `.github/workflows/release.yml` on a `v*` tag:
-  a Windows exe, a Linux AppImage and an Android APK, all pointed at
-  `https://sosh.makeavoy.com` by default.
+  It's built one of three ways, and `sosh-deploy` puts any of them live
+  (see [Redeploying](#redeploying)):
+  - **a release**: `.github/workflows/release.yml` builds it with the
+    clients on a `v*` tag, for x86_64 and arm64, pushes it to
+    `ghcr.io/auxnon/sosh` (`v1.2.0` publishes `1.2.0`, `1.2`, `1` and
+    `latest`) and attaches it to the GitHub release as
+    `sosh-server-amd64.tar.gz` / `-arm64`. Pushes to main publish nothing.
+  - **on the server**, from a checkout of any branch or commit.
+  - **on your own machine**, copied over by `just ship <host>`.
+- **The clients** come from the same `release.yml` on a `v*` tag:
+  the desktop app and the world alone for Windows, Linux and macOS, and the
+  Android APK, all pointed at `https://sosh.makeavoy.com` by default.
 - **site-delta** (github.com/Auxnon/site-delta), the makeavoy.com server,
   passes `sosh.makeavoy.com` through to `127.0.0.1:4000`, websockets
   included, with the client's address in `x-real-ip` (from Cloudflare's
@@ -40,7 +44,7 @@ modules = [
     services.sosh = {
       enable = true;
       environmentFile = "/var/lib/sosh/env";
-      # autoUpdate = true;   # pull a newer :latest (the newest release) daily and restart
+      # source = "/srv/sosh";   # a checkout, for `sosh-deploy build`
     };
   }
 ];
@@ -67,11 +71,19 @@ read sign-up and reset codes with `journalctl -u podman-sosh | grep -A8 Subject`
 Set up a sender (any SMTP provider; 465 is TLS, other ports STARTTLS) before
 inviting people.
 
-Then `sudo nixos-rebuild switch`. Migrations run on every start.
+Then `sudo nixos-rebuild switch`. The service runs `localhost/sosh:live`, a
+tag only this machine has; the first start fills it with the newest release
+from ghcr.io. If there's no release yet (or the registry is private), it
+fails to start: `sudo sosh-deploy build` builds one from the checkout and
+starts it. Migrations run on every start.
+
+To follow releases on their own instead, set
+`image = "ghcr.io/auxnon/sosh:latest"` and `autoUpdate = true` (a newer
+release is pulled daily and on every restart); `sosh-deploy` doesn't work
+with a registry image, since a restart would pull over what it deployed.
 
 - Logs: `journalctl -u podman-sosh -f`
-- Update by hand: `sudo podman pull ghcr.io/auxnon/sosh:latest && sudo systemctl restart podman-sosh`
-  (or `autoUpdate = true`)
+- Redeploy: `sudo sosh-deploy ...`, below
 - A console: `sudo podman exec -it sosh bin/sosh remote`
 - Give someone a server: in that console, `Sosh.Servers.give(server_id, "handle")`
 - Back up: `sudo podman exec sosh-db pg_dump -U sosh sosh > sosh.sql`
@@ -80,15 +92,48 @@ The image on ghcr.io starts out private. Make the package public (GitHub,
 your profile's Packages, sosh, Package settings), or log the machine in with
 `sudo podman login ghcr.io` and a token with `read:packages`.
 
-### Building the image on the machine instead
+## Redeploying
+
+`sosh-deploy` (the module installs it; it's `deploy/sosh-deploy`) does the
+same thing whichever image you pick: backs up the database to
+`/var/lib/sosh/backups` (the last 10 kept), keeps the running image as
+`localhost/sosh:previous`, tags the new one `localhost/sosh:live`, restarts
+`podman-sosh` and waits for it to answer.
 
 ```sh
-git clone https://github.com/Auxnon/sosh && cd sosh
-sudo podman build -t localhost/sosh .
+sudo sosh-deploy release            # the newest release
+sudo sosh-deploy release 1.2.0      # or a given one
+sudo sosh-deploy build              # git pull in /srv/sosh, build it here
+sudo sosh-deploy build main         # or a branch, tag or commit
+sudo sosh-deploy load FILE          # an image saved elsewhere (podman save, gzipped or not)
+sudo sosh-deploy rollback           # back to the one before (again: forward)
+sudo sosh-deploy status
 ```
 
-and set `services.sosh.image = "localhost/sosh";`. It takes a while: the
-engine is built twice (wasm and native, to pack the game).
+- `release` pulls `ghcr.io/auxnon/sosh:<version>`, or if that fails
+  (private package, no network to ghcr.io), downloads the release's
+  `sosh-server-<arch>.tar.gz` from GitHub.
+- `build` compiles here: 15 to 40 minutes, ~4 GB RAM, ~15 GB disk (the
+  engine builds twice, wasm and native, to pack the game).
+- From your own machine: `just ship <host>` builds the image there (your
+  checkout as it is, uncommitted changes too), copies it to `<host>` and
+  runs `sosh-deploy load` on it. The machines' architectures have to match.
+
+There's no hot code swap: the Rust NIF can't be replaced in a running
+node, migrations want a start, and a restart is a few seconds. Universes
+save on the way down and clients reconnect on their own.
+
+Rolling back after a release that ran a migration: the old server may not
+read the newer database. Then restore the backup taken just before it,
+which drops everything since:
+
+```sh
+sudo systemctl stop podman-sosh
+sudo podman exec sosh-db dropdb -U sosh sosh
+sudo podman exec sosh-db createdb -U sosh sosh
+gunzip -c /var/lib/sosh/backups/<file> | sudo podman exec -i sosh-db psql -q -U sosh sosh
+sudo sosh-deploy rollback
+```
 
 ## Without NixOS
 
@@ -121,10 +166,12 @@ Development builds (`-debug`, `-dev`, `0.0.0-<commit>`) and the web game
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-A `v*` tag is the only thing that publishes: the server image
-(`image.yml`: `0.2.0`, `0.2`, `0` and `latest`) and the clients
-(`release.yml`, a GitHub release). A pre-release tag (`v0.3.0-rc1`) gets
-its own image tag but not `latest`, so servers following `latest` stay put.
+A `v*` tag is the only thing that publishes, all from `release.yml`: the
+server image (`0.2.0`, `0.2`, `0` and `latest` on ghcr.io, and the image
+files on the release) and the clients, as one GitHub release. A
+pre-release tag (`v0.3.0-rc1`) gets its own image tag but not `latest`, so
+`sosh-deploy release` and servers following `latest` stay put. Then on the
+server: `sudo sosh-deploy release`.
 
 The Petrichor64 engine they're built on is pinned by commit (`P64_REF` in
 `release.yml` and the `Containerfile`; bump both together). The engine takes

@@ -16,6 +16,19 @@ let
   autoUpdate = lib.optionals cfg.autoUpdate [
     "--label=io.containers.autoupdate=registry"
   ];
+  # an image only this machine has: deployed by sosh-deploy, never pulled
+  local = lib.hasPrefix "localhost/" cfg.image;
+  # `sosh-deploy release|build|load|rollback|status` (deploy/sosh-deploy)
+  deploy = pkgs.writeShellScriptBin "sosh-deploy" ''
+    [ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"
+    export SOSH_IMAGE=${lib.escapeShellArg cfg.image}
+    export SOSH_RELEASES=${lib.escapeShellArg cfg.releases}
+    export SOSH_SRC=${lib.escapeShellArg (toString cfg.source)}
+    export SOSH_DATA=${lib.escapeShellArg (toString cfg.dataDir)}
+    export SOSH_PORT=${toString cfg.port}
+    export PATH=${lib.makeBinPath [ config.virtualisation.podman.package pkgs.git pkgs.curl pkgs.gzip pkgs.coreutils pkgs.gnused pkgs.gnugrep pkgs.findutils config.systemd.package ]}:$PATH
+    exec ${pkgs.bash}/bin/bash ${../sosh-deploy} "$@"
+  '';
 in
 {
   options.services.sosh = {
@@ -23,8 +36,27 @@ in
 
     image = lib.mkOption {
       type = lib.types.str;
-      default = "ghcr.io/auxnon/sosh:latest";
-      description = "The server image. Build one locally with `podman build -t sosh .` and set `localhost/sosh` to skip the registry.";
+      default = "localhost/sosh:live";
+      description = ''
+        The image the service runs. The default is a local tag that
+        `sosh-deploy` moves (a release, a build here, or one loaded from
+        elsewhere); on first start it's seeded from `releases`:latest.
+        A registry image instead (say "ghcr.io/auxnon/sosh:latest", with
+        `autoUpdate`) is pulled when newer on every restart, and
+        `sosh-deploy` can't be used.
+      '';
+    };
+
+    releases = lib.mkOption {
+      type = lib.types.str;
+      default = "ghcr.io/auxnon/sosh";
+      description = "Where release images are (.github/workflows/release.yml pushes them for each v* tag), for `sosh-deploy release`.";
+    };
+
+    source = lib.mkOption {
+      type = lib.types.str;
+      default = "/srv/sosh";
+      description = "A git checkout of sosh, for `sosh-deploy build`.";
     };
 
     postgresImage = lib.mkOption {
@@ -75,6 +107,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [{
+      assertion = !(cfg.autoUpdate && local);
+      message = "services.sosh.autoUpdate needs a registry image (services.sosh.image = \"ghcr.io/auxnon/sosh:latest\"); with a local one, deploy with sosh-deploy";
+    }];
+
+    environment.systemPackages = [ deploy ];
+
     virtualisation.podman.enable = true;
     virtualisation.oci-containers.backend = "podman";
 
@@ -120,8 +159,8 @@ in
           TRUST_PROXY = "1";
         } // cfg.environment;
         environmentFiles = [ cfg.environmentFile ];
-        # check the registry for a newer image on every (re)start
-        pull = "newer";
+        # a registry image: check for a newer one on every (re)start
+        pull = if local then "never" else "newer";
         extraOptions = [ "--network=sosh" ]
           ++ autoUpdate ++ [ "--label=PODMAN_SYSTEMD_UNIT=podman-sosh.service" ];
       };
@@ -135,6 +174,14 @@ in
       requires = [ "sosh-network.service" ];
       after = [ "sosh-network.service" "network-online.target" ];
       wants = [ "network-online.target" ];
+      # the first start of a local image: the newest release, until
+      # sosh-deploy puts something else there
+      preStart = lib.mkIf local (lib.mkBefore ''
+        if ! ${podman} image exists ${lib.escapeShellArg cfg.image}; then
+          ${podman} pull ${lib.escapeShellArg "${cfg.releases}:latest"} \
+            && ${podman} tag ${lib.escapeShellArg "${cfg.releases}:latest"} ${lib.escapeShellArg cfg.image}
+        fi
+      '');
     };
 
     systemd.timers.podman-auto-update = lib.mkIf cfg.autoUpdate {

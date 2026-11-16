@@ -2,10 +2,10 @@
 
 You're on the NixOS machine that serves makeavoy.com, with root (sudo). The
 goal: sosh running at https://sosh.makeavoy.com, behind site-delta. The
-server image is built by GitHub Actions (`.github/workflows/image.yml`, for
-x86_64 and arm64) and **pulled** from `ghcr.io/auxnon/sosh`: nothing is
-compiled here. (Building it here instead is the last section, for when the
-registry can't be used.) site-delta has its own runbook,
+server image comes from a release (built by GitHub Actions,
+`.github/workflows/release.yml`, for x86_64 and arm64, on ghcr.io and as
+files on the GitHub release) or is built here from the checkout. Either
+way `sosh-deploy`, which the NixOS module installs, puts it live. site-delta has its own runbook,
 `DEPLOY.md` in github.com/Auxnon/site-delta; do that one too if site-delta
 isn't running here yet, or is older than the `feat/sosh-subdomain` merge
 (it must route `sosh.makeavoy.com`).
@@ -55,19 +55,10 @@ Deploy the branch the owner names, `main` by default; it has to have
 `deploy/nixos/sosh.nix` (until `feat/android-social` is merged, only that
 branch does: `sudo git checkout feat/android-social`).
 
-## 3. Pull the image
+## 3. The image
 
-```sh
-sudo podman pull ghcr.io/auxnon/sosh:latest
-sudo podman image inspect ghcr.io/auxnon/sosh:latest --format '{{.Architecture}} {{.Created}}'
-```
-
-- `unauthorized` or `denied`: the package is private. Ask the owner to make
-  it public (GitHub, Packages, sosh, Package settings, Change visibility),
-  or for a token with `read:packages` to `sudo podman login ghcr.io` with.
-- `manifest unknown`: no release has been published yet. Images only come
-  from release tags (`v1.2.0`); ask the owner to tag one, and check
-  https://github.com/Auxnon/sosh/actions.
+Nothing to do yet: the first start (step 5) takes the newest release. If
+the owner wants a branch that isn't released, you'll build it in step 5.
 
 ## 4. The secrets file (first deploy only)
 
@@ -97,9 +88,7 @@ Add the module and the service. Without flakes, in
   services.sosh = {
     enable = true;
     environmentFile = "/var/lib/sosh/env";
-    # image = "ghcr.io/auxnon/sosh:latest";   # the default
-    # autoUpdate = true;   # pull a newer :latest daily and restart: each release deploys itself
-    # image = "ghcr.io/auxnon/sosh:1";      # or stay on major version 1 (1.x releases only)
+    # source = "/srv/sosh";   # the default: the checkout `sosh-deploy build` builds
   };
 }
 ```
@@ -115,27 +104,38 @@ Keep the edit minimal and leave the rest of the file alone. Then:
 sudo nixos-rebuild test
 ```
 
+The service runs `localhost/sosh:live`; its first start pulls the newest
+release into it. If `systemctl status podman-sosh` shows that failed
+(`manifest unknown`: nothing released yet; `unauthorized`: the package is
+private), or the owner named an unreleased branch, build it here:
+`sudo sosh-deploy build` (or `build <branch>`). It takes 15 to 40 minutes,
+~4 GB RAM and ~15 GB disk, and starts the server when done.
+
 Don't open port 4000 in the firewall. It's published on 127.0.0.1 only, for
 site-delta.
 
 ## 6. Updating (an existing deploy)
 
 ```sh
-sudo podman exec sosh-db pg_dump -U sosh sosh | gzip > ~/sosh-$(date +%F-%H%M).sql.gz
-sudo podman image inspect ghcr.io/auxnon/sosh:latest --format '{{index .Labels "org.opencontainers.image.version"}}'   # the release running now, to roll back to
-sudo systemctl restart podman-sosh        # pulls a newer :latest first (pull = "newer")
-cd /srv/sosh && sudo git pull --ff-only   # only matters if the module changed
+sudo sosh-deploy status
+sudo sosh-deploy release          # the newest release (or `release 1.2.0`)
+# or: sudo sosh-deploy build       # git pull /srv/sosh and build it here (or `build <branch>`)
 ```
 
-Migrations run on every start. If the module itself changed (`git log -p
-deploy/nixos`), run `sudo nixos-rebuild switch` too.
+It backs up the database to `/var/lib/sosh/backups`, keeps the old image
+as `localhost/sosh:previous`, restarts and waits for the server to answer.
+Migrations run on every start. If the module itself changed (`git -C
+/srv/sosh log -p deploy/nixos`), `sudo nixos-rebuild switch` too (after
+`nix flake update sosh` with a flake config).
 
-**Rolling back:** pin the image to the release noted above:
-`services.sosh.image = "ghcr.io/auxnon/sosh:1.2.0";` (the version, no `v`),
-then `sudo nixos-rebuild switch`. Remove the pin once a fixed release is
-out. The releases: https://github.com/Auxnon/sosh/releases. If a migration already ran and the old release can't read the
-database, restore the dump. Ask the owner before doing that: it drops
-everything since the dump.
+If the config still says `image = "ghcr.io/..."` (an older deploy), remove
+that line so the service uses `localhost/sosh:live`, and `nixos-rebuild
+switch`; `sosh-deploy` refuses to run until then.
+
+**Rolling back:** `sudo sosh-deploy rollback`. If a migration already ran
+and the old server can't read the database, restore the backup taken
+before it (deploy/README.md, Redeploying). Ask the owner before doing
+that: it drops everything since.
 
 ## 7. Check it works
 
@@ -171,25 +171,13 @@ When all of it passes, `sudo nixos-rebuild switch`.
 | `podman-sosh` restarting | `journalctl -u podman-sosh -n 200`: `DB_*`/password errors mean the env file and the database disagree (see Rules) |
 | `podman-sosh-db` failing | `journalctl -u podman-sosh-db`; permissions on `/var/lib/sosh/postgres` |
 | `network sosh not found` | `systemctl restart sosh-network`, then the two containers |
-| image pull fails at start | step 3: the package's visibility, or `sudo podman login ghcr.io` |
+| first start fails pulling | step 5: no release yet or a private package; `sudo sosh-deploy build` |
 
 Useful afterwards:
 - A console: `sudo podman exec -it sosh bin/sosh remote`
 - Giving someone a server: `Sosh.Servers.give(server_id, "handle")` in that console
 - Logs: `journalctl -u podman-sosh -f`
 - The full reference: `deploy/README.md`
-
-## Building the image here instead
-
-Only if the registry is unusable: it compiles the Petrichor64 engine twice
-and the Elixir release (15 to 40 minutes, ~4 GB RAM, ~15 GB disk).
-
-```sh
-cd /srv/sosh && sudo podman build -t localhost/sosh .
-```
-
-Then set `services.sosh.image = "localhost/sosh";` and leave `autoUpdate`
-off. Updating then means `git pull`, the build again, and a restart.
 
 Report back the commit you deployed (`git -C /srv/sosh log --oneline -1`),
 the check results from step 7, and anything you skipped.

@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Redeploy the sosh server on its machine. Every way in ends the same: the
+# new image is tagged as the one the service runs (localhost/sosh:live), the
+# one it replaces is kept as localhost/sosh:previous, the database is backed
+# up, and podman-sosh restarts (migrations run on start).
+#
+#   sosh-deploy release [VERSION]   a release: the image CI built for a v* tag
+#                                   (VERSION like 1.2.0; default the newest),
+#                                   from ghcr.io, or the GitHub release's
+#                                   download if the registry won't do
+#   sosh-deploy build [REF]         build it here from the checkout (SOSH_SRC),
+#                                   after pulling it, or at REF (a branch,
+#                                   tag or commit)
+#   sosh-deploy load [FILE|-]       an image saved elsewhere (podman save,
+#                                   gzipped or not), say from `just ship`
+#   sosh-deploy rollback            back to the image before the last deploy
+#   sosh-deploy status              what's running, and what's kept
+#
+# The NixOS module installs this as `sosh-deploy`, set up for its options;
+# from a checkout, `sudo deploy/sosh-deploy ...` uses the defaults below.
+set -euo pipefail
+
+LIVE="${SOSH_IMAGE:-localhost/sosh:live}"
+PREVIOUS="${LIVE%:*}:previous"
+RELEASES="${SOSH_RELEASES:-ghcr.io/auxnon/sosh}"
+REPO="${SOSH_REPO:-Auxnon/sosh}"
+SRC="${SOSH_SRC:-/srv/sosh}"
+DATA="${SOSH_DATA:-/var/lib/sosh}"
+PORT="${SOSH_PORT:-4000}"
+UNIT="${SOSH_UNIT:-podman-sosh}"
+DB="${SOSH_DB_CONTAINER:-sosh-db}"
+KEEP_BACKUPS="${SOSH_KEEP_BACKUPS:-10}"
+
+WORK=""
+cleanup() { [ -z "$WORK" ] || rm -rf "$WORK"; }
+trap cleanup EXIT
+work() { [ -n "$WORK" ] || WORK="$(mktemp -d)"; echo "$WORK"; }
+
+say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
+die() { printf 'sosh-deploy: %s\n' "$*" >&2; exit 1; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+case "${1:-}" in "" | -h | --help | help) usage ;; esac
+[ "$(id -u)" -eq 0 ] || exec sudo --preserve-env=SOSH_IMAGE,SOSH_RELEASES,SOSH_REPO,SOSH_SRC,SOSH_DATA,SOSH_PORT,SOSH_UNIT,SOSH_DB_CONTAINER,SOSH_KEEP_BACKUPS bash "$0" "$@"
+
+case "${LIVE}" in
+  localhost/*) ;;
+  *) die "SOSH_IMAGE is $LIVE: deploying needs the service on a local tag (localhost/sosh:live), or a restart would pull the registry's over it" ;;
+esac
+
+arch() {
+  case "$(uname -m)" in
+    x86_64) echo amd64 ;;
+    aarch64 | arm64) echo arm64 ;;
+    *) die "no release image for $(uname -m)" ;;
+  esac
+}
+
+version_of() {
+  podman image inspect "$1" --format '{{index .Labels "org.opencontainers.image.version"}}' 2>/dev/null || true
+}
+
+describe() {
+  local id
+  id="$(podman image inspect "$1" --format '{{.Id}}' 2>/dev/null)" || { echo "(none)"; return; }
+  printf '%s  %s  built %s\n' "${id:0:12}" "$(version_of "$1")" \
+    "$(podman image inspect "$1" --format '{{.Created}}' | cut -d. -f1)"
+}
+
+backup() {
+  if ! podman container exists "$DB" || [ "$(podman inspect "$DB" --format '{{.State.Running}}')" != true ]; then
+    say "no running $DB: skipping the backup"
+    return
+  fi
+  local dir="$DATA/backups" file
+  install -d -m 700 "$dir"
+  file="$dir/sosh-$(date +%F-%H%M%S).sql.gz"
+  say "backing up the database to $file"
+  podman exec "$DB" pg_dump -U sosh sosh | gzip > "$file.part"
+  mv "$file.part" "$file"
+  # keep the newest few
+  # shellcheck disable=SC2012
+  ls -1t "$dir"/sosh-*.sql.gz | tail -n +"$((KEEP_BACKUPS + 1))" | xargs -r rm -f --
+}
+
+# Wait for the server to answer on its port; the logs if it doesn't.
+healthy() {
+  say "waiting for the server on 127.0.0.1:$PORT"
+  local code
+  for _ in $(seq 1 90); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/" || true)"
+    if [ "$code" = 200 ]; then
+      say "up: $(describe "$LIVE")"
+      return 0
+    fi
+    sleep 2
+  done
+  journalctl -u "$UNIT" -n 40 --no-pager || true
+  return 1
+}
+
+# Make $1 the live image and restart onto it.
+go_live() {
+  local new="$1" new_id live_id=""
+  new_id="$(podman image inspect "$new" --format '{{.Id}}')"
+  live_id="$(podman image inspect "$LIVE" --format '{{.Id}}' 2>/dev/null || true)"
+  if [ "$new_id" = "$live_id" ]; then
+    say "that's the image already running ($(describe "$LIVE")); restarting anyway"
+  else
+    backup
+    [ -z "$live_id" ] || podman tag "$LIVE" "$PREVIOUS"
+    podman tag "$new" "$LIVE"
+  fi
+  say "restarting $UNIT"
+  systemctl restart "$UNIT"
+  healthy || die "the server didn't come up. \`sosh-deploy rollback\` goes back to the last one (if a migration ran, the backup in $DATA/backups has the data from before)"
+}
+
+release() {
+  local v="${1:-latest}" a ref
+  v="${v#v}"
+  a="$(arch)"
+  ref="$RELEASES:$v"
+  say "pulling $ref"
+  if ! podman pull --arch "$a" "$ref"; then
+    local url
+    if [ "$v" = latest ]; then
+      url="https://github.com/$REPO/releases/latest/download/sosh-server-$a.tar.gz"
+    else
+      url="https://github.com/$REPO/releases/download/v$v/sosh-server-$a.tar.gz"
+    fi
+    say "the registry didn't have it; downloading $url"
+    curl -fL --retry 3 -o "$(work)/server.tar.gz" "$url" || die "no release $v (see https://github.com/$REPO/releases)"
+    ref="$(load_archive "$WORK/server.tar.gz")"
+  fi
+  go_live "$ref"
+}
+
+build() {
+  local ref="${1:-}" sha tag
+  [ -d "$SRC/.git" ] || die "no checkout at $SRC (git clone https://github.com/$REPO $SRC, or set SOSH_SRC)"
+  if [ -n "$ref" ]; then
+    say "checking out $ref in $SRC"
+    git -C "$SRC" fetch --tags origin
+    if git -C "$SRC" rev-parse -q --verify "origin/$ref^{commit}" >/dev/null; then
+      git -C "$SRC" checkout -q --detach "origin/$ref"
+    else
+      git -C "$SRC" checkout -q --detach "$ref"
+    fi
+  elif git -C "$SRC" symbolic-ref -q HEAD >/dev/null; then
+    say "pulling $SRC"
+    git -C "$SRC" pull --ff-only
+  else
+    say "$SRC is at a detached commit; building that (give a branch to move it)"
+  fi
+  sha="$(git -C "$SRC" rev-parse --short HEAD)"
+  tag="${LIVE%:*}:build-$sha"
+  say "building $sha ($(git -C "$SRC" log -1 --format=%s | cut -c1-70)). This takes a while: the engine builds twice"
+  podman build --label "org.opencontainers.image.version=0.0.0-$sha" -t "$tag" "$SRC"
+  go_live "$tag"
+  # the build tags pile up; the live and previous ones keep their images
+  podman images --format '{{.Repository}}:{{.Tag}}' | grep -F "${LIVE%:*}:build-" | grep -vF ":build-$sha" | xargs -r podman rmi >/dev/null 2>&1 || true
+}
+
+# podman load a saved image (a file, gzipped or not); prints what it's called.
+load_archive() {
+  local out name
+  out="$(podman load -i "$1")" || die "couldn't load $1"
+  echo "$out" >&2
+  name="$(printf '%s\n' "$out" | sed -n 's/^Loaded image[s]*: *//p' | tail -n1 | cut -d, -f1)"
+  [ -n "$name" ] || die "loaded $1, but it didn't say what as"
+  echo "$name"
+}
+
+load() {
+  local file="${1:--}"
+  if [ "$file" = - ]; then
+    say "reading an image from stdin"
+    cat > "$(work)/image.tar"
+    file="$WORK/image.tar"
+  fi
+  [ -f "$file" ] || die "no file $file"
+  go_live "$(load_archive "$file")"
+}
+
+rollback() {
+  podman image exists "$PREVIOUS" || die "nothing to roll back to ($PREVIOUS doesn't exist)"
+  say "rolling back to $(describe "$PREVIOUS")"
+  local live_id
+  live_id="$(podman image inspect "$LIVE" --format '{{.Id}}' 2>/dev/null || true)"
+  podman tag "$PREVIOUS" "$LIVE"
+  # and the one rolled back from becomes the previous, so a second rollback undoes it
+  [ -z "$live_id" ] || podman tag "$live_id" "$PREVIOUS"
+  systemctl restart "$UNIT"
+  healthy || die "the server didn't come up on the previous image either; see the logs above"
+}
+
+status() {
+  echo "live:     $(describe "$LIVE")"
+  echo "previous: $(describe "$PREVIOUS")"
+  echo "service:  $(systemctl is-active "$UNIT" 2>/dev/null || true)"
+  echo "backups:  $(ls -1t "$DATA/backups"/sosh-*.sql.gz 2>/dev/null | head -n1 || echo none) (newest)"
+  [ ! -d "$SRC/.git" ] || echo "source:   $SRC at $(git -C "$SRC" log -1 --format='%h %s' | cut -c1-70)"
+}
+
+cmd="${1:-}"
+[ $# -eq 0 ] || shift
+case "$cmd" in
+  release) release "$@" ;;
+  build) build "$@" ;;
+  load) load "$@" ;;
+  rollback) rollback ;;
+  status) status ;;
+  -h | --help | help) usage ;;
+  *) usage 1 ;;
+esac

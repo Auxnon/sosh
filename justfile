@@ -43,3 +43,18 @@ install:
 
 android-test:
     just -f client/justfile android-test
+
+# The checkout as it is (uncommitted changes included) is built here, copied
+# over and put live by `sosh-deploy load` (deploy/README.md). HOST's
+# architecture has to match this machine's.
+# Build the server image here and deploy it on HOST over ssh
+ship host:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sha="$(git rev-parse --short HEAD)$(git diff --quiet HEAD || echo -dirty)"
+    podman build --label "org.opencontainers.image.version=0.0.0-$sha" -t "localhost/sosh:ship-$sha" .
+    file="$(mktemp -d)/sosh-server-$sha.tar.gz"
+    podman save "localhost/sosh:ship-$sha" | gzip > "$file"
+    scp "$file" "{{host}}:sosh-server-$sha.tar.gz"
+    rm -rf "$(dirname "$file")"
+    ssh -t "{{host}}" "sudo sosh-deploy load sosh-server-$sha.tar.gz && rm -f sosh-server-$sha.tar.gz"
