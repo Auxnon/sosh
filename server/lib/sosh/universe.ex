@@ -20,6 +20,7 @@ defmodule Sosh.Universe do
   def block(_u, _on, _pos), do: err()
   def world_of(_u, _on, _at), do: err()
   def save(_u, _now_ms), do: err()
+  def map(_u), do: err()
   def restore(_u, _json), do: err()
   def set_open(_u, _open), do: err()
   def asleep(_u), do: err()

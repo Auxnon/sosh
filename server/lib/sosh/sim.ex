@@ -51,7 +51,7 @@ defmodule Sosh.Sim do
 
   import Ecto.Query, only: [from: 2]
 
-  alias Sosh.{Crop, Lobby, Players, Repo, Universe, UniverseRecord, Universes, World}
+  alias Sosh.{Crop, Lobby, Maps, Players, Repo, Universe, UniverseRecord, Universes, World}
 
   @ripe 3
 
@@ -210,6 +210,9 @@ defmodule Sosh.Sim do
   @doc "Save now."
   def save(u), do: call(u, :save)
 
+  @doc "Draw the universe's map now and keep it (`Sosh.Maps`): `{:ok, {png, drawn_at}}`."
+  def map(u), do: call(u, :map)
+
   @doc "Start over from the database: terrain, state, fresh cows. For tests."
   def reset(u, opts \\ []), do: call(u, {:reset, opts})
 
@@ -250,7 +253,7 @@ defmodule Sosh.Sim do
     {:reply, reply, state}
   end
 
-  @lookups [:spawn, :chunks, :block, :crop, :ambient, :reset, :feet, :reach]
+  @lookups [:spawn, :chunks, :block, :crop, :ambient, :reset, :feet, :reach, :map]
   defp wakes?(msg) when is_tuple(msg), do: elem(msg, 0) not in @lookups
   defp wakes?(_), do: false
 
@@ -420,6 +423,8 @@ defmodule Sosh.Sim do
 
   defp act(:save, state), do: {:ok, persist(state)}
 
+  defp act(:map, state), do: {{:ok, Maps.draw(state.uni, state.u)}, state}
+
   defp act({:reset, opts}, state) do
     state = build(%{state | cows: Keyword.get(opts, :cows, state.cows)})
     {:ok, state}
@@ -568,6 +573,9 @@ defmodule Sosh.Sim do
       from(r in UniverseRecord, where: r.gx == ^gx and r.gy == ^gy),
       set: [state: json, updated_at: DateTime.utc_now() |> DateTime.truncate(:second)]
     )
+
+    # the map: on a change of blocks, or while anyone's about (ships move)
+    if chunks != [] or not Universe.asleep(state.uni), do: Maps.draw(state.uni, state.u)
 
     %{state | last_save: now_ms()}
   end

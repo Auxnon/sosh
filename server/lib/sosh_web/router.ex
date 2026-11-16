@@ -90,6 +90,11 @@ defmodule SoshWeb.Router do
     get "/:key", MediaController, :show
   end
 
+  # A universe's map, its server's banner
+  scope "/map", SoshWeb do
+    get "/:at", MapController, :show
+  end
+
   # A shared cart running on its own, fenced off from the rest of sosh
   scope "/play", SoshWeb do
     get "/worker.js", PlayController, :worker

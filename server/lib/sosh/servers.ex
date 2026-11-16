@@ -154,6 +154,8 @@ defmodule Sosh.Servers do
       name: s.name,
       description: s.description,
       universe: [s.gx, s.gy],
+      # its universe's map, the banner (Sosh.Maps)
+      map: Sosh.Maps.path({s.gx, s.gy}),
       policy: s.policy,
       owner_id: s.owner_id
     }

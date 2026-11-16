@@ -14,6 +14,7 @@ use rustler::{
 
 mod furniture;
 mod items;
+mod map;
 mod secret;
 mod ships;
 mod sim;
@@ -384,6 +385,18 @@ fn world_of(u: Uni, on: u32, at: Feet) -> NifResult<Option<Feet>> {
 #[rustler::nif]
 fn save(u: Uni, now_ms: i64) -> NifResult<String> {
     serde_json::to_string(&lock(&u)?.save(now_ms)).map_err(|e| Error::Term(Box::new(e.to_string())))
+}
+
+/// The universe's map, `{w, h, rgb}`: rows of RGB, top first (`map.rs`).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn map<'a>(env: Env<'a>, u: Uni) -> NifResult<Term<'a>> {
+    let p = {
+        let sim = lock(&u)?;
+        map::render(&sim.terrain, &sim.ships)
+    };
+    let mut bin = OwnedBinary::new(p.rgb.len()).ok_or(Error::Term(Box::new("alloc")))?;
+    bin.as_mut_slice().copy_from_slice(&p.rgb);
+    Ok((p.w, p.h, bin.release(env)).encode(env))
 }
 
 /// Back as `save` left it; call after loading saved chunks.

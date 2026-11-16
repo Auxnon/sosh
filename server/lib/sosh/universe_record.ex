@@ -13,6 +13,9 @@ defmodule Sosh.UniverseRecord do
     field :seed, :integer
     # Sosh.Universe.save/2's JSON: crops, furniture, ships, the world tick
     field :state, :binary
+    # its map, a PNG (Sosh.Maps), and when it was drawn
+    field :map, :binary
+    field :map_at, :utc_datetime
 
     timestamps(type: :utc_datetime)
   end
