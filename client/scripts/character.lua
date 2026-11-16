@@ -216,8 +216,16 @@ function Character:restyle(spec)
 end
 
 -- Pose it: feet at (x, y, z), facing `facing`, playing `clip`, with bone
--- rotations `turns` ({bone = {rx, ry, rz}}) on top of the clip.
-function Character:pose(x, y, z, facing, clip, turns)
+-- rotations `turns` ({bone = {rx, ry, rz}}) on top of the clip. `flat`
+-- ({rx, ry}, from Avatar.lie) tips the whole body over; its face is shut
+-- (hidden) meanwhile.
+function Character:pose(x, y, z, facing, clip, turns, flat)
+	local tx = 0
+	local ty = 0
+	if flat ~= nil then
+		tx = flat.rx
+		ty = flat.ry
+	end
 	self.x = x
 	self.y = y
 	self.z = z
@@ -232,6 +240,8 @@ function Character:pose(x, y, z, facing, clip, turns)
 		e.y = y
 		e.z = zz
 		e.rz = facing
+		e.rx = tx
+		e.ry = ty
 		if restart then
 			e:anim(clip, true)
 		end
@@ -272,6 +282,8 @@ function Character:pose(x, y, z, facing, clip, turns)
 			e.z = hz + f[5]
 		end
 		e.rz = facing
+		e.rx = tx
+		e.ry = ty
 	end
 
 	-- the face: across the front of the head, turned with it
@@ -287,6 +299,9 @@ function Character:pose(x, y, z, facing, clip, turns)
 		e.x = hx + lx * c - ly * s
 		e.y = hy + lx * s + ly * c
 		e.z = hz + lz
+		if flat ~= nil then
+			e.z = -1000
+		end
 		e.rz = facing
 		e.rx = p.rot or 0
 	end

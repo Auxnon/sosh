@@ -20,6 +20,12 @@
 --
 -- On the web only transforms sync after the frame an entity was made in, so
 -- entities are moved and parked (z = -1000), never retextured.
+--
+-- Doors: a `door`'s cells are solid on the server (nothing's built in
+-- them) but walked through here (Furn.passable), and it swings open while
+-- anyone's near. A `hyperdoor` leads into a pocket room of its own; walking
+-- into it, or clicking it, goes through (tools.lua, `door_action`), as
+-- does the room's way out (`hyperexit`). A `bed` is lain on (avatar.lua).
 
 Furn = {}
 
@@ -27,6 +33,11 @@ SITE_LABEL_DIST = 12
 SIGN_LABEL_DIST = 6 -- tiles: signs this close show what they say
 SIGN_TEXT_MAX = 60
 GHOST_MAX = 4
+BED_TOP = 0.55 -- the mattress's top, over the bed's cell
+DOOR_NEAR = 1.6 -- tiles: a door this near anyone stands open
+DOOR_SWING = 8 -- rate a door swings, per second
+-- kinds that are gone through rather than opened
+PORTALS = { hyperdoor = true, hyperexit = true }
 
 function Furn.init()
 	if Furn.pieces ~= nil then
@@ -141,6 +152,35 @@ end
 
 function Furn.site_at(on, x, y, z)
 	return Furn.site_cells[Furn.key(on, x, y, z)]
+end
+
+-- Walked through, though its cells are solid: a door's.
+function Furn.passable(on, x, y, z)
+	local id = Furn.cells[Furn.key(on, x, y, z)]
+	if id == nil then
+		return false
+	end
+	local f = Furn.pieces[id]
+	return f ~= nil and f.kind == "door"
+end
+
+-- The furniture under feet at world (x, y, z) standing in frame `on`, or
+-- nil.
+function Furn.under(on, x, y, z)
+	local s = Ships.get(on)
+	if s ~= nil then
+		x, y, z = Ships.to_local(s, x, y, z)
+	else
+		on = nil
+	end
+	local cx = Blocks.cell(x)
+	local cy = Blocks.cell(y)
+	local cz = flr(z + 0.01) - 1
+	local id = Furn.at(on, cx, cy, cz)
+	if id == nil then
+		return nil
+	end
+	return Furn.pieces[id]
 end
 
 -- A frame from the wire: 0 is the world (nil here).
@@ -368,6 +408,8 @@ function Furn.update()
 	for id, f in pairs(Furn.pieces) do
 		if f.lifted then
 			Furn.carry(f)
+		elseif f.kind == "door" then
+			Furn.swing(f)
 		elseif f.on ~= nil then
 			Furn.put(f.ent, f.on, f.origin, f.rot)
 		end
@@ -381,6 +423,39 @@ function Furn.update()
 			end
 		end
 	end
+end
+
+-- A door: open (a quarter turn) while anyone stands near it.
+function Furn.swing(f)
+	Furn.put(f.ent, f.on, f.origin, f.rot)
+	local e = f.ent
+	if e.z < -100 then
+		return
+	end
+	local me = APP.me
+	local near = me ~= nil and Furn.near(me, e)
+	if not near then
+		for i = 1, #APP.order do
+			local av = APP.players[APP.order[i]]
+			if Furn.near(av, e) then
+				near = true
+			end
+		end
+	end
+	local want = 0
+	if near then
+		want = 1
+	end
+	f.open = f.open or 0
+	f.open = f.open + (want - f.open) * U.rate(DOOR_SWING, U.dt)
+	e.rz = e.rz + f.open * math.pi / 2
+end
+
+-- Is avatar `av` near enough entity `e` to open it?
+function Furn.near(av, e)
+	local dx = av.x - e.x
+	local dy = av.y - e.y
+	return dx * dx + dy * dy < DOOR_NEAR * DOOR_NEAR and math.abs(av.z - e.z) < 2
 end
 
 function Furn.carry(f)

@@ -469,6 +469,13 @@ function bind_actions(ch)
 	-- a ship flew off the edge into the next universe; if we're aboard,
 	-- so do we
 	-- the ship flew into a server we aren't in: we stay, on the home island
+	-- the door into the room we're in was broken: out where it stood
+	ch.on["evicted"] = function(p)
+		if APP.me ~= nil and APP.me.on == p.ship then
+			arrive_through(p)
+			add_chat(nil, "the door to this room is gone: you're back outside", C_DIM)
+		end
+	end
 	ch.on["stranded"] = function(p)
 		if p.user_id == APP.my_id and APP.me ~= nil then
 			APP.me:teleport(p.at[1], p.at[2], p.at[3])
@@ -689,6 +696,7 @@ function world_frame()
 	Ships.update(U.dt)
 	if me ~= nil then
 		me:update(U.dt)
+		bump_portal(me)
 		if Ships.piloted_by(APP.my_id) ~= nil then
 			steer_ship(me)
 		end

@@ -10,13 +10,15 @@
 -- a block as its own small entity, a cow as the herd's entity, moved there,
 -- and furniture as its own (furniture.lua), which also knows when heavy
 -- furniture is only gripped, waiting for a second carrier. Helpers hold
--- furniture too (Furn.helper_holds).
+-- furniture too (Furn.helper_holds). A player (`player`, their user id) is
+-- their own avatar, laid flat overhead (avatar.lua); they can wiggle free.
 
 Carry = {}
 
 CARRY_Z = 1.5 -- above the holder's feet, as the universe carries a cow
 HELD_H = 0.85 -- how tall a held block is, for the name tag above it
 HELD_COW_H = 1.1
+HELD_PLAYER_H = 0.6
 
 function Carry.init()
 	if Carry.by ~= nil then
@@ -28,6 +30,8 @@ function Carry.init()
 	Carry.by = {}
 	-- cow id -> user id
 	Carry.cows = {}
+	-- carried player's user id -> carrier's
+	Carry.carried = {}
 	if Carry.blocks == nil then
 		Carry.blocks = {}
 	end
@@ -60,13 +64,22 @@ function Carry.set(p)
 		Carry.let_go(old)
 		Carry.by[p.user_id] = nil
 	end
-	if p.block == nil and p.cow == nil and p.furniture == nil then
+	if p.block == nil and p.cow == nil and p.furniture == nil and p.player == nil then
 		return
 	end
 	local h = {}
 	h.block = p.block
 	h.cow = p.cow
 	h.furniture = p.furniture
+	h.player = p.player
+	if p.player ~= nil then
+		Carry.carried[p.player] = p.user_id
+		Carry.by[p.user_id] = h
+		if p.player == APP.my_id then
+			add_chat(nil, "you've been picked up! press a move key over and over to wiggle free", C_ACCENT)
+		end
+		return
+	end
 	if p.furniture ~= nil then
 		Carry.by[p.user_id] = h
 		return
@@ -94,6 +107,17 @@ function Carry.let_go(h)
 	if h.cow ~= nil then
 		Carry.cows[h.cow] = nil
 	end
+	if h.player ~= nil then
+		Carry.carried[h.player] = nil
+	end
+end
+
+-- Who's carrying player `user_id`, or nil.
+function Carry.carrier_of(user_id)
+	if user_id == nil or Carry.carried == nil then
+		return nil
+	end
+	return Carry.carried[user_id]
 end
 
 -- What a player holds, or nil.
@@ -120,6 +144,9 @@ function Carry.height(user_id)
 	end
 	if h.cow ~= nil then
 		return HELD_COW_H
+	end
+	if h.player ~= nil then
+		return HELD_PLAYER_H
 	end
 	if h.furniture ~= nil then
 		local f = Furn.pieces[h.furniture]

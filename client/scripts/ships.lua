@@ -80,6 +80,9 @@ function Ships.set(p)
 		Ships.list[p.id] = s
 	end
 	s.pilot = p.pilot
+	-- a pocket room: whose (nil for a ship), and its door
+	s.pocket = p.pocket
+	s.door = p.door
 	s.blocks = {}
 	s.cells = {}
 	local list = p.blocks or {}
@@ -270,6 +273,16 @@ function Ships.block_at(s, x, y, z)
 	return s.blocks[Blocks.key(x, y, z)] or 0
 end
 
+-- Is cell (x, y, z) of ship `s` something a body bumps into? Not air,
+-- nor a door.
+function Ships.solid(s, x, y, z)
+	local b = Ships.block_at(s, x, y, z)
+	if b == 0 then
+		return false
+	end
+	return b ~= FURNITURE or not Furn.passable(s.id, x, y, z)
+end
+
 -- Where feet rest on ship `s` at world (x, y) for someone at height z: the
 -- top of its highest block at most one above their feet (as Blocks.ground),
 -- as a world height; nil if none.
@@ -279,7 +292,7 @@ function Ships.ground(s, x, y, z)
 	local cy = Blocks.cell(ly)
 	local top = flr(lz + 0.01)
 	for bz = top, top - 6, -1 do
-		if Ships.block_at(s, cx, cy, bz) ~= 0 then
+		if Ships.solid(s, cx, cy, bz) then
 			return s.z + bz + 1
 		end
 	end
@@ -294,7 +307,7 @@ function Ships.solid_at(x, y, z)
 		local cx = Blocks.cell(lx)
 		local cy = Blocks.cell(ly)
 		local cz = flr(lz)
-		if Ships.block_at(s, cx, cy, cz) ~= 0 then
+		if Ships.solid(s, cx, cy, cz) then
 			return true
 		end
 	end

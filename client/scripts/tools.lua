@@ -99,16 +99,35 @@ function world_keys(me)
 		return
 	end
 	local dx, dy = move_keys()
+	-- carried: the keys only wiggle, each new press once
+	if Carry.carrier_of(APP.my_id) ~= nil then
+		local pressed = dx ~= 0 or dy ~= 0
+		if pressed and not APP.wiggling then
+			wiggle()
+		end
+		APP.wiggling = pressed
+		return
+	end
 	if dx == 0 and dy == 0 then
 		if me:driven() then
 			me:stop()
 		end
 		return
 	end
-	if me.anim == 1 then
-		change_anim(1) -- stand up to walk
+	if me.anim ~= 0 then
+		set_my_anim(0) -- stand up (or get out of bed) to walk
 	end
 	me:drive(dx * AV_SPEED, dy * AV_SPEED)
+end
+
+-- Carried: wriggle in their arms; enough, quickly enough, and we're free.
+function wiggle()
+	act("wiggle", {}, "wiggle", function(r)
+		if r.free then
+			add_chat(nil, "you wiggled free!", C_OK)
+		end
+	end)
+	APP.me:say("hey!")
 end
 
 -- The way WASD / the arrows point, relative to the camera: a unit vector,
@@ -272,6 +291,8 @@ function world_pointer(me)
 	local hit = nil
 	local cow = nil
 	local helper = nil
+	local person = nil
+	local use = nil
 	if not over_hud then
 		hit = Blocks.raycast(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, 64)
 		local d = 64
@@ -280,6 +301,9 @@ function world_pointer(me)
 		end
 		if tool == "carry" and holding == nil then
 			cow = Herd.under_ray(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, d)
+			if cow == nil then
+				person = player_under_ray(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, d)
+			end
 		end
 		if tool == "carry" and holding ~= nil and holding.furniture ~= nil then
 			helper = Helpers.under_ray(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, d)
@@ -297,8 +321,15 @@ function world_pointer(me)
 		on = hit.on
 		if tool == "walk" then
 			local f = Furn.at(on, hit.hit[1], hit.hit[2], hit.hit[3])
-			if f ~= nil and #Furn.pieces[f].slots > 0 then
+			local piece = nil
+			if f ~= nil then
+				piece = Furn.pieces[f]
+			end
+			if piece ~= nil and #piece.slots > 0 then
 				box = f
+				cell = hit.hit
+			elseif piece ~= nil and (piece.kind == "bed" or PORTALS[piece.kind]) then
+				use = piece
 				cell = hit.hit
 			elseif on ~= nil and hit.id == HELM then
 				helm = true
@@ -344,6 +375,11 @@ function world_pointer(me)
 		cell = at
 		on = nil
 	end
+	if person ~= nil then
+		local at = { person.x, person.y, person.z }
+		cell = at
+		on = nil
+	end
 	if helper ~= nil then
 		ghost = nil
 		cell = nil
@@ -351,7 +387,9 @@ function world_pointer(me)
 	if cell ~= nil and not in_reach(me, cell, on) then
 		cell = nil
 		cow = nil
+		person = nil
 		box = nil
+		use = nil
 		helm = false
 	end
 	if ghost ~= nil and not all_in_reach(me, ghost, on) then
@@ -360,7 +398,7 @@ function world_pointer(me)
 	end
 	APP.target = cell
 	-- hoisted: a call in the first argument miscompiles (SILT-BUGS.md #1)
-	local spot, spot_on = walk_spot(me, tool, hit, on, box, helm)
+	local spot, spot_on = walk_spot(me, tool, hit, on, box or use, helm)
 	Marker.hover(spot, spot_on)
 	if ghost ~= nil then
 		show_cursor(nil)
@@ -380,12 +418,20 @@ function world_pointer(me)
 		pick_up_cow(cow)
 		return
 	end
+	if person ~= nil then
+		pick_up_player(person)
+		return
+	end
 	if hit == nil then
 		return
 	end
 	if tool == "walk" then
 		if box ~= nil then
 			Bag.open_box(box)
+			return
+		end
+		if use ~= nil then
+			use_furniture(use)
 			return
 		end
 		if helm then
@@ -399,8 +445,8 @@ function world_pointer(me)
 		-- hoisted: a call in the first argument miscompiles (SILT-BUGS.md #1)
 		local frame = Ships.get(on)
 		if Blocks.get_in(frame, h[1], h[2], h[3] + 1) == 0 then
-			if me.anim == 1 then
-				change_anim(1)
+			if me.anim ~= 0 then
+				set_my_anim(0)
 			end
 			me:walk_to(h[1], h[2], on)
 			Marker.sent(h, on)
@@ -487,7 +533,15 @@ REASONS = {
 	no_helm_here = "stand at a ship's helm to steer it",
 	someone_else_steers = "someone else is at the helm",
 	last_block = "a ship needs at least one block",
-	cows_stay_ashore = "cows stay ashore",
+	cows_stay_ashore = "cows go ashore or into rooms, not aboard",
+	carried = "you're being carried: press a move key over and over to wiggle free",
+	already_carried = "someone's already carrying them",
+	cannot_carry = "you can't carry that",
+	not_carried = "nobody's carrying you",
+	the_walls_hold = "that's part of the room",
+	no_room_in_a_room = "a hyperdoor can't lead anywhere from inside a room",
+	others_holding_it = "someone else has the other end",
+	not_a_door = "that isn't a door",
 }
 
 function say_reason(r)
@@ -579,6 +633,143 @@ function carry_action(cell, on)
 			add_chat(nil, "packed into your bag", C_OK)
 		end
 	end)
+end
+
+-- The player (not us) whose body is under the ray, or nil.
+function player_under_ray(ox, oy, oz, dx, dy, dz, max_dist)
+	local l = sqrt(dx * dx + dy * dy + dz * dz)
+	if l < 0.0001 then
+		return nil
+	end
+	dx = dx / l
+	dy = dy / l
+	dz = dz / l
+	local best = nil
+	local best_t = max_dist
+	for i = 1, #APP.order do
+		local av = APP.players[APP.order[i]]
+		local cx = av.x - ox
+		local cy = av.y - oy
+		local cz = av.z + 0.8 - oz
+		local t = cx * dx + cy * dy + cz * dz
+		local miss = cx * cx + cy * cy + cz * cz - t * t
+		if t > 0 and t < best_t and miss < 0.3 then
+			best = av
+			best_t = t
+		end
+	end
+	return best
+end
+
+-- Pick player `av` up over our head. They can wiggle free.
+function pick_up_player(av)
+	local payload = {}
+	payload.player = av.id
+	act("pick_up_action", payload, "pick them up", function(r)
+		add_chat(nil, "you picked up " .. av.name .. " (G to put them down)", C_OK)
+	end)
+end
+
+-- Click a bed to lie on it, a hyperdoor (or a room's way out) to go
+-- through.
+function use_furniture(f)
+	if f.kind == "bed" then
+		lie_down(f)
+	else
+		door_action(f.id)
+	end
+end
+
+-- Onto the bed, feet at its foot end; any move key gets us up.
+function lie_down(f)
+	local me = APP.me
+	if Carry.of(APP.my_id) ~= nil then
+		add_chat(nil, say_reason("hands_full"), C_DIM)
+		return
+	end
+	local x, y, z = Ships.frame_pos(f.on, f.origin[1], f.origin[2], f.origin[3])
+	if x == nil then
+		return
+	end
+	me:teleport(x, y, z + 1)
+	me.on = f.on
+	set_my_anim(ANIM_LIE)
+	send_move()
+end
+
+-- Through door `id`; we land where the server says.
+function door_action(id)
+	APP.door_at = U.clock
+	local payload = {}
+	payload.furniture = id
+	act("door_action", payload, "go through", arrive_through)
+end
+
+-- Through a door: at `r.at` in frame `r.on` (a ship or room we may not
+-- know yet: then we wait in place for it, as on arriving aboard).
+function arrive_through(r)
+	local me = APP.me
+	if me == nil then
+		return
+	end
+	if me.anim ~= 0 then
+		set_my_anim(0)
+	end
+	local at = r.at
+	if r.on == nil or r.on == 0 then
+		me:teleport(at[1], at[2], at[3])
+	else
+		local s = Ships.get(r.on)
+		if s ~= nil then
+			local x, y, z = Ships.to_world(s, at[1], at[2], at[3])
+			me:teleport(x, y, z)
+			me.on = r.on
+		else
+			me:teleport(me.x, me.y, me.z)
+			me.on = r.on
+			local w = { at[1], at[2], at[3] }
+			me.wait = w
+		end
+	end
+	me.heading = r.heading or me.heading
+	APP.door_at = U.clock
+	local room = Ships.get(r.on)
+	if room ~= nil and room.pocket ~= nil then
+		add_chat(nil, "in " .. room.pocket .. "'s room", C_ACCENT)
+	end
+	send_move()
+end
+
+-- Walked into a hyperdoor: through it, once in a while.
+DOOR_BUMP_GAP = 1.5 -- seconds between goes
+
+function bump_portal(me)
+	if not me:driven() or Carry.carrier_of(APP.my_id) ~= nil then
+		return
+	end
+	if APP.door_at ~= nil and U.clock - APP.door_at < DOOR_BUMP_GAP then
+		return
+	end
+	local x = me.x + cos(me.heading) * 0.6
+	local y = me.y + sin(me.heading) * 0.6
+	local z = me.z + 0.5
+	local s = Ships.get(me.on)
+	local on = nil
+	if s ~= nil then
+		x, y, z = Ships.to_local(s, x, y, z)
+		on = s.id
+	end
+	local cx = Blocks.cell(x)
+	local cy = Blocks.cell(y)
+	local cz = flr(z)
+	local id = Furn.at(on, cx, cy, cz)
+	if id == nil then
+		return
+	end
+	local f = Furn.pieces[id]
+	if f ~= nil and PORTALS[f.kind] then
+		door_action(f.id)
+	end
 end
 
 function pick_up_cow(cow)
@@ -693,9 +884,16 @@ function pose_pressed()
 		helm_action()
 	elseif Carry.of(APP.my_id) ~= nil then
 		put_down_ahead()
+	elseif APP.me.anim ~= 0 then
+		set_my_anim(0)
 	else
-		change_anim(1)
+		set_my_anim(ANIM_SIT)
 	end
+end
+
+-- Sit, lie or stand, and tell everyone.
+function set_my_anim(a)
+	change_anim(a - APP.me.anim)
 end
 
 -- Is `cell` (of the world, or ship `on`'s) within reach of `me`?

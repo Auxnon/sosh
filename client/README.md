@@ -245,9 +245,18 @@ Inside a server, the client also joins two channels for its universe:
     `harvest_action` edit the world, and ships.
   - `build_action` (`kind`, `rot`) lays out a blueprint, and
     `deposit_action` puts ingredients in.
-  - `pick_up_action` (`position`, `cow` or `furniture`) and
-    `put_down_action` (`rot`) carry things; `call_helper_action` asks a
-    helper for a hand.
+  - `pick_up_action` (`position`, `cow`, `furniture` or `player`, a user
+    id) and `put_down_action` (`rot`) carry things; `call_helper_action`
+    asks a helper for a hand. Someone carried sends `wiggle` (each move key
+    press) and gets free after enough wiggles in quick succession.
+  - `door_action` (`furniture`) goes through a hyperdoor, or a room's way
+    out (`hyperexit`), and replies where you land (`on`, `at`, `heading`).
+    A hyperdoor leads into a pocket room: a ship with `pocket` (its
+    owner's name) that never moves, parked far over the universe. The room
+    is whoever went through first's and outlives its door: once the door
+    is broken nobody gets in until its owner goes through a new hyperdoor,
+    which leads back to it. Whatever you carry comes through with you (a
+    cow, a player, furniture and the helper on its other end).
   - `stash_action` and `take_action` move stacks in and out of furniture.
   - `helm_action` takes the helm we stand at or lets go; `steer` (`helm`
     [thrust, turn, lift], each -1..1) flies the ship.
@@ -255,9 +264,16 @@ Inside a server, the client also joins two channels for its universe:
   Every reply that changes your bag carries the new one. Broadcasts cover
   everything as it changes: `block_changed`, `crop`, `cows`, `moo`,
   `carry`, `furniture`/`furniture_gone`, `site`/`site_gone`, `helpers`,
-  `ship` (a whole ship: pose, pilot, blocks), `ship_block`, `ships` (poses
-  and velocities, ten times a second), and `travel` when a ship crosses
-  into the next universe with its riders.
+  `ship` (a whole ship: pose, pilot, blocks; `pocket` and `door` for a
+  room), `ship_block`, `ships` (poses and velocities, ten times a second),
+  `travel` when a ship crosses into the next universe with its riders, and
+  `evicted` (`ship`, `on`, `at`) when a room's door is broken with people
+  inside.
+
+  Furniture in the game: a `bed` is clicked to lie on (the `lie` animation,
+  tipped along the bed; any move key gets up), a `door` is walked through
+  and swings open for anyone near, and walking into a hyperdoor goes
+  through it.
 
 Movement is sent as motion, not a stream of positions. `move` carries where
 the player stands (`at`), the velocity they're heading for in tiles a

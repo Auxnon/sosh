@@ -23,6 +23,11 @@
 -- report where on the ship they stand, so they're placed by the same
 -- (eased) pose as the ship itself.
 --
+-- Lying down (anim "lie", on a bed): the whole model is tipped onto its
+-- back along the bed beneath (Furn.under), feet at its foot end. Carried
+-- (Carry.carrier_of): held flat over the carrier's head, wherever
+-- they go; the carried player's keys only wiggle (tools.lua).
+--
 -- Momentum: (x, y) is the path, what goes on the wire and what everyone
 -- carries us along. It ramps up to speed and loses most of it on a sharp
 -- turn, so the path itself is a little heavy. The model is drawn somewhere
@@ -57,7 +62,9 @@ AV_SETTLE = 24 -- the body's braking once the path has stopped
 AV_BACKSTEP = 2.5 -- tiles a second: settling back slower than this, it steps back without turning round
 AV_HEIGHT = 1.45 -- the player model, feet to the top of the head
 FACE_COUNT = 8
-ANIMS = { "idle", "sit" }
+ANIMS = { "idle", "sit", "lie" }
+ANIM_SIT = 1
+ANIM_LIE = 2
 AV_HOLD_ARMS = 2.85 -- arms swung forward and up to what's carried
 EMOTES = { "wave", "dance", "jump", "cheer" }
 EMOTE_FRAMES = 150
@@ -148,7 +155,7 @@ function Avatar:play_emote(name)
 	end
 	self.emote = name
 	self.emote_t = EMOTE_FRAMES
-	if self.anim == 1 then
+	if self.anim == ANIM_SIT then
 		self.anim = 0 -- stand up for it
 	end
 	self:say(EMOTE_SAY[name])
@@ -337,7 +344,7 @@ function Avatar.walkable(x, y, z)
 	local cx = Blocks.cell(x)
 	local cy = Blocks.cell(y)
 	local gz = flr(g + 0.01)
-	if Blocks.get(cx, cy, gz) ~= 0 or Blocks.get(cx, cy, gz + 1) ~= 0 then
+	if not Blocks.clear(cx, cy, gz) or not Blocks.clear(cx, cy, gz + 1) then
 		return false
 	end
 	local knee = g + 0.5
@@ -412,6 +419,29 @@ end
 function Avatar:update(dt)
 	self.t = self.t + 1
 
+	-- carried: over the carrier's head, wherever they go
+	local carrier = Carry.carrier_of(self.id)
+	if carrier ~= nil then
+		local c = avatar_of(carrier)
+		if c ~= nil and c.hold ~= nil then
+			self.x = c.hold[1]
+			self.y = c.hold[2]
+			self.z = c.hold[3] - 0.2
+			self.bx = self.x
+			self.by = self.y
+			self.on = c.on
+			self.vx = 0
+			self.vy = 0
+			self.vz = 0
+			self.tx = nil
+			self.dvx = 0
+			self.dvy = 0
+			self:age_bubbles()
+			self:pose()
+			return
+		end
+	end
+
 	if not self:ride() then
 		self:age_bubbles()
 		self:pose()
@@ -463,7 +493,7 @@ function Avatar:update(dt)
 	local wx = ux * step
 	local wy = uy * step
 	local stepping = false
-	if (wx ~= 0 or wy ~= 0) and self.anim ~= 1 then
+	if (wx ~= 0 or wy ~= 0) and self.anim == 0 then
 		stepping = self:step(wx, wy, dt)
 		if not stepping then
 			-- walled in: give up and stand
@@ -716,8 +746,21 @@ function Avatar:pose()
 	local clip = "idle"
 	local bob = 0
 	local swing = 0
-	if self.anim == 1 then
+	-- tipped flat: lying on a bed, or carried
+	local flat = nil
+	local carrier = Carry.carrier_of(self.id)
+	if carrier ~= nil then
+		local c = avatar_of(carrier)
+		if c ~= nil then
+			flat = Avatar.lie(c.heading + math.pi / 2)
+		end
+	elseif self.anim == ANIM_LIE then
+		flat = self:bed_pose()
+	end
+	if self.anim == ANIM_SIT then
 		clip = "sit"
+	elseif flat ~= nil then
+		clip = "idle"
 	else
 		bob = math.abs(sin(t * 0.24)) * 0.06 * self.walk + sin(t * 0.05) * 0.012
 		swing = sin(t * 0.24) * 0.7 * self.walk
@@ -730,7 +773,7 @@ function Avatar:pose()
 	local twist = 0
 	local legl = -swing
 	local legr = -swing
-	if self.skid and self.anim ~= 1 then
+	if self.skid and self.anim == 0 then
 		-- braced: a foot planted out front, arms thrown forward and out
 		fl = -1.1
 		fr = 1.1
@@ -781,10 +824,72 @@ function Avatar:pose()
 	turns["waist.l"] = { 0, legl, 0 }
 	turns["waist.r"] = { 0, legr, 0 }
 	self.clip = clip
-	self.char:pose(self.bx, self.by, self.z + bob, h + twist, clip, turns)
+	if flat ~= nil then
+		-- centred on where we are, unless a bed says where the feet go
+		local fx = self.bx - cos(flat.a) * 0.9
+		local fy = self.by - sin(flat.a) * 0.9
+		local fz = self.z + 0.25
+		if flat.feet ~= nil then
+			fx = flat.feet[1]
+			fy = flat.feet[2]
+			fz = flat.feet[3]
+		end
+		self.char:pose(fx, fy, fz, flat.rz, clip, turns, flat)
+	else
+		self.char:pose(self.bx, self.by, self.z + bob, h + twist, clip, turns)
+	end
 
 	local hold = { self.bx, self.by, self.z + bob + CARRY_Z, h }
 	self.hold = hold
+end
+
+-- How to tip the model flat on its back with its head toward `a` (radians,
+-- snapped to a quarter turn): {rx, ry, rz}. Entities turn by rz, then ry,
+-- then rx about the world's axes (XYZ Euler), so only the world's axes
+-- can be lain along.
+function Avatar.lie(a)
+	local q = flr(a / (math.pi / 2) + 0.5) % 4
+	local t = {}
+	t.a = q * math.pi / 2
+	t.rx = 0
+	t.ry = 0
+	if q == 0 then
+		t.ry = math.pi / 2 -- head to +x
+		t.rz = math.pi
+	elseif q == 1 then
+		t.rx = -math.pi / 2 -- head to +y
+		t.rz = -math.pi / 2
+	elseif q == 2 then
+		t.ry = -math.pi / 2 -- head to -x
+		t.rz = 0
+	else
+		t.rx = math.pi / 2 -- head to -y
+		t.rz = math.pi / 2
+	end
+	return t
+end
+
+-- Lying: along the bed under us, feet at its foot end on the mattress;
+-- with no bed, flat on the ground the way we face.
+function Avatar:bed_pose()
+	local f = Furn.under(self.on, self.x, self.y, self.z)
+	if f == nil or f.kind ~= "bed" then
+		local t = Avatar.lie(self.heading)
+		return t
+	end
+	local x, y, z, h = Ships.frame_pos(f.on, f.origin[1], f.origin[2], f.origin[3])
+	if x == nil then
+		return nil
+	end
+	-- the pillow's at the far cell: +y, turned with the bed
+	local a = h + Furn.rz(f.rot) + math.pi / 2
+	local t = Avatar.lie(a)
+	local feet = {}
+	feet[1] = x - cos(a) * 0.45
+	feet[2] = y - sin(a) * 0.45
+	feet[3] = z + BED_TOP + 0.2
+	t.feet = feet
+	return t
 end
 
 -- Point above the head where the name tag sits, as {x, y, z}; above what

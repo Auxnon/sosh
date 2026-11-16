@@ -229,12 +229,24 @@ function Blocks.ground(x, y, z)
 		if id == WATER then
 			return nil
 		end
-		if id ~= 0 then
+		if id ~= 0 and not Blocks.passable(id, cx, cy, bz) then
 			return bz + 1
 		end
 		bz = bz - 1
 	end
 	return nil
+end
+
+-- A world cell that's walked through though there's something in it: an
+-- open door (Furn.passable).
+function Blocks.passable(id, x, y, z)
+	return id == FURNITURE and Furn.passable(nil, x, y, z)
+end
+
+-- Nothing in a world cell to stop a body.
+function Blocks.clear(x, y, z)
+	local id = Blocks.get(x, y, z)
+	return id == 0 or Blocks.passable(id, x, y, z)
 end
 
 -- Can someone at height z walk into column (x, y)?
@@ -246,7 +258,7 @@ function Blocks.walkable(x, y, z)
 	-- headroom: the two cells the body occupies must be clear
 	local cx = Blocks.cell(x)
 	local cy = Blocks.cell(y)
-	return Blocks.get(cx, cy, g) == 0 and Blocks.get(cx, cy, g + 1) == 0
+	return Blocks.clear(cx, cy, g) and Blocks.clear(cx, cy, g + 1)
 end
 
 -- The first solid block along a ray: in the world, or on a ship (`on` its

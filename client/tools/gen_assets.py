@@ -368,6 +368,12 @@ def furniture_models():
         swatch("door", WOOD_RED, WOOD_RED_DK),  # 5
         swatch("burlap", (190, 164, 112, 255), (160, 134, 86, 255)),  # 6
         swatch("plank", (196, 150, 98, 255), (150, 108, 64, 255)),  # 7
+        swatch("burlap", (244, 236, 214, 255), (222, 210, 184, 255)),  # 8 linen
+        swatch("burlap", (88, 128, 200, 255), (66, 102, 168, 255)),  # 9 blanket
+        swatch("door", WOOD, WOOD_DK),  # 10
+        swatch("burlap", (176, 112, 240, 255), (120, 72, 200, 255)),  # 11 hyper
+        swatch("plank", (232, 196, 96, 255), (184, 148, 60, 255)),  # 12 brass
+        swatch("burlap", (96, 220, 200, 255), (56, 168, 156, 255)),  # 13 way out
     )
     png = png_bytes(im)
     s = 1 / 16
@@ -410,6 +416,36 @@ def furniture_models():
         "sign": merge(
             box(0, 0, 1 * s, 1 * s, 0.0, 8 * s, uv(0)),
             box(0, 0, 7 * s, 1 * s, 8 * s, 15 * s, uv(7)),
+        ),
+        # two cells along +y: the pillow and headboard at the far end, the
+        # mattress top at 9/16 (BED_TOP in scripts/furniture.lua)
+        "bed": merge(
+            box(0, 0.5, 7 * s, 15.5 * s, 2 * s, 6 * s, uv(0)),
+            *legs(-6 * s, 6 * s, -7 * s, 1 + 6 * s, 2 * s, 1 * s),
+            box(0, 0.5, 6.5 * s, 15 * s, 6 * s, 9 * s, uv(8)),
+            box(0, 0.3, 6.8 * s, 12 * s, 8 * s, 9.5 * s, uv(9)),
+            box(0, 1 + 3 * s, 5 * s, 2.5 * s, 9 * s, 11 * s, uv(8)),
+            box(0, 1 + 7 * s, 7.5 * s, 0.75 * s, 0.0, 16 * s, uv(0)),
+        ),
+        # a door on the cell's front edge; it swings to the side about the
+        # cell's middle (Furn.swing)
+        "door": merge(
+            box(0, -6.5 * s, 7.5 * s, 1 * s, 0.0, 31 * s, faced(uv(10), uv(0))),
+            box(5 * s, -8 * s, 0.75 * s, 0.75 * s, 14 * s, 16 * s, uv(12)),
+        ),
+        # a door into a room of its own: a brass frame round a violet glow
+        "hyperdoor": merge(
+            box(-7.5 * s, 0, 0.75 * s, 1.5 * s, 0.0, 32 * s, uv(12)),
+            box(7.5 * s, 0, 0.75 * s, 1.5 * s, 0.0, 32 * s, uv(12)),
+            box(0, 0, 8.25 * s, 1.5 * s, 30.5 * s, 32 * s, uv(12)),
+            box(0, 0, 6.75 * s, 0.5 * s, 0.0, 30.5 * s, uv(11)),
+        ),
+        # its way back out, from inside the room
+        "hyperexit": merge(
+            box(-7.5 * s, 0, 0.75 * s, 1.5 * s, 0.0, 32 * s, uv(12)),
+            box(7.5 * s, 0, 0.75 * s, 1.5 * s, 0.0, 32 * s, uv(12)),
+            box(0, 0, 8.25 * s, 1.5 * s, 30.5 * s, 32 * s, uv(12)),
+            box(0, 0, 6.75 * s, 0.5 * s, 0.0, 30.5 * s, uv(13)),
         ),
         "sack": merge(
             box(0, 0, 5 * s, 5 * s, 0.0, 6 * s, uv(6), top=(4 * s, 4 * s)),
