@@ -177,7 +177,20 @@ data class Conversation(val id: Long, val with: Person, val last: Message?) {
     }
 }
 
-data class Slot(val item: String, val count: Int)
+data class Slot(val item: String, val count: Int) {
+    /** How many marbles, for a bag of them (`marbles:<n>`). */
+    val marbles: Int? get() = Regex("^marbles:(\\d+)$").find(item)?.groupValues?.get(1)?.toIntOrNull()
+
+    /** The number on its pocket: a bag of marbles says how many are in it. */
+    val label: String get() = marbles?.let(::shortCount) ?: "$count"
+}
+
+/** A count short enough for a pocket: 12345 is 12k. */
+fun shortCount(n: Int): String = when {
+    n >= 1_000_000 -> "${n / 1_000_000}m"
+    n >= 10_000 -> "${n / 1000}k"
+    else -> "$n"
+}
 
 fun bag(a: JSONArray?): List<Slot?> = (0 until (a?.length() ?: 0)).map { i ->
     val s = a!!.optJSONArray(i)

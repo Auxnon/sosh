@@ -156,6 +156,8 @@ pub fn bag(ui: &mut Ui, st: &mut State, v: &mut View) {
     page(ui, st, "Pockets", |ui, st| {
         small(ui, "Click a pocket to hold it in the world. Click one, then another, to swap them.");
         ui.add_space(8.0);
+        wallet(ui, st, v);
+        ui.add_space(8.0);
         let size = 72.0;
         let cols = ((ui.available_width() + 10.0) / (size + 10.0)).floor().max(1.0) as usize;
         let slots = st.bag.clone();
@@ -189,7 +191,7 @@ pub fn bag(ui: &mut Ui, st: &mut State, v: &mut View) {
                     let letter: String = kind.chars().take(1).flat_map(|c| c.to_uppercase()).collect();
                     p.text(tile.center(), Align2::CENTER_CENTER, letter, font(EXTRA, 17.0), INK);
                     p.text(r.center_bottom() - vec2(0.0, 8.0), Align2::CENTER_BOTTOM, kind, font(BOLD, 11.0), INK_DIM);
-                    p.text(r.right_top() + vec2(-8.0, 6.0), Align2::RIGHT_TOP, s.count.to_string(), font(EXTRA, 12.0), INK);
+                    p.text(r.right_top() + vec2(-8.0, 6.0), Align2::RIGHT_TOP, s.label(), font(EXTRA, 12.0), INK);
                 }
                 if resp.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -218,6 +220,46 @@ pub fn bag(ui: &mut Ui, st: &mut State, v: &mut View) {
             small(ui, "Nothing in your pockets yet: pick things up in the world.");
         }
     });
+}
+
+/// The wallet: marbles kept out of the pockets. Bags of marbles go in
+/// whole; any number comes back out into a bag of them.
+fn wallet(ui: &mut Ui, st: &mut State, v: &mut View) {
+    let bags = st.bag.iter().flatten().filter(|s| s.marbles().is_some()).count();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Wallet").font(font(BOLD, 13.0)).color(INK_DIM));
+        ui.label(
+            RichText::new(format!("{} marbles", crate::models::grouped(st.wallet)))
+                .font(font(EXTRA, 18.0))
+                .color(INK),
+        );
+        if bags > 0 && text_button(ui, &format!("Put in {bags}"), vec2(100.0, 34.0), Tone::Green).clicked() {
+            st.deposit_all();
+        }
+    });
+    if st.wallet > 0 {
+        ui.horizontal(|ui| {
+            let edit = egui::TextEdit::singleline(&mut v.withdraw_field)
+                .hint_text(RichText::new("how many").color(INK_FAINT))
+                .font(font(MEDIUM, 15.0))
+                .text_color(INK)
+                .background_color(PAPER_DEEP)
+                .margin(egui::Margin::symmetric(14, 8))
+                .desired_width(140.0);
+            ui.add(edit);
+            v.withdraw_field.retain(|c| c.is_ascii_digit());
+            let n = v.withdraw_field.parse::<i64>().ok().filter(|n| (1..=st.wallet).contains(n));
+            if text_button(ui, "Take out", vec2(100.0, 34.0), Tone::Green).clicked() {
+                match n {
+                    Some(n) => {
+                        st.withdraw(n);
+                        v.withdraw_field.clear();
+                    }
+                    None => st.notify(&format!("You have {} marbles", crate::models::grouped(st.wallet))),
+                }
+            }
+        });
+    }
 }
 
 pub fn members(ui: &mut Ui, st: &mut State, v: &mut View) {

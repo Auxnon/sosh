@@ -195,6 +195,9 @@ pub fn describe(reason: &str, body: Option<&Value>) -> String {
         "offline" => "Can't reach the server.",
         "update_required" => "This app is too old for the server: update it.",
         "bag_full" => "No room in your pockets.",
+        "not_marbles" => "That isn't a bag of marbles.",
+        "wallet_full" => "Your wallet can't hold any more marbles.",
+        "invalid_amount" => "That isn't a number of marbles.",
         "not_in_a_server" => "Only server messages can be pinned.",
         _ => "",
     };

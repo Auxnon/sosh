@@ -100,6 +100,8 @@ pub struct State {
     pub friends: Friends,
     pub conversations: Vec<Conversation>,
     pub bag: Vec<Option<Slot>>,
+    /// Marbles kept out of the bag (`Sosh.Players`): just a number.
+    pub wallet: i64,
     pub held: Option<String>,
 
     pub place: Option<Place>,
@@ -147,6 +149,7 @@ impl State {
             friends: Friends::default(),
             conversations: Vec::new(),
             bag: Vec::new(),
+            wallet: 0,
             held: None,
             place: None,
             chat_topic: None,
@@ -516,6 +519,7 @@ impl State {
             "servers" => self.refresh_servers(),
             "friends" => self.refresh_friends(),
             "bag" => self.bag = bag(p.get("bag")),
+            "wallet" => self.wallet = p.get("wallet").and_then(Value::as_i64).unwrap_or(self.wallet),
             "hold" => self.held = p.get("item").and_then(Value::as_str).map(str::to_owned),
             "dm" => self.refresh_conversations(),
             "gift" => {
@@ -581,6 +585,9 @@ impl State {
         }
         if all.get("bag").is_some() {
             self.bag = bag(all.get("bag"));
+        }
+        if let Some(w) = all.get("wallet").and_then(Value::as_i64) {
+            self.wallet = w;
         }
         if self.place.is_none() {
             if let Some(id) = self.servers.iter().find(|s| s.is_member()).map(|s| s.id) {
@@ -1002,6 +1009,41 @@ impl State {
                     st.bag = bag(r.get("bag"));
                 } else {
                     st.bag = before;
+                    st.notify(&describe(r.get("reason").and_then(Value::as_str).unwrap_or(""), None));
+                }
+            })),
+        );
+    }
+
+    /// Empty the bag of marbles in `slot` into the wallet.
+    pub fn deposit(&mut self, slot: usize) {
+        self.wallet_action(json!({"deposit": slot}));
+    }
+
+    /// Every bag of marbles in the pockets, into the wallet.
+    pub fn deposit_all(&mut self) {
+        let slots: Vec<usize> = (0..self.bag.len())
+            .filter(|&i| self.bag[i].as_ref().and_then(Slot::marbles).is_some())
+            .collect();
+        for i in slots {
+            self.deposit(i);
+        }
+    }
+
+    /// Take `n` marbles out of the wallet into the pockets.
+    pub fn withdraw(&mut self, n: i64) {
+        self.wallet_action(json!({"withdraw": n}));
+    }
+
+    fn wallet_action(&mut self, p: Value) {
+        self.push_user(
+            "wallet",
+            p,
+            Some(Box::new(|st, status, r| {
+                if status == "ok" {
+                    st.bag = bag(r.get("bag"));
+                    st.wallet = r.get("wallet").and_then(Value::as_i64).unwrap_or(st.wallet);
+                } else {
                     st.notify(&describe(r.get("reason").and_then(Value::as_str).unwrap_or(""), None));
                 }
             })),

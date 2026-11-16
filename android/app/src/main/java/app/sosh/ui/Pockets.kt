@@ -172,7 +172,7 @@ private fun Pocket(i: Int, slot: Slot?, size: Dp, drag: PocketDrag, picked: Bool
         }
         if (slot != null && drag.from != i) {
             Text(
-                "${slot.count}", color = Paper, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
+                slot.label, color = Paper, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold,
                 modifier = Modifier.align(Alignment.BottomEnd).offset(3.dp, 3.dp)
                     .background(Ink, RoundedCornerShape(10.dp)).padding(horizontal = 5.dp),
             )
@@ -264,7 +264,7 @@ fun DragGhost(bag: List<Slot?>, drag: PocketDrag, origin: Offset) {
     ) {
         ItemIcon(slot.item, 34.dp)
         Text(
-            "${slot.count}", color = Paper, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold,
+            slot.label, color = Paper, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold,
             modifier = Modifier.align(Alignment.BottomEnd).background(Ink, RoundedCornerShape(10.dp)).padding(horizontal = 6.dp),
         )
     }

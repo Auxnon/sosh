@@ -76,6 +76,9 @@ class Api(private val base: String, var token: String? = null, private val onUpd
         private val messages = mapOf(
             "update_required" to "This app is too old for the server: update it.",
             "bag_full" to "No room in your pockets.",
+            "not_marbles" to "That isn't a bag of marbles.",
+            "wallet_full" to "Your wallet can't hold any more marbles.",
+            "invalid_amount" to "That isn't a number of marbles.",
             "not_in_a_server" to "Only server messages can be pinned.",
             "bad_login" to "Wrong email or password.",
             "unconfirmed" to "Confirm your email first: we sent a new code.",

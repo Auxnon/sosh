@@ -32,6 +32,8 @@ pub struct View {
     pub invite_field: String,
     /// The pocket picked up to swap.
     pub picked: Option<usize>,
+    /// How many marbles to take out of the wallet.
+    pub withdraw_field: String,
     pub last_gen: u64,
     /// Our message being edited in place, and its text so far.
     pub editing: Option<(i64, String)>,

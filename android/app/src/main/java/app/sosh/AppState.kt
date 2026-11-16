@@ -72,6 +72,9 @@ class AppState(context: Context, private val scope: CoroutineScope) {
     val conversations = mutableStateListOf<Conversation>()
     var bag by mutableStateOf<List<Slot?>>(emptyList())
         private set
+    /** Marbles kept out of the bag (`Sosh.Players`): just a number. */
+    var wallet by mutableStateOf(0L)
+        private set
     /** The item in hand in the world: chosen here or in the game (`hold`). */
     var held by mutableStateOf<String?>(null)
         private set
@@ -257,6 +260,7 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         u.on("servers") { refreshServers() }
         u.on("friends") { refreshFriends() }
         u.on("bag") { bag = bag(it.optJSONArray("bag")) }
+        u.on("wallet") { wallet = it.optLong("wallet") }
         u.on("hold") { held = if (it.isNull("item")) null else it.optString("item") }
         u.on("character") { c -> me = me?.copy(character = c.optJSONObject("character") ?: JSONObject()) }
         u.on("dm") { refreshConversations() }
@@ -281,6 +285,7 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         all.optJSONObject("friends")?.let { friends = Friends.from(it) }
         all.optJSONArray("conversations")?.let { setConversations(it) }
         all.optJSONArray("bag")?.let { bag = bag(it) }
+        if (all.has("wallet")) wallet = all.optLong("wallet")
         all.optJSONObject("catalog")?.let { catalog = Catalog.from(it) }
         if (place == null) servers.firstOrNull { it.isMember }?.let { open(Place.InServer(it.id)) }
     }
@@ -597,6 +602,27 @@ class AppState(context: Context, private val scope: CoroutineScope) {
                 bag = bag(r.optJSONArray("bag"))
             } else {
                 bag = before
+                notice = Api.describe(r.optString("reason"))
+            }
+        }
+    }
+
+    /** Empty the bag of marbles in `slot` into the wallet. */
+    fun deposit(slot: Int) = walletAction(JSONObject().put("deposit", slot))
+
+    /** Every bag of marbles in the pockets, into the wallet. */
+    fun depositAll() = bag.forEachIndexed { i, s -> if (s?.marbles != null) deposit(i) }
+
+    /** Take `n` marbles out of the wallet into the pockets. */
+    fun withdraw(n: Long) = walletAction(JSONObject().put("withdraw", n))
+
+    private fun walletAction(p: JSONObject) {
+        val u = user ?: return
+        u.push("wallet", p) { status, r ->
+            if (status == "ok") {
+                bag = bag(r.optJSONArray("bag"))
+                wallet = r.optLong("wallet")
+            } else {
                 notice = Api.describe(r.optString("reason"))
             }
         }

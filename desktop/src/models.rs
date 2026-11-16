@@ -276,6 +276,48 @@ pub struct Slot {
     pub count: i64,
 }
 
+impl Slot {
+    /// How many marbles, for a bag of them (`marbles:<n>`).
+    pub fn marbles(&self) -> Option<i64> {
+        self.item.strip_prefix("marbles:")?.parse().ok()
+    }
+
+    /// The number on its pocket: a bag of marbles says how many are in it.
+    pub fn label(&self) -> String {
+        match self.marbles() {
+            Some(n) => short_count(n),
+            None => self.count.to_string(),
+        }
+    }
+}
+
+/// A count short enough for a pocket: 12345 is 12k.
+pub fn short_count(n: i64) -> String {
+    if n >= 1_000_000 {
+        format!("{}m", n / 1_000_000)
+    } else if n >= 10_000 {
+        format!("{}k", n / 1000)
+    } else {
+        n.to_string()
+    }
+}
+
+/// 1234567 as 1,234,567.
+pub fn grouped(n: i64) -> String {
+    let s = n.abs().to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if n < 0 {
+        out.insert(0, '-');
+    }
+    out
+}
+
 pub fn bag(v: Option<&Value>) -> Vec<Option<Slot>> {
     v.and_then(Value::as_array)
         .map(|a| {
