@@ -30,10 +30,13 @@ pub struct View {
     pub big_picture: Option<crate::models::Media>,
     pub friend_field: String,
     pub invite_field: String,
-    /// The pocket picked up to swap.
-    pub picked: Option<usize>,
-    /// How many marbles to take out of the wallet.
+    /// The pocket being dragged.
+    pub dragging: Option<usize>,
+    /// A pocket being split, and how many off.
+    pub split: Option<(usize, i64)>,
+    /// How many marbles to take out of the wallet, when it's not 100 or 1000.
     pub withdraw_field: String,
+    pub withdraw_custom: bool,
     pub last_gen: u64,
     /// Our message being edited in place, and its text so far.
     pub editing: Option<(i64, String)>,

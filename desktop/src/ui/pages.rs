@@ -150,31 +150,47 @@ pub fn friends(ui: &mut Ui, st: &mut State, v: &mut View) {
     });
 }
 
-/// The pockets: click one to put it in hand in the world; click two in
-/// turn to swap them.
+/// What a pocket's menu asks for.
+enum PocketAct {
+    Collect,
+    Hold,
+    Split,
+    Drop,
+}
+
+/// The pockets: click one to put it in hand in the world; drag one onto
+/// another to sort them (like stacks pour together, others swap);
+/// right-click one for more: collect (marbles, into the wallet), hold,
+/// split, drop (the whole stack, at your feet in the world).
 pub fn bag(ui: &mut Ui, st: &mut State, v: &mut View) {
     page(ui, st, "Pockets", |ui, st| {
-        small(ui, "Click a pocket to hold it in the world. Click one, then another, to swap them.");
+        small(ui, "Click a pocket to hold it in the world. Drag to sort them, right-click one for more.");
         ui.add_space(8.0);
         wallet(ui, st, v);
         ui.add_space(8.0);
         let size = 72.0;
         let cols = ((ui.available_width() + 10.0) / (size + 10.0)).floor().max(1.0) as usize;
         let slots = st.bag.clone();
+        let pointer = ui.ctx().input(|i| i.pointer.interact_pos());
+        let mut rects: Vec<Rect> = Vec::with_capacity(slots.len());
         let mut clicked: Option<usize> = None;
+        let mut dropped: Option<usize> = None;
+        let mut act: Option<(usize, PocketAct)> = None;
         egui::Grid::new("pockets").spacing(vec2(10.0, 10.0)).show(ui, |ui| {
             for (i, slot) in slots.iter().enumerate() {
-                let (r, resp) = ui.allocate_exact_size(vec2(size, size), Sense::click());
+                let (r, resp) = ui.allocate_exact_size(vec2(size, size), Sense::click_and_drag());
+                rects.push(r);
                 let p = ui.painter();
-                let picked = v.picked == Some(i);
+                let dragging = v.dragging == Some(i);
+                let over = v.dragging.is_some() && !dragging && pointer.is_some_and(|at| r.contains(at));
                 let held = slot.as_ref().map(|s| Some(&s.item) == st.held.as_ref()).unwrap_or(false);
                 p.rect(
                     r,
                     CornerRadius::same(16),
                     PAPER_DEEP,
                     Stroke::new(
-                        if picked || held { 3.0 } else { 2.0 },
-                        if picked {
+                        if over || held { 3.0 } else { 2.0 },
+                        if over {
                             ACCENT
                         } else if held {
                             GOOD
@@ -185,16 +201,44 @@ pub fn bag(ui: &mut Ui, st: &mut State, v: &mut View) {
                     egui::StrokeKind::Inside,
                 );
                 if let Some(s) = slot {
-                    let tile = Rect::from_center_size(r.center() - vec2(0.0, 6.0), vec2(34.0, 34.0));
-                    let kind = crate::models::item_kind(&s.item);
-                    p.rect_filled(tile, CornerRadius::same(8), handle_color(kind));
-                    let letter: String = kind.chars().take(1).flat_map(|c| c.to_uppercase()).collect();
-                    p.text(tile.center(), Align2::CENTER_CENTER, letter, font(EXTRA, 17.0), INK);
-                    p.text(r.center_bottom() - vec2(0.0, 8.0), Align2::CENTER_BOTTOM, kind, font(BOLD, 11.0), INK_DIM);
-                    p.text(r.right_top() + vec2(-8.0, 6.0), Align2::RIGHT_TOP, s.label(), font(EXTRA, 12.0), INK);
-                }
-                if resp.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    if !dragging {
+                        paint_stack(p, r, s);
+                    }
+                    if resp.hovered() && v.dragging.is_none() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                    }
+                    if resp.drag_started() {
+                        v.dragging = Some(i);
+                    }
+                    if resp.drag_stopped() {
+                        dropped = Some(i);
+                    }
+                    resp.context_menu(|ui| {
+                        let have = s.marbles().unwrap_or(s.count);
+                        ui.label(RichText::new(match s.marbles() {
+                            Some(n) => format!("{} marbles", crate::models::grouped(n)),
+                            None => format!("{} ×{}", s.item, s.count),
+                        }).font(font(BOLD, 13.0)).color(INK_DIM));
+                        let mut pick = |what| {
+                            act = Some((i, what));
+                        };
+                        if s.marbles().is_some() && ui.button("Collect").clicked() {
+                            pick(PocketAct::Collect);
+                            ui.close();
+                        }
+                        if ui.button("Hold").clicked() {
+                            pick(PocketAct::Hold);
+                            ui.close();
+                        }
+                        if have > 1 && ui.button("Split…").clicked() {
+                            pick(PocketAct::Split);
+                            ui.close();
+                        }
+                        if ui.button("Drop").on_hover_text("The whole stack, at your feet in the world").clicked() {
+                            pick(PocketAct::Drop);
+                            ui.close();
+                        }
+                    });
                 }
                 if resp.clicked() {
                     clicked = Some(i);
@@ -204,26 +248,121 @@ pub fn bag(ui: &mut Ui, st: &mut State, v: &mut View) {
                 }
             }
         });
+        // what's being dragged, under the pointer, over everything
+        if let (Some(i), Some(at)) = (v.dragging, pointer) {
+            if let Some(Some(s)) = slots.get(i) {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                let layer = egui::LayerId::new(egui::Order::Tooltip, ui.scope_id().with("pocket-ghost"));
+                let p = ui.ctx().layer_painter(layer);
+                let r = Rect::from_center_size(at, vec2(size, size));
+                p.rect_filled(r.translate(vec2(0.0, 6.0)), CornerRadius::same(16), Color32::from_black_alpha(70));
+                p.rect(r, CornerRadius::same(16), PAPER, Stroke::new(3.0, ACCENT), egui::StrokeKind::Inside);
+                paint_stack(&p, r, s);
+            }
+        }
+        if let Some(from) = dropped {
+            v.dragging = None;
+            let to = pointer.and_then(|at| rects.iter().position(|r| r.contains(at)));
+            if let Some(to) = to.filter(|&to| to != from) {
+                st.bag_move(from, to);
+            }
+        }
         if let Some(i) = clicked {
-            match v.picked.take() {
-                Some(j) if j != i => st.bag_swap(j, i),
-                Some(_) => {}
-                None => {
-                    if let Some(Some(s)) = slots.get(i) {
-                        st.hold(&s.item.clone());
-                    }
-                    v.picked = Some(i);
+            if let Some(Some(s)) = slots.get(i) {
+                st.hold(&s.item.clone());
+            }
+        }
+        match act {
+            Some((i, PocketAct::Collect)) => st.deposit(i),
+            Some((i, PocketAct::Hold)) => {
+                if let Some(Some(s)) = slots.get(i) {
+                    st.hold(&s.item.clone());
                 }
             }
+            Some((i, PocketAct::Split)) => {
+                if let Some(Some(s)) = slots.get(i) {
+                    let have = s.marbles().unwrap_or(s.count);
+                    v.split = Some((i, (have / 2).max(1)));
+                }
+            }
+            Some((i, PocketAct::Drop)) => st.bag_drop(i),
+            None => {}
         }
         if slots.is_empty() {
             small(ui, "Nothing in your pockets yet: pick things up in the world.");
         }
+        split_dialog(ui.ctx(), st, v, &slots);
     });
 }
 
+/// A stack's tile, name and count in its pocket `r`.
+fn paint_stack(p: &egui::Painter, r: Rect, s: &crate::models::Slot) {
+    let tile = Rect::from_center_size(r.center() - vec2(0.0, 6.0), vec2(34.0, 34.0));
+    let kind = crate::models::item_kind(&s.item);
+    p.rect_filled(tile, CornerRadius::same(8), handle_color(kind));
+    let letter: String = kind.chars().take(1).flat_map(|c| c.to_uppercase()).collect();
+    p.text(tile.center(), Align2::CENTER_CENTER, letter, font(EXTRA, 17.0), INK);
+    p.text(r.center_bottom() - vec2(0.0, 8.0), Align2::CENTER_BOTTOM, kind, font(BOLD, 11.0), INK_DIM);
+    p.text(r.right_top() + vec2(-8.0, 6.0), Align2::RIGHT_TOP, s.label(), font(EXTRA, 12.0), INK);
+}
+
+/// How many to take off a stack (or a bag of marbles) into a pocket of their own.
+fn split_dialog(ctx: &egui::Context, st: &mut State, v: &mut View, slots: &[Option<crate::models::Slot>]) {
+    let Some((i, n)) = v.split.as_mut() else {
+        return;
+    };
+    let Some(Some(s)) = slots.get(*i) else {
+        v.split = None;
+        return;
+    };
+    let have = s.marbles().unwrap_or(s.count);
+    let mut done = false;
+    let mut go = false;
+    let modal = egui::Modal::new(egui::Id::unique("split"))
+        .frame(egui::Frame::new().fill(PAPER).corner_radius(CornerRadius::same(24)).inner_margin(egui::Margin::same(20)));
+    let resp = modal.show(ctx, |ui| {
+        ui.set_width(320.0);
+        let title = if s.marbles().is_some() { "Split the bag of marbles".to_owned() } else { format!("Split {}", s.item) };
+        ui.label(RichText::new(title).font(font(EXTRA, 20.0)).color(INK));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("how many off (of {})", crate::models::grouped(have))).font(font(BOLD, 14.0)).color(INK));
+            ui.add(egui::DragValue::new(n).range(1..=(have - 1).max(1)));
+        });
+        ui.horizontal(|ui| {
+            if link(ui, "One").clicked() {
+                *n = 1;
+            }
+            if link(ui, "Half").clicked() {
+                *n = (have / 2).max(1);
+            }
+            if link(ui, "All but one").clicked() {
+                *n = (have - 1).max(1);
+            }
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if link(ui, "Cancel").clicked() {
+                done = true;
+            }
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                if text_button(ui, "Split", vec2(100.0, 40.0), Tone::Orange).clicked() {
+                    go = true;
+                }
+            });
+        });
+    });
+    if go && (1..have).contains(n) {
+        st.bag_split(*i, *n);
+        done = true;
+    }
+    if done || resp.should_close() {
+        v.split = None;
+    }
+}
+
 /// The wallet: marbles kept out of the pockets. Bags of marbles go in
-/// whole; any number comes back out into a bag of them.
+/// whole (each pocket's menu collects one; this, all of them); they come
+/// back out a hundred, a thousand or however many at a time.
 fn wallet(ui: &mut Ui, st: &mut State, v: &mut View) {
     let bags = st.bag.iter().flatten().filter(|s| s.marbles().is_some()).count();
     ui.horizontal(|ui| {
@@ -233,11 +372,30 @@ fn wallet(ui: &mut Ui, st: &mut State, v: &mut View) {
                 .font(font(EXTRA, 18.0))
                 .color(INK),
         );
-        if bags > 0 && text_button(ui, &format!("Put in {bags}"), vec2(100.0, 34.0), Tone::Green).clicked() {
+        if bags > 0 && text_button(ui, &format!("Collect {bags}"), vec2(110.0, 34.0), Tone::Green).clicked() {
             st.deposit_all();
         }
     });
-    if st.wallet > 0 {
+    if st.wallet <= 0 {
+        return;
+    }
+    ui.horizontal(|ui| {
+        label(ui, "take out", INK_FAINT);
+        for n in [100, 1000] {
+            if text_button(ui, &crate::models::grouped(n), vec2(80.0, 34.0), Tone::Green).clicked() {
+                if st.wallet >= n {
+                    st.withdraw(n);
+                } else {
+                    st.notify(&format!("You have {} marbles", crate::models::grouped(st.wallet)));
+                }
+            }
+        }
+        let tone = if v.withdraw_custom { Tone::Orange } else { Tone::Plastic };
+        if text_button(ui, "Custom", vec2(90.0, 34.0), tone).clicked() {
+            v.withdraw_custom = !v.withdraw_custom;
+        }
+    });
+    if v.withdraw_custom {
         ui.horizontal(|ui| {
             let edit = egui::TextEdit::singleline(&mut v.withdraw_field)
                 .hint_text(RichText::new("how many").color(INK_FAINT))
@@ -254,6 +412,7 @@ fn wallet(ui: &mut Ui, st: &mut State, v: &mut View) {
                     Some(n) => {
                         st.withdraw(n);
                         v.withdraw_field.clear();
+                        v.withdraw_custom = false;
                     }
                     None => st.notify(&format!("You have {} marbles", crate::models::grouped(st.wallet))),
                 }

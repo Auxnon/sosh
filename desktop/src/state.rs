@@ -998,16 +998,41 @@ impl State {
 
     // -- you
 
-    /// Swap two bag slots: here straight away, then for real; put back if refused.
-    pub fn bag_swap(&mut self, a: usize, b: usize) {
+    /// Move bag slot `a` to `b`: onto a stack of the same thing as far as
+    /// it goes (bags of marbles pour together), else they swap. A swap
+    /// shows straight away; the server has the last word, and it's put back
+    /// if it says no.
+    pub fn bag_move(&mut self, a: usize, b: usize) {
         if a == b || a >= self.bag.len() || b >= self.bag.len() {
             return;
         }
         let before = self.bag.clone();
-        self.bag.swap(a, b);
+        let pours = match (&before[a], &before[b]) {
+            (Some(x), Some(y)) => x.item == y.item || (x.marbles().is_some() && y.marbles().is_some()),
+            _ => false,
+        };
+        if !pours {
+            self.bag.swap(a, b);
+        }
+        self.bag_op(json!({"move": [a, b]}), before);
+    }
+
+    /// Take `n` off the stack in `slot` into an empty pocket (a bag of marbles splits in two).
+    pub fn bag_split(&mut self, slot: usize, n: i64) {
+        let before = self.bag.clone();
+        self.bag_op(json!({"split": [slot, n]}), before);
+    }
+
+    /// Set the whole stack in `slot` down in the world, at our feet (we have to be in it).
+    pub fn bag_drop(&mut self, slot: usize) {
+        let before = self.bag.clone();
+        self.bag_op(json!({"drop": slot}), before);
+    }
+
+    fn bag_op(&mut self, p: Value, before: Vec<Option<Slot>>) {
         self.push_user(
-            "bag_swap",
-            json!({"a": a, "b": b}),
+            "bag",
+            p,
             Some(Box::new(move |st, status, r| {
                 if status == "ok" {
                     st.bag = bag(r.get("bag"));
