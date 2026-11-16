@@ -128,8 +128,9 @@ fun ChatScreen(app: AppState, go: (Screen) -> Unit) {
     val drag = remember { PocketDrag() }
     drag.onDrop = { from, to ->
         when (to) {
-            is PocketDrag.Target.Pocket -> app.bagSwap(from, to.i)
+            is PocketDrag.Target.Pocket -> app.bagMove(from, to.i)
             PocketDrag.Target.Chat -> app.bag.getOrNull(from)?.let { gift = it.item; giftOpen = true }
+            PocketDrag.Target.World -> app.bagDrop(from)
         }
     }
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -266,7 +267,7 @@ private fun ServerView(app: AppState, serverId: Long, drag: PocketDrag, modifier
         // would be made again, and the game would load and sign in again.
         Layout(
             content = {
-                Box(if (shown) Modifier.clip(frame).border(3.dp, Edge, frame) else Modifier) {
+                Box((if (shown) Modifier.clip(frame).border(3.dp, Edge, frame) else Modifier).then(if (shown) Modifier.worldTarget(drag) else Modifier)) {
                     if (started) {
                         key(serverId) { WorldPane(app, serverId, app.pane != Pane.Chat, Modifier.fillMaxSize()) }
                         if (shown) {
@@ -274,7 +275,7 @@ private fun ServerView(app: AppState, serverId: Long, drag: PocketDrag, modifier
                                 Overlay(app, Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 10.dp, end = 76.dp))
                             }
                             BackpackButton(app.bag.count { it != null }, { pockets = true }, Modifier.align(Alignment.BottomEnd).padding(10.dp))
-                            PocketsPanel(app.bag, drag, app.held, app::hold, pockets, { pockets = false }, Modifier.align(Alignment.BottomCenter))
+                            PocketsPanel(app, drag, app.held, app::hold, pockets, { pockets = false }, Modifier.align(Alignment.BottomCenter))
                         }
                     }
                 }

@@ -591,15 +591,30 @@ class AppState(context: Context, private val scope: CoroutineScope) {
     // -- you
 
     /**
-     * Swap two bag slots (sorting it): straight away here, then for real on
-     * the server, which tells the game too; put back if it says no.
+     * Move bag slot `a` to `b` (sorting it): onto a stack of the same thing
+     * as far as it goes (bags of marbles pour together), else they swap.
+     * A swap shows straight away; the server's answer, which tells the
+     * game too, has the last word, and it's put back if it says no.
      */
-    fun bagSwap(a: Int, b: Int) {
+    fun bagMove(a: Int, b: Int) {
         val before = bag
         if (a == b || a !in before.indices || b !in before.indices) return
-        bag = before.toMutableList().also { it[a] = before[b]; it[b] = before[a] }
+        val x = before[a]
+        val y = before[b]
+        val pours = x != null && y != null && (x.item == y.item || (x.marbles != null && y.marbles != null))
+        if (!pours) bag = before.toMutableList().also { it[a] = y; it[b] = x }
+        bagOp(JSONObject().put("move", JSONArray().put(a).put(b)), before)
+    }
+
+    /** Take `n` off the stack in `slot` into an empty pocket (a bag of marbles splits in two). */
+    fun bagSplit(slot: Int, n: Int) = bagOp(JSONObject().put("split", JSONArray().put(slot).put(n)), bag)
+
+    /** Set the whole stack in `slot` down in the world, at our feet (we have to be in it). */
+    fun bagDrop(slot: Int) = bagOp(JSONObject().put("drop", slot), bag)
+
+    private fun bagOp(p: JSONObject, before: List<Slot?>) {
         val u = user ?: return
-        u.push("bag_swap", JSONObject().put("a", a).put("b", b)) { status, r ->
+        u.push("bag", p) { status, r ->
             if (status == "ok") {
                 bag = bag(r.optJSONArray("bag"))
             } else {

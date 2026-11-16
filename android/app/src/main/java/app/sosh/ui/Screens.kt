@@ -170,17 +170,19 @@ fun BagScreen(app: AppState, back: () -> Unit) = Page("Pockets", back) {
     var picked by remember { mutableStateOf<String?>(null) }
     var toFriend by remember { mutableStateOf<String?>(null) }
     Text(
-        "Drag to sort your pockets. Tap something to send it to someone: they open it from the chat.",
+        "Drag to sort your pockets, hold one for more. Tap something to send it to someone: they open it from the chat.",
         color = TextDim, fontSize = 13.sp, modifier = Modifier.padding(12.dp),
     )
-    WalletCard(app)
+    WalletRow(app, Modifier.padding(horizontal = 12.dp).paper().padding(12.dp))
     val drag = remember { PocketDrag() }
-    drag.onDrop = { from, to -> if (to is PocketDrag.Target.Pocket) app.bagSwap(from, to.i) }
+    drag.onDrop = { from, to -> if (to is PocketDrag.Target.Pocket) app.bagMove(from, to.i) }
     var origin by remember { mutableStateOf(Offset.Zero) }
     Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned { origin = it.positionInRoot() }) {
         Box(Modifier.padding(4.dp).fillMaxWidth().paper().padding(12.dp)) {
             Box(Modifier.background(PaperDeep, RoundedCornerShape(18.dp)).padding(horizontal = 6.dp, vertical = 12.dp)) {
-                PocketGrid(app.bag, drag, app.held, { i -> app.bag.getOrNull(i)?.let { picked = it.item } })
+                PocketGrid(app, drag, app.held, { i -> app.bag.getOrNull(i)?.let { picked = it.item } }) { i ->
+                    listOf(PocketAction("Send") { app.bag.getOrNull(i)?.let { picked = it.item } })
+                }
             }
         }
         DragGhost(app.bag, drag, origin)
@@ -226,49 +228,6 @@ fun BagScreen(app: AppState, back: () -> Unit) = Page("Pockets", back) {
         }
     }
     giftHere?.let { item -> GiftSheet(app, item) { giftHere = null; back() } }
-}
-
-/**
- * The wallet: marbles kept out of the pockets. Bags of marbles go in whole;
- * any number comes back out into a bag of them.
- */
-@Composable
-private fun WalletCard(app: AppState) {
-    var taking by remember { mutableStateOf(false) }
-    val bags = app.bag.count { it?.marbles != null }
-    Row(
-        Modifier.padding(horizontal = 12.dp).fillMaxWidth().paper().padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text("Wallet", color = TextDim, fontSize = 12.sp)
-            Text("%,d marbles".format(app.wallet), fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        }
-        if (bags > 0) TextButton({ app.depositAll() }) { Text("Put in $bags") }
-        if (app.wallet > 0) TextButton({ taking = true }) { Text("Take out") }
-    }
-    if (taking) {
-        var text by remember { mutableStateOf("100") }
-        val n = text.toLongOrNull()
-        AlertDialog(
-            onDismissRequest = { taking = false },
-            title = { Text("Take marbles out") },
-            text = {
-                OutlinedTextField(
-                    text, { text = it.filter(Char::isDigit).take(9) },
-                    label = { Text("How many (you have %,d)".format(app.wallet)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                )
-            },
-            confirmButton = {
-                TextButton({ app.withdraw(n!!); taking = false }, enabled = n != null && n in 1..app.wallet) {
-                    Text("Take out")
-                }
-            },
-            dismissButton = { TextButton({ taking = false }) { Text("Cancel") } },
-        )
-    }
 }
 
 // which item the bag is sending into the open chat (GiftSheet takes over)
