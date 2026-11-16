@@ -66,7 +66,7 @@ end
 -- Forget every block, for another universe: clear each tile we placed.
 -- (Not dtile(): on the web it waits on a reply the worker never gets, and
 -- hangs the VM.)
-function Blocks.clear()
+function Blocks.reset()
 	if Blocks.models ~= nil then
 		for k, ent in pairs(Blocks.models) do
 			ent:kill()

@@ -238,7 +238,7 @@ function enter_universe(u)
 end
 
 function clear_world()
-	Blocks.clear()
+	Blocks.reset()
 	Farm.init()
 	Herd.init()
 	Carry.init()
