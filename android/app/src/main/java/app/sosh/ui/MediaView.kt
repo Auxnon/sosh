@@ -1,6 +1,7 @@
 package app.sosh.ui
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.net.Uri
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
@@ -46,17 +47,76 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.sosh.AppState
+import app.sosh.data.Embed
 import app.sosh.data.Media
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import java.io.ByteArrayInputStream
+
+/** The colour a link's app is known by. */
+private fun providerColor(p: String) = when (p) {
+    "x" -> Color(0xFF1A1A1A)
+    "instagram" -> Color(0xFFD6297A)
+    "threads" -> Color(0xFF3A3A3A)
+    "bluesky" -> Color(0xFF1185FE)
+    "mastodon" -> Color(0xFF6364FF)
+    "youtube" -> Color(0xFFE62117)
+    "tiktok" -> Color(0xFF111111)
+    "reddit" -> Color(0xFFFF4500)
+    "spotify" -> Color(0xFF1DB954)
+    "vimeo" -> Color(0xFF1AB7EA)
+    "soundcloud" -> Color(0xFFFF5500)
+    else -> Color(0xFF777777)
+}
+
+/**
+ * A link's preview: the app's colour down its side, who and what, and the
+ * picture if there is one (kept by our server, so the app is never asked
+ * for it). Tap to open the link.
+ */
+@Composable
+fun EmbedCard(app: AppState, e: Embed) {
+    val context = LocalContext.current
+    val shape = RoundedCornerShape(16.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(PaperDeep).border(2.dp, PaperEdge, shape)
+            .clickable(onClickLabel = "open ${e.app}") {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(e.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            },
+    ) {
+        Box(Modifier.width(6.dp).heightIn(min = 64.dp).background(providerColor(e.provider)))
+        Column(Modifier.weight(1f).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                e.app + (e.author?.let { " · $it" } ?: ""),
+                color = providerColor(e.provider), fontWeight = FontWeight.ExtraBold, fontSize = 13.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            e.title?.let { Text(it, color = Ink, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            e.text?.let { Text(it, color = InkDim, fontSize = 13.sp, maxLines = 4, overflow = TextOverflow.Ellipsis) }
+            if (e.title == null && e.text == null) {
+                Text(e.url, color = InkLink, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            e.thumb?.let { t ->
+                val ratio = (t.w.toFloat() / t.h.coerceAtLeast(1)).coerceIn(0.5f, 2.5f)
+                AsyncImage(
+                    ImageRequest.Builder(context).data(app.resolve(t.url)).crossfade(true).build(),
+                    e.title ?: e.app,
+                    Modifier.padding(top = 4.dp).widthIn(max = 300.dp).heightIn(max = 240.dp)
+                        .aspectRatio(ratio, matchHeightConstraintsFirst = ratio < 1f).clip(RoundedCornerShape(12.dp)),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+        }
+    }
+}
 
 /** A picture or a cart in a message. */
 @Composable

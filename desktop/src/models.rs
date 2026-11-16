@@ -198,6 +198,59 @@ pub struct Message {
     pub reactions: Vec<Reaction>,
     /// How many signs were made of it (pinned).
     pub pins: i64,
+    /// Previews of the links in it (`Sosh.Embeds`), filled in after it's sent.
+    pub embeds: Vec<Embed>,
+}
+
+/// A link's preview: a post or video on another app. Only `url` and
+/// `provider` are sure; `thumb` is a picture kept by the server.
+#[derive(Clone, Debug)]
+pub struct Embed {
+    pub url: String,
+    pub provider: String,
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub text: Option<String>,
+    pub thumb: Option<Media>,
+}
+
+impl Embed {
+    pub fn list(v: Option<&Value>) -> Vec<Embed> {
+        v.and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| {
+                        Some(Embed {
+                            url: opt_s(e, "url")?,
+                            provider: s(e, "provider"),
+                            title: opt_s(e, "title"),
+                            author: opt_s(e, "author"),
+                            text: opt_s(e, "text"),
+                            thumb: Media::from(e.get("thumb")),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The app it's from, as people call it.
+    pub fn app(&self) -> &str {
+        match self.provider.as_str() {
+            "x" => "X",
+            "instagram" => "Instagram",
+            "threads" => "Threads",
+            "bluesky" => "Bluesky",
+            "mastodon" => "Mastodon",
+            "youtube" => "YouTube",
+            "tiktok" => "TikTok",
+            "reddit" => "Reddit",
+            "spotify" => "Spotify",
+            "vimeo" => "Vimeo",
+            "soundcloud" => "SoundCloud",
+            p => p,
+        }
+    }
 }
 
 /// What messages can be reacted with (`Sosh.Chat.reactions/0`).
@@ -245,6 +298,7 @@ impl Message {
             edited_at: opt_s(v, "edited_at"),
             reactions: Reaction::list(v.get("reactions")),
             pins: i(v, "pins"),
+            embeds: Embed::list(v.get("embeds")),
         }
     }
 

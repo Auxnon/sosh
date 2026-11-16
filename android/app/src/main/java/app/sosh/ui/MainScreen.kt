@@ -639,6 +639,7 @@ private fun Bubble(app: AppState, m: Message, onMenu: () -> Unit) {
         ) {
             if (m.body.isNotEmpty()) Text(mentions(m.body, app.me?.handle), color = Ink, fontSize = 15.sp, lineHeight = 21.sp)
             m.media?.let { MediaCard(app, it) }
+            m.embeds.forEach { EmbedCard(app, it) }
             if (m.gift != null) PresentCard(app, m)
             if (m.reactions.isNotEmpty() || m.pins > 0) Reactions(app, m)
         }

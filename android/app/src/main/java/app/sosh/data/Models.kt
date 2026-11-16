@@ -117,6 +117,8 @@ data class Message(
     val reactions: List<Reaction> = emptyList(),
     /** How many signs were made of it (pinned). */
     val pins: Int = 0,
+    /** Previews of the links in it (`Sosh.Embeds`), filled in after it's sent. */
+    val embeds: List<Embed> = emptyList(),
 ) {
     companion object {
         /** What messages can be reacted with (`Sosh.Chat.reactions/0`). */
@@ -127,6 +129,7 @@ data class Message(
             o.optString("at"), Gift.from(o.optJSONObject("gift")), Media.from(o.optJSONObject("media")),
             o.optString("edited_at").takeIf { !o.isNull("edited_at") && it.isNotEmpty() },
             Reaction.list(o.optJSONArray("reactions")), o.optInt("pins"),
+            Embed.list(o.optJSONArray("embeds")),
         )
     }
 }
@@ -164,6 +167,46 @@ data class Media(
                 o.optBoolean("animated"), o.optInt("w", 1), o.optInt("h", 1), o.optLong("size"),
                 o.optString("name").takeIf { o.has("name") && !o.isNull("name") && it.isNotEmpty() },
             )
+        }
+    }
+}
+
+/**
+ * A link's preview (`Sosh.Embeds`): a post or video on another app. Only
+ * `url` and `provider` are sure; `thumb` is a picture kept by the server.
+ */
+data class Embed(
+    val url: String,
+    val provider: String,
+    val title: String?,
+    val author: String?,
+    val text: String?,
+    val thumb: Media?,
+) {
+    /** The app it's from, as people call it. */
+    val app: String
+        get() = when (provider) {
+            "x" -> "X"
+            "instagram" -> "Instagram"
+            "threads" -> "Threads"
+            "bluesky" -> "Bluesky"
+            "mastodon" -> "Mastodon"
+            "youtube" -> "YouTube"
+            "tiktok" -> "TikTok"
+            "reddit" -> "Reddit"
+            "spotify" -> "Spotify"
+            "vimeo" -> "Vimeo"
+            "soundcloud" -> "SoundCloud"
+            else -> provider
+        }
+
+    companion object {
+        private fun JSONObject.str(k: String) = optString(k).takeIf { has(k) && !isNull(k) && it.isNotEmpty() }
+
+        fun list(a: JSONArray?): List<Embed> = (0 until (a?.length() ?: 0)).mapNotNull { i ->
+            val o = a!!.optJSONObject(i) ?: return@mapNotNull null
+            val url = o.str("url") ?: return@mapNotNull null
+            Embed(url, o.optString("provider"), o.str("title"), o.str("author"), o.str("text"), Media.from(o.optJSONObject("thumb")))
         }
     }
 }

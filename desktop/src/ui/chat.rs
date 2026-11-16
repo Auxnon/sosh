@@ -8,7 +8,7 @@ use egui::{Align, Align2, Color32, CornerRadius, Frame, Id, Margin, Rect, RichTe
 
 use super::View;
 use crate::media::Pics;
-use crate::models::{EMOJI, Media, Message};
+use crate::models::{EMOJI, Embed, Media, Message};
 use crate::state::{GameCart, Pane, Place, Screen, State};
 use crate::theme::*;
 
@@ -286,6 +286,9 @@ fn bubble(ui: &mut Ui, st: &mut State, v: &mut View, m: &Message, time: f64) {
             if let Some(md) = &m.media {
                 media_card(ui, st, v, md, time);
             }
+            for e in &m.embeds {
+                embed_card(ui, st, e, time);
+            }
             if m.gift.is_some() {
                 present_card(ui, st, m);
             }
@@ -406,6 +409,81 @@ fn media_card(ui: &mut Ui, st: &mut State, v: &mut View, m: &Media, time: f64) {
             let t = if failed { "couldn't load the picture" } else { "loading…" };
             ui.painter().text(r.center(), Align2::CENTER_CENTER, t, font(MEDIUM, 13.0), INK_FAINT);
         }
+    }
+}
+
+/// The colour a link's app is known by.
+fn provider_color(p: &str) -> Color32 {
+    match p {
+        "x" => Color32::from_rgb(0x1A, 0x1A, 0x1A),
+        "instagram" => Color32::from_rgb(0xD6, 0x29, 0x7A),
+        "threads" => Color32::from_rgb(0x3A, 0x3A, 0x3A),
+        "bluesky" => Color32::from_rgb(0x11, 0x85, 0xFE),
+        "mastodon" => Color32::from_rgb(0x63, 0x64, 0xFF),
+        "youtube" => Color32::from_rgb(0xE6, 0x21, 0x17),
+        "tiktok" => Color32::from_rgb(0x11, 0x11, 0x11),
+        "reddit" => Color32::from_rgb(0xFF, 0x45, 0x00),
+        "spotify" => Color32::from_rgb(0x1D, 0xB9, 0x54),
+        "vimeo" => Color32::from_rgb(0x1A, 0xB7, 0xEA),
+        "soundcloud" => Color32::from_rgb(0xFF, 0x55, 0x00),
+        _ => Color32::from_gray(0x77),
+    }
+}
+
+/// A link's preview: the app's colour down its side, who and what, and the
+/// picture if there is one (kept by our server, so the app is never asked
+/// for it). Click to open the link in the browser.
+fn embed_card(ui: &mut Ui, st: &mut State, e: &Embed, time: f64) {
+    let col = provider_color(&e.provider);
+    let resp = Frame::new()
+        .fill(PAPER_DEEP)
+        .stroke(Stroke::new(2.0, PAPER_EDGE))
+        .corner_radius(CornerRadius::same(16))
+        .inner_margin(Margin { left: 16, right: 10, top: 10, bottom: 10 })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width().min(420.0));
+            ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
+            let head = match &e.author {
+                Some(a) => format!("{} · {a}", e.app()),
+                None => e.app().to_owned(),
+            };
+            ui.label(RichText::new(head).font(font(EXTRA, 13.0)).color(col));
+            if let Some(t) = &e.title {
+                ui.add(egui::Label::new(RichText::new(t).font(font(BOLD, 14.0)).color(INK)).truncate());
+            }
+            if let Some(t) = &e.text {
+                let short: String = t.chars().take(280).collect();
+                ui.label(RichText::new(short).font(font(MEDIUM, 13.0)).color(INK_DIM));
+            }
+            if e.title.is_none() && e.text.is_none() {
+                ui.add(egui::Label::new(RichText::new(&e.url).font(font(MEDIUM, 12.0)).color(INK_LINK)).truncate());
+            }
+            if let Some(t) = &e.thumb {
+                let ratio = (t.w as f32 / t.h.max(1) as f32).clamp(0.5, 2.5);
+                let mut w = ui.available_width().min(300.0);
+                let mut h = w / ratio;
+                if h > 240.0 {
+                    h = 240.0;
+                    w = h * ratio;
+                }
+                if let Some(tex) = Pics::frame(st, t, time) {
+                    ui.add(egui::Image::new(&tex).fit_to_exact_size(vec2(w, h)).corner_radius(CornerRadius::same(12)));
+                }
+            }
+        })
+        .response;
+    let r = resp.rect;
+    ui.painter().rect_filled(
+        Rect::from_min_size(r.min + vec2(2.0, 2.0), vec2(6.0, r.height() - 4.0)),
+        CornerRadius { nw: 14, sw: 14, ne: 0, se: 0 },
+        col,
+    );
+    let click = ui.interact(r, ui.scope_id().with(("embed", &e.url)), Sense::click());
+    if click.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if click.on_hover_text(&e.url).clicked() {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(&e.url));
     }
 }
 

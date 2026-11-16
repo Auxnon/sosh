@@ -560,6 +560,10 @@ impl State {
                 let n = p.get("pins").and_then(Value::as_i64).unwrap_or(0);
                 self.change(p, |m| m.pins = n);
             }
+            "embeds" => {
+                let es = crate::models::Embed::list(p.get("embeds"));
+                self.change(p, |m| m.embeds = es);
+            }
             "members" => self.load_members(),
             "removed" => {
                 self.open(None);

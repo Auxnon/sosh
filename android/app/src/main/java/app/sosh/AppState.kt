@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.sosh.data.Catalog
 import app.sosh.data.Conversation
+import app.sosh.data.Embed
 import app.sosh.data.Friends
 import app.sosh.data.Me
 import app.sosh.data.Member
@@ -351,6 +352,7 @@ class AppState(context: Context, private val scope: CoroutineScope) {
         }
         ch.on("reactions") { d -> change(d.optLong("id")) { it.copy(reactions = Reaction.list(d.optJSONArray("reactions"))) } }
         ch.on("pins") { d -> change(d.optLong("id")) { it.copy(pins = d.optInt("pins")) } }
+        ch.on("embeds") { d -> change(d.optLong("id")) { it.copy(embeds = Embed.list(d.optJSONArray("embeds"))) } }
     }
 
     private fun change(id: Long, f: (Message) -> Message) {
