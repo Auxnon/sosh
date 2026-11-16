@@ -114,8 +114,11 @@ pub fn plastic(p: &Painter, r: Rect, radius: f32, color: Color32, edge: Color32,
     p.rect_filled(r.translate(vec2(0.0, drop)), cr, edge);
     p.rect_filled(r, cr, color);
     if shine > 0.0 {
-        let line = Rect::from_min_max(pos2(r.left() + radius * 0.6, r.top() + 1.0), pos2(r.right() - radius * 0.6, r.top() + 3.0));
-        p.rect_filled(line, CornerRadius::same(1), Color32::from_white_alpha((shine * 255.0) as u8));
+        // The shape lit, then the shape again 2px lower: what's left is a
+        // crescent that follows the rounded corners down instead of a
+        // straight bar they'd cut off.
+        p.rect_filled(r, cr, Color32::from_white_alpha((shine * 255.0) as u8));
+        p.rect_filled(Rect::from_min_max(pos2(r.left(), r.top() + 2.0), r.max), cr, color);
     }
 }
 

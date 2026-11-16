@@ -25,11 +25,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.drawOutline
-import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.graphics.ImageBitmap
@@ -72,9 +69,13 @@ fun Modifier.plastic(
     translate(top = drop.toPx()) { drawOutline(o, edge) }
     drawOutline(o, color)
     if (shine > 0f) {
-        clipPath(Path().apply { addOutline(o) }) {
-            drawRect(Color.White.copy(alpha = shine), size = Size(size.width, 2.dp.toPx()))
-        }
+        // The shape lit, then the shape again 2dp lower: what's left is a
+        // crescent that follows the rounded corners instead of a straight
+        // line they'd cut off.
+        drawOutline(o, Color.White.copy(alpha = shine))
+        val lip = 2.dp.toPx()
+        val lower = shape.createOutline(Size(size.width, size.height - lip), layoutDirection, this)
+        translate(top = lip) { drawOutline(lower, color) }
     }
 }
 
