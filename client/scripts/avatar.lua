@@ -61,6 +61,10 @@ AV_ARRIVE = 9 -- the path's braking into the point it walks to, per second
 AV_SETTLE = 24 -- the body's braking once the path has stopped
 AV_BACKSTEP = 2.5 -- tiles a second: settling back slower than this, it steps back without turning round
 AV_HEIGHT = 1.45 -- the player model, feet to the top of the head
+AV_CLIMB_TIME = 0.22 -- seconds to scramble up a full block
+AV_CLIMB_MAX = 1.5 -- blocks the drawn body may lag below its feet
+AV_SLOPE_MIN = 2 -- tiles a second, up a slope however slowly we walk
+DIG_SWINGS = 2 -- strikes of the arm over one block's dig
 FACE_COUNT = 8
 ANIMS = { "idle", "sit", "lie" }
 ANIM_SIT = 1
@@ -111,6 +115,12 @@ function Avatar.new(id, name, x, y, z, face, anim, character)
 	-- where on ship `on` to stand once we know where that ship is
 	a.wait = nil
 	a.clip = nil -- the clip the model is playing
+	-- stepping up: drawn this far (<= 0) under z, easing back up (climb)
+	a.climb = 0
+	a.climb_by = 0 -- the whole step
+	a.climb_wall = false -- a full block (a scramble), not the smooth ground
+	-- digging: {t = seconds in, at = {x, y, z} the block's middle} (dig.lua)
+	a.dig = nil
 	a.hex = U.hex_for(id)
 	a.character = character
 	a:spawn()
@@ -262,6 +272,8 @@ function Avatar:settle()
 	self.ivx = 0
 	self.ivy = 0
 	self.skid = false
+	self.climb = 0
+	self.climb_wall = false
 end
 
 function Avatar:moving()
@@ -436,6 +448,7 @@ function Avatar:update(dt)
 			self.tx = nil
 			self.dvx = 0
 			self.dvy = 0
+			self.climb = 0
 			self:age_bubbles()
 			self:pose()
 			return
@@ -534,6 +547,9 @@ function Avatar:update(dt)
 	local g, on = Avatar.footing(self.x, self.y, self.z)
 	if g ~= nil then
 		if g >= self.z then
+			if g > self.z + 0.05 and self.vz == 0 then
+				self:start_climb(g - self.z, on)
+			end
 			self.z = g
 			self.vz = 0
 		else
@@ -553,6 +569,9 @@ function Avatar:update(dt)
 		self.on = nil
 	end
 
+	self:ease_climb(dt)
+	self:face_dig(dt)
+
 	if self.emote_t > 0 then
 		self.emote_t = self.emote_t - 1
 		if self.emote_t == 0 then
@@ -562,6 +581,70 @@ function Avatar:update(dt)
 
 	self:age_bubbles()
 	self:pose()
+end
+
+-- Up a step of `by`: collision is already on top, but the body is drawn
+-- where it was and eases up. Onto the smooth ground (grass and dirt, drawn
+-- as 45-degree slopes, world.lua) it walks up the incline, rising as fast as
+-- it goes along; onto anything else (a full block, a ship) it scrambles up
+-- in a moment, arms and a knee up (pose).
+function Avatar:start_climb(by, on)
+	local smooth = false
+	if on == nil then
+		-- hoisted (SILT-BUGS.md #1)
+		local cx = Blocks.cell(self.x)
+		local cy = Blocks.cell(self.y)
+		local cz = flr(self.z + by + 0.01) - 1
+		local id = Blocks.get(cx, cy, cz)
+		smooth = id == 1 or id == 2
+	end
+	self.climb = self.climb - by
+	if self.climb < -AV_CLIMB_MAX then
+		self.climb = -AV_CLIMB_MAX
+	end
+	self.climb_by = -self.climb
+	self.climb_wall = not smooth
+end
+
+function Avatar:ease_climb(dt)
+	if self.climb >= 0 then
+		return
+	end
+	local rate = self.climb_by / AV_CLIMB_TIME
+	if not self.climb_wall then
+		-- up the slope as fast as we go along it, and never slower than a crawl
+		local sp = sqrt(self.bvx * self.bvx + self.bvy * self.bvy)
+		rate = math.max(sp, AV_SLOPE_MIN)
+	end
+	self.climb = self.climb + rate * dt
+	if self.climb >= 0 then
+		self.climb = 0
+		self.climb_wall = false
+	end
+end
+
+-- How far through a scramble up a full block: 0 at the start, 1 done; nil
+-- if not climbing one.
+function Avatar:scramble()
+	if not self.climb_wall or self.climb >= 0 or self.climb_by <= 0 then
+		return nil
+	end
+	return 1 + self.climb / self.climb_by
+end
+
+-- Where the feet are drawn: z, less what's still to climb.
+function Avatar:drawn_z()
+	return self.z + self.climb
+end
+
+-- Digging and standing still: turn to face the block.
+function Avatar:face_dig(dt)
+	local d = self.dig
+	if d == nil or self.speed > 0 then
+		return
+	end
+	local face = U.atan2(d.at[2] - self.by, d.at[1] - self.bx)
+	self.heading = self.heading + U.angle_diff(self.heading, face) * U.rate(AV_TURN, dt)
 end
 
 -- The path's speed this frame, going (ux, uy) at up to `full`: it speeds up
@@ -742,6 +825,7 @@ function Avatar:pose()
 	local h = self.heading
 	local t = self.t
 	local holding = Carry.holds(self)
+	local dz = self:drawn_z()
 
 	local clip = "idle"
 	local bob = 0
@@ -782,6 +866,27 @@ function Avatar:pose()
 		legl = -0.7
 		legr = 0.35
 		bob = -0.04
+	end
+	-- scrambling up a block: both hands up onto it, then a knee
+	local sc = self:scramble()
+	if sc ~= nil and not holding then
+		local up = sin(sc * math.pi)
+		fl = -2.2 * up
+		fr = 2.2 * up
+		legl = -1.4 * up
+		legr = -0.3 * up
+		bob = bob - 0.05 * up
+	end
+	-- digging: the right arm up and down at the block, DIG_SWINGS times
+	local d = self.dig
+	if d ~= nil and not holding then
+		local p = U.clamp(d.t / DIG_TIME, 0, 1)
+		local lift = math.abs(sin(p * math.pi * DIG_SWINGS))
+		fr = 0.5 + 2.3 * lift
+		fl = -0.4
+		legl = -0.25
+		legr = 0.2
+		bob = bob - 0.03 * lift
 	end
 	if holding then
 		fl = -AV_HOLD_ARMS
@@ -836,10 +941,10 @@ function Avatar:pose()
 		end
 		self.char:pose(fx, fy, fz, flat.rz, clip, turns, flat)
 	else
-		self.char:pose(self.bx, self.by, self.z + bob, h + twist, clip, turns)
+		self.char:pose(self.bx, self.by, dz + bob, h + twist, clip, turns)
 	end
 
-	local hold = { self.bx, self.by, self.z + bob + CARRY_Z, h }
+	local hold = { self.bx, self.by, dz + bob + CARRY_Z, h }
 	self.hold = hold
 end
 
@@ -884,7 +989,7 @@ end
 -- Point above the head where the name tag sits, as {x, y, z}; above what
 -- they carry, if anything.
 function Avatar:top()
-	local z = self.z + AV_HEIGHT * self.char.k + self.char.lift + 0.15
+	local z = self:drawn_z() + AV_HEIGHT * self.char.k + self.char.lift + 0.15
 	local held = Carry.height(self.id)
 	if held > 0 and self.hold ~= nil then
 		z = self.hold[3] + held + 0.15

@@ -633,6 +633,7 @@ function Account.enter(s, u)
 	APP.server = s
 	APP.chat = {}
 	APP.screen = "world"
+	APP.tool = "walk"
 	CAM.az = 0.6
 	SERVER = PHX:channel("server:" .. tostring(s.id), {})
 	SERVER.on_join = function(r)

@@ -239,6 +239,7 @@ end
 
 function clear_world()
 	Blocks.reset()
+	Dig.clear()
 	Farm.init()
 	Herd.init()
 	Carry.init()
@@ -710,6 +711,7 @@ function world_frame()
 	Ships.update(U.dt)
 	if me ~= nil then
 		me:update(U.dt)
+		Dig.update(me, U.dt)
 		bump_portal(me)
 		if Ships.piloted_by(APP.my_id) ~= nil then
 			steer_ship(me)
@@ -739,13 +741,16 @@ function world_frame()
 	Herd.update(me)
 	Carry.update()
 	Dust.update(U.dt)
+	Chips.update(U.dt)
 	Marker.update(U.dt, me)
 	Voice.update(U.dt)
 	Furn.update()
 
 	if me ~= nil then
-		place_camera(me.x, me.y, me.z)
+		place_camera(me.x, me.y, follow_z(me:drawn_z(), U.dt))
 	else
+		CAM.fz = nil
+		CAM.feet_z = nil
 		CAM.az = CAM.az + 0.0015
 		place_camera(0, 0, GROUND_Z)
 	end
@@ -756,6 +761,22 @@ end
 
 -- On a ship the camera stands well back, clear of the balloon.
 SHIP_CAM_DIST = 14
+-- The height the camera looks at eases after the feet (CAM_RISE a second)
+-- rather than jumping with every step, unless they're suddenly far off
+-- (a teleport, a jump onto a ship): then it goes straight there.
+CAM_RISE = 5
+CAM_SNAP = 4 -- blocks the feet moved in one frame
+
+function follow_z(z, dt)
+	local jumped = CAM.feet_z == nil or math.abs(z - CAM.feet_z) > CAM_SNAP
+	CAM.feet_z = z
+	if CAM.fz == nil or jumped then
+		CAM.fz = z
+	else
+		CAM.fz = CAM.fz + (z - CAM.fz) * U.rate(CAM_RISE, dt)
+	end
+	return CAM.fz
+end
 
 function place_camera(x, y, z)
 	local cl = cos(CAM.alt)

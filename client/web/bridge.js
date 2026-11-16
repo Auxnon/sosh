@@ -148,6 +148,10 @@
     }
   }
 
+  // right-drag turns the camera (tools.lua), so no menu over the game
+  window.addEventListener("contextmenu", (e) => {
+    if (e.target && e.target.tagName === "CANVAS") e.preventDefault();
+  });
   window.addEventListener("paste", (e) => {
     const files = [...(e.clipboardData ? e.clipboardData.files : [])];
     if (files.length && ticket) {

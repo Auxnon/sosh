@@ -100,7 +100,10 @@ fit in your bag is left in a sack.
 - **1–6**: tool. **Walk** clicks a block to walk onto it (a dashed ring
   shows where under the pointer; a click drops a ring that stays until you
   get there), furniture to open it, and a ship's helm to take it. **Dig**
-  digs into your bag, breaks furniture, and takes scaffolding down (everything put in comes back).
+  queues blocks (up to 10, outlined; click one again to take it off): you
+  walk over beside each in turn and dig it into your bag. It breaks
+  furniture and takes scaffolding down (everything put in comes back).
+  Walking (the keys, or a walk click) drops the queue.
   **Build** places what's picked from the bag on the outlined face.
   **Plant** plants carrots on grass or dirt, or picks them once ripe.
   **Carry** lifts a pot, a cow or furniture over your head and puts it

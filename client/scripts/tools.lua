@@ -4,7 +4,8 @@
 --
 --   walk   walk onto it; furniture that holds things, open it (bag.lua);
 --          a ship's helm, take it
---   dig    dig it into the bag; furniture breaks (some of what it was made
+--   dig    queue it to dig into the bag (up to 10; dig.lua walks over to
+--          each and digs it); furniture breaks (some of what it was made
 --          of and all it held come back); scaffolding comes down
 --   build  place what's picked from the bag (Z/X, or click it in the bag)
 --          on the face it was hit through; furniture that packs into a
@@ -117,6 +118,7 @@ function world_keys(me)
 	if me.anim ~= 0 then
 		set_my_anim(0) -- stand up (or get out of bed) to walk
 	end
+	Dig.clear() -- walking off: never mind what was queued to dig
 	me:drive(dx * AV_SPEED, dy * AV_SPEED)
 end
 
@@ -275,9 +277,15 @@ function world_pointer(me)
 	if UI.clicked then
 		APP.press_world = not over_hud
 	end
-	if m.m2 then
-		CAM.az = CAM.az - m.dx * 4
-		CAM.alt = U.clamp(CAM.alt + m.dy * 2, -1.3, -0.15)
+	-- from positions, as a left drag: the browser only reports motion
+	-- deltas (m.dx) while the pointer's locked
+	if m.m2 and not APP.prev_m2 then
+		APP.right_world = not over_hud
+	end
+	APP.prev_m2 = m.m2
+	if m.m2 and APP.right_world then
+		CAM.az = CAM.az - UI.move_x * DRAG_TURN
+		CAM.alt = U.clamp(CAM.alt + UI.move_y * DRAG_TILT, -1.3, -0.15)
 	elseif m.m1 and UI.dragging and APP.press_world then
 		CAM.az = CAM.az - UI.move_x * DRAG_TURN
 		CAM.alt = U.clamp(CAM.alt + UI.move_y * DRAG_TILT, -1.3, -0.15)
@@ -384,7 +392,16 @@ function world_pointer(me)
 		ghost = nil
 		cell = nil
 	end
-	if cell ~= nil and not in_reach(me, cell, on) then
+	-- a block to dig can be further off: we walk over to it (dig.lua)
+	local reach = false
+	if cell ~= nil then
+		if tool == "dig" and cow == nil and person == nil then
+			reach = Dig.can_queue(me, cell, on)
+		else
+			reach = in_reach(me, cell, on)
+		end
+	end
+	if cell ~= nil and not reach then
 		cell = nil
 		cow = nil
 		person = nil
@@ -456,6 +473,7 @@ function world_pointer(me)
 			if me.anim ~= 0 then
 				set_my_anim(0)
 			end
+			Dig.clear()
 			me:walk_to(h[1], h[2], on)
 			Marker.sent(h, on)
 		end
@@ -469,8 +487,8 @@ function world_pointer(me)
 		craft_action(cell, on, hit.id == SCAFFOLD)
 	elseif tool == "build" then
 		place_action(cell, on)
-	else
-		dig_action(cell, on)
+	elseif tool == "dig" then
+		Dig.click(cell, on)
 	end
 end
 
@@ -587,11 +605,6 @@ function farm_action(cell)
 			add_chat(nil, "+1 carrot", C_OK)
 		end)
 	end
-end
-
-function dig_action(cell, on)
-	local payload = cell_payload(cell, on)
-	act("dig_action", payload, "dig")
 end
 
 function place_action(cell, on)
