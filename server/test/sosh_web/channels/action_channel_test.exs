@@ -88,6 +88,42 @@ defmodule SoshWeb.ActionChannelTest do
     assert Enum.at(bag, slot) == ["marbles:100", 1]
   end
 
+  test "the bag sorts, splits and sets stacks down whole", %{actions: actions} do
+    Players.put_bag("builder", List.duplicate(nil, 6))
+    {:ok, _} = Players.update_bag("builder", &Sosh.Universe.bag_give(&1, "wood", 20))
+    {:ok, _} = Players.update_bag("builder", &Sosh.Universe.bag_give(&1, "marbles:500", 1))
+
+    ref = push(actions, "bag_action", %{"move" => [0, 4]})
+    assert_reply(ref, :ok, %{bag: [[], ["marbles:500", 1], [], [], ["wood", 20], []]})
+
+    ref = push(actions, "bag_action", %{"split" => [4, 5]})
+    assert_reply(ref, :ok, %{bag: [["wood", 5], ["marbles:500", 1], [], [], ["wood", 15], []]})
+    ref = push(actions, "bag_action", %{"split" => [1, 200]})
+    assert_reply(ref, :ok, %{bag: [_, ["marbles:300", 1], ["marbles:200", 1], [], _, []]})
+    # pouring one bag of marbles into another, and a stack onto its like
+    ref = push(actions, "bag_action", %{"move" => [2, 1]})
+    assert_reply(ref, :ok, %{bag: [["wood", 5], ["marbles:500", 1], [], [], ["wood", 15], []]})
+    ref = push(actions, "bag_action", %{"move" => [0, 4]})
+    assert_reply(ref, :ok, %{bag: [[], _, [], [], ["wood", 20], []]})
+
+    ref = push(actions, "bag_action", %{"split" => [4, 20]})
+    assert_reply(ref, :error, %{reason: "invalid_amount"})
+    ref = push(actions, "bag_action", %{"move" => [-1, 2]})
+    assert_reply(ref, :error, %{reason: "bad_request"})
+
+    # at our feet, then aimed at a cell
+    ref = push(actions, "bag_action", %{"drop" => 4})
+    assert_reply(ref, :ok, %{bag: [[], ["marbles:500", 1], [], [], [], []]})
+    ref = push(actions, "bag_action", %{"drop" => 1, "position" => [2, 0, 0]})
+    assert_reply(ref, :ok, %{bag: [[], [], [], [], [], []]})
+    ref = push(actions, "bag_action", %{"drop" => 1})
+    assert_reply(ref, :error, %{reason: "empty_slot"})
+
+    kinds = Sim.snapshot(@plaza).furniture |> Enum.map(&{&1.kind, &1.origin})
+    assert {"sack", [0, 0, 0]} in kinds
+    assert {"marbles", [2, 0, 0]} in kinds
+  end
+
   test "get_chunks returns the plaza, run-length encoded", %{actions: actions} do
     ref = push(actions, "get_chunks", %{"keys" => [[0, 0, -1], [0, 0, 0], ["bad"], [9, 9, 9]]})
     assert_reply(ref, :ok, %{chunks: [floor, sky]})

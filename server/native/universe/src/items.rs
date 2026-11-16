@@ -303,6 +303,100 @@ pub fn is_empty(slots: &[Slot]) -> bool {
     slots.iter().all(|s| s.is_none())
 }
 
+/// Move the stack in `slots[from]` to `slots[to]`: onto a stack of the same
+/// thing as far as it goes (two bags of marbles pour together), otherwise
+/// the two swap places. What doesn't fit stays where it was.
+pub fn arrange(slots: &mut [Slot], from: usize, to: usize) -> Result<(), &'static str> {
+    if from >= slots.len() || to >= slots.len() {
+        return Err("no_such_slot");
+    }
+    let Some(moving) = slots[from].clone() else {
+        return Err("empty_slot");
+    };
+    if from == to {
+        return Ok(());
+    }
+    match slots[to].clone() {
+        Some(there) => {
+            if let (Some(a), Some(b)) = (marbles_in(&moving.item), marbles_in(&there.item)) {
+                let k = a.min(MARBLE_BAG_MAX - b);
+                if k == 0 {
+                    slots.swap(from, to);
+                    return Ok(());
+                }
+                slots[to] = Some(Stack {
+                    item: marble_bag(b + k),
+                    n: 1,
+                });
+                slots[from] = (a > k).then(|| Stack {
+                    item: marble_bag(a - k),
+                    n: 1,
+                });
+                return Ok(());
+            }
+            let max = stack_of(&moving.item);
+            if there.item == moving.item && there.n < max {
+                let k = moving.n.min(max - there.n);
+                slots[to] = Some(Stack {
+                    item: there.item,
+                    n: there.n + k,
+                });
+                slots[from] = (moving.n > k).then(|| Stack {
+                    item: moving.item,
+                    n: moving.n - k,
+                });
+            } else {
+                slots.swap(from, to);
+            }
+        }
+        None => slots.swap(from, to),
+    }
+    Ok(())
+}
+
+/// Take `n` off the stack in `slots[slot]` into an empty slot (`to`, or the
+/// first one free). A bag of marbles splits into two bags. Returns the slot
+/// the new stack went to.
+pub fn split(
+    slots: &mut [Slot],
+    slot: usize,
+    n: u32,
+    to: Option<usize>,
+) -> Result<usize, &'static str> {
+    let Some(Some(st)) = slots.get(slot).cloned() else {
+        return Err("empty_slot");
+    };
+    let to = match to {
+        Some(t) if t < slots.len() && t != slot && slots[t].is_none() => t,
+        Some(_) => return Err("no_room"),
+        None => slots.iter().position(|s| s.is_none()).ok_or("no_room")?,
+    };
+    if let Some(have) = marbles_in(&st.item) {
+        if n == 0 || n >= have {
+            return Err("invalid_amount");
+        }
+        slots[slot] = Some(Stack {
+            item: marble_bag(have - n),
+            n: 1,
+        });
+        slots[to] = Some(Stack {
+            item: marble_bag(n),
+            n: 1,
+        });
+        return Ok(to);
+    }
+    if n == 0 || n >= st.n as u32 {
+        return Err("invalid_amount");
+    }
+    let n = n as u16;
+    slots[slot] = Some(Stack {
+        item: st.item.clone(),
+        n: st.n - n,
+    });
+    slots[to] = Some(Stack { item: st.item, n });
+    Ok(to)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +463,53 @@ mod tests {
         assert_eq!(count(&from, "stone"), 26);
         assert!(!shift(&mut from, 0, &mut to), "nothing fits");
         assert!(!shift(&mut from, 1, &mut to), "empty slot");
+    }
+
+    #[test]
+    fn arranging_merges_like_stacks_and_swaps_the_rest() {
+        let mut b = empty(4);
+        add(&mut b, "wood", 60);
+        b[2] = Some(Stack { item: "wood".into(), n: 10 });
+        b[3] = Some(Stack { item: "stone".into(), n: 5 });
+        // onto the same thing: as far as it goes, the rest stays
+        arrange(&mut b, 2, 0).unwrap();
+        assert_eq!(b[0].as_ref().unwrap().n, 64);
+        assert_eq!(b[2].as_ref().unwrap().n, 6);
+        // onto something else: they swap
+        arrange(&mut b, 3, 0).unwrap();
+        assert_eq!(b[0].as_ref().unwrap().item, "stone");
+        assert_eq!(b[3].as_ref().unwrap().n, 64);
+        // into an empty slot: it moves
+        arrange(&mut b, 0, 1).unwrap();
+        assert!(b[0].is_none());
+        assert_eq!(arrange(&mut b, 0, 1), Err("empty_slot"));
+        assert_eq!(arrange(&mut b, 1, 9), Err("no_such_slot"));
+    }
+
+    #[test]
+    fn bags_of_marbles_pour_together_and_split_apart() {
+        let mut b = empty(3);
+        b[0] = Some(Stack { item: marble_bag(99_000), n: 1 });
+        b[1] = Some(Stack { item: marble_bag(2_000), n: 1 });
+        arrange(&mut b, 1, 0).unwrap();
+        assert_eq!(b[0].as_ref().unwrap().item, marble_bag(MARBLE_BAG_MAX));
+        assert_eq!(b[1].as_ref().unwrap().item, marble_bag(1_001));
+        assert_eq!(split(&mut b, 1, 1, None), Ok(2));
+        assert_eq!(b[1].as_ref().unwrap().item, marble_bag(1_000));
+        assert_eq!(b[2].as_ref().unwrap().item, marble_bag(1));
+        assert_eq!(split(&mut b, 1, 5, None), Err("no_room"));
+    }
+
+    #[test]
+    fn splitting_a_stack_leaves_some_behind() {
+        let mut b = empty(3);
+        add(&mut b, "wood", 10);
+        assert_eq!(split(&mut b, 0, 10, None), Err("invalid_amount"));
+        assert_eq!(split(&mut b, 0, 0, None), Err("invalid_amount"));
+        assert_eq!(split(&mut b, 0, 4, Some(2)), Ok(2));
+        assert_eq!(b[0].as_ref().unwrap().n, 6);
+        assert_eq!(b[2].as_ref().unwrap().n, 4);
+        assert_eq!(split(&mut b, 0, 1, Some(2)), Err("no_room"));
+        assert_eq!(split(&mut b, 1, 1, None), Err("empty_slot"));
     }
 }

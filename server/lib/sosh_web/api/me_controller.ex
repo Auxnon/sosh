@@ -13,6 +13,9 @@ defmodule SoshWeb.Api.MeController do
 
   def bag(conn, _), do: ok(conn, %{bag: Me.bag(conn.assigns.user)})
 
+  # {move: [from, to]}, {split: [slot, n]} or {drop: slot} -> {bag}
+  def arrange(conn, params), do: reply(conn, Sosh.Me.bag_op(conn.assigns.user, Me.bag_op_of(params)), &%{bag: &1})
+
   # {deposit: slot} or {withdraw: n} -> {bag, wallet}
   def wallet(conn, params), do: reply(conn, Me.wallet(conn.assigns.user, Me.wallet_op(params)), & &1)
 end

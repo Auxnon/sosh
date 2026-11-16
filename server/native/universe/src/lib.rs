@@ -542,6 +542,16 @@ fn stash(env: Env, u: Uni, at: Feet, id: u32, bag: BagTerm, slot: usize) -> NifR
     })
 }
 
+/// Set bag slot `slot` down at cell `p` of frame `on`: `{:ok, bag}`.
+#[rustler::nif]
+fn drop_stack(env: Env, u: Uni, on: u32, p: Pos, bag: BagTerm, slot: usize) -> NifResult<Term> {
+    let mut b = bag_in(bag);
+    Ok(match lock(&u)?.drop_stack(on, p, &mut b, slot) {
+        Ok(_) => (ok(), bag_out(b)).encode(env),
+        Err(e) => fail(env, e),
+    })
+}
+
 /// Furniture `id`'s slot `slot` into the bag: `{:ok, bag}`.
 #[rustler::nif]
 fn take(env: Env, u: Uni, at: Feet, id: u32, slot: usize, bag: BagTerm) -> NifResult<Term> {
@@ -840,6 +850,28 @@ fn bag_give<'a>(env: Env<'a>, bag: BagTerm, item: String, n: u16) -> Term<'a> {
     }
     items::add(&mut b, &item, n);
     (ok(), bag_out(b)).encode(env)
+}
+
+/// Move bag slot `from` to `to` (merging like stacks, else swapping):
+/// `{:ok, bag}` or `{:error, reason}`.
+#[rustler::nif]
+fn bag_arrange<'a>(env: Env<'a>, bag: BagTerm, from: usize, to: usize) -> Term<'a> {
+    let mut b = bag_in(bag);
+    match items::arrange(&mut b, from, to) {
+        Ok(()) => (ok(), bag_out(b)).encode(env),
+        Err(e) => fail(env, e),
+    }
+}
+
+/// Take `n` off bag slot `slot` into empty slot `to` (or the first free,
+/// if `to` is nil): `{:ok, bag}` or `{:error, reason}`.
+#[rustler::nif]
+fn bag_split<'a>(env: Env<'a>, bag: BagTerm, slot: usize, n: u32, to: Option<usize>) -> Term<'a> {
+    let mut b = bag_in(bag);
+    match items::split(&mut b, slot, n, to) {
+        Ok(_) => (ok(), bag_out(b)).encode(env),
+        Err(e) => fail(env, e),
+    }
 }
 
 /// Put `n` marbles in a bag, topping up its bags of them first, all or

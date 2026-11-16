@@ -61,6 +61,36 @@ defmodule SoshWeb.ActionChannel do
     |> answer(socket)
   end
 
+  # Sort the bag or set a stack down: as the user channel's `bag`
+  # (`Sosh.Me.bag_op/2`), except a `drop` with a `position` (and `on`) puts
+  # it in that cell, within reach. Replies {bag}.
+  def handle_in("bag_action", %{"drop" => slot, "position" => pos} = params, socket)
+      when is_integer(slot) and slot >= 0 and slot < 256 do
+    on = on(params)
+
+    with {:ok, p} <- cell(pos),
+         :ok <- within_reach(socket, on, p),
+         {:ok, bag} <- Sosh.Me.bag_op(socket.assigns.account, {:drop, slot, u(socket), on, p}) do
+      {:reply, {:ok, %{bag: bag}}, socket}
+    end
+    |> answer(socket)
+  end
+
+  def handle_in("bag_action", %{"drop" => slot}, socket) when is_integer(slot) and slot >= 0 and slot < 256 do
+    with {:ok, bag} <- Sosh.Me.bag_op(socket.assigns.account, {:drop_by, slot, u(socket), user(socket)}) do
+      {:reply, {:ok, %{bag: bag}}, socket}
+    end
+    |> answer(socket)
+  end
+
+  def handle_in("bag_action", params, socket) do
+    case Sosh.Me.bag_op(socket.assigns.account, Sosh.Me.bag_op_of(params)) do
+      {:ok, bag} -> {:reply, {:ok, %{bag: bag}}, socket}
+      {:error, why} -> {:error, to_string(why)}
+    end
+    |> answer(socket)
+  end
+
   # Dig the block at `position` into the bag. Furniture there breaks apart:
   # some of what it was made of and all it held come back (what doesn't fit
   # the bag is left in a sack). Scaffolding gives back what was put in it.

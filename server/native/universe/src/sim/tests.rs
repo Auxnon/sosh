@@ -1111,3 +1111,26 @@ fn digging_stone_sometimes_turns_up_marbles() {
     assert_eq!(have, found);
     assert_eq!(bag.iter().flatten().count(), 1, "they top up one bag");
 }
+
+#[test]
+fn a_dropped_stack_falls_into_a_sack_and_marbles_drop_as_themselves() {
+    let mut s = flat();
+    let mut bag = bag_with(&[("wood", 30), ("marbles:75", 1)]);
+    let wood = bag.iter().position(|x| x.as_ref().is_some_and(|st| st.item == "wood")).unwrap();
+    let id = s.drop_stack(0, (4, 4, 5), &mut bag, wood).unwrap();
+    assert_eq!(count(&bag, "wood"), 0);
+    let f = &s.furniture[&id];
+    assert_eq!((f.kind.as_str(), f.origin), ("sack", (4, 4, 0)), "it falls to the ground");
+    assert_eq!(items::count(&f.slots, "wood"), 30);
+    // the spot's taken: the next one goes beside it
+    let m = bag.iter().position(|x| x.as_ref().is_some_and(|st| st.item == "marbles:75")).unwrap();
+    let id2 = s.drop_stack(0, (4, 4, 0), &mut bag, m).unwrap();
+    let f2 = &s.furniture[&id2];
+    assert_eq!((f2.kind.as_str(), f2.note.as_deref()), ("marbles", Some("75")));
+    assert_ne!(f2.origin, (4, 4, 0));
+    assert_eq!(s.drop_stack(0, (4, 4, 0), &mut bag, m), Err("empty_slot"));
+    // taking the sack's insides back leaves nothing behind
+    s.take((4.0, 3.0, 0.0), id, 0, &mut bag).unwrap();
+    assert_eq!(count(&bag, "wood"), 30);
+    assert!(!s.furniture.contains_key(&id));
+}

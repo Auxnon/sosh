@@ -171,6 +171,16 @@ defmodule Sosh.Sim do
   """
   def use_door(u, user, name, id), do: call(u, {:door, user, name, id})
 
+  @doc """
+  Set bag slot `slot` down whole at cell `pos` of frame `on` (falling to
+  whatever's under it): a bag of marbles as itself, anything else in a
+  sack. `{:ok, bag}`.
+  """
+  def drop(u, name, on, pos, slot), do: call(u, {:bag, name, :drop_stack, [on, pos], [slot]})
+
+  @doc "The same, at `user`'s feet."
+  def drop_here(u, user, name, slot), do: call(u, {:drop_here, user, name, slot})
+
   @doc "`user`, carried by someone, wiggles. `{:ok, true}` once they're free."
   def wiggle(u, user), do: call(u, {:wiggle, user})
 
@@ -302,6 +312,21 @@ defmodule Sosh.Sim do
 
   defp act({:bag, name, fun, before, rest}, state) do
     reply(state, with_bag(name, &apply(Universe, fun, [state.uni | before] ++ [&1 | rest])))
+  end
+
+  defp act({:drop_here, user, name, slot}, state) do
+    result =
+      case Lobby.get(user) do
+        %{universe: u} = p when u == state.u ->
+          {on, [x, y, z]} = Lobby.frame(p, Lobby.now())
+          cell = {floor(x), floor(y), floor(z + 0.1)}
+          with_bag(name, &Universe.drop_stack(state.uni, on, cell, &1, slot))
+
+        _ ->
+          {:error, "not_in_world"}
+      end
+
+    reply(state, result)
   end
 
   defp act({:build, kind, on, pos, rot}, state),

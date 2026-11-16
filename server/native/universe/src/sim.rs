@@ -48,6 +48,8 @@ use crate::terrain::{
 /// How often digging stone turns up a bag of marbles, and how many are in it.
 pub const MARBLE_FIND_CHANCE: f64 = 1.0 / 12.0;
 pub const MARBLE_FIND: (u32, u32) = (5, 60);
+/// How far something dropped falls to whatever is under it.
+pub const DROP_FALL: i32 = 12;
 
 /// A world tick; growth counts these.
 pub const TICK_MS: i64 = 100;
@@ -1049,6 +1051,43 @@ impl Sim {
             f.slots = over;
             self.put_furniture(f);
         }
+    }
+
+    /// Set the whole stack in `bag[slot]` down at cell `p` of frame `on`
+    /// (or the nearest spot with room), falling to whatever is under it: a
+    /// bag of marbles as itself, anything else in a sack. Returns the
+    /// furniture's id.
+    pub fn drop_stack(&mut self, on: u32, p: Pos, bag: &mut Bag, slot: usize) -> R<u32> {
+        let st = bag.get(slot).cloned().flatten().ok_or("empty_slot")?;
+        if !self.holds(on, p) {
+            return Err("edge_of_the_world");
+        }
+        let marbles = items::marbles_in(&st.item);
+        let kind = furniture::kind(if marbles.is_some() { "marbles" } else { "sack" })
+            .expect("sacks and marbles exist");
+        let mut spot = if self.room(on, p, kind.size, 0) {
+            p
+        } else {
+            self.find_room(on, p, kind.size, 0, 3)
+                .ok_or("no_room_to_drop")?
+        };
+        for _ in 0..DROP_FALL {
+            let below = (spot.0, spot.1, spot.2 - 1);
+            if !self.holds(on, below) || !self.room(on, below, kind.size, 0) {
+                break;
+            }
+            spot = below;
+        }
+        bag[slot] = None;
+        let id = self.new_id();
+        let mut f = Furniture::new(id, kind, spot, 0);
+        f.on = on;
+        match marbles {
+            Some(n) => f.note = Some(n.to_string()),
+            None => f.slots = vec![Some(st)],
+        }
+        self.put_furniture(f);
+        Ok(id)
     }
 
     /// Move the stack in `bag[slot]` into furniture `id`.

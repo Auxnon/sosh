@@ -21,7 +21,8 @@ defmodule SoshWeb.UserChannel do
   description?, policy?}, `dm_open` {handle} -> {conversation_id,
   messages}, `dm_post` {handle, body, gift?}, `enter` {id} (go to that
   server's universe) -> {universe, server}, `claim` / `cancel` / `delete`
-  {id} (a message), `bag_swap` {a, b} (two slot indexes) -> {bag},
+  {id} (a message), `bag_swap` {a, b} (two slot indexes) -> {bag}, `bag` {move: [from, to]} |
+  {split: [slot, n]} | {drop: slot} -> {bag} (see `Sosh.Me.bag_op/2`),
   `wallet` {deposit: slot} | {withdraw: n} -> {bag, wallet}, `hold`
   {item} (an item name or nil; not kept, only passed on), `logout`.
   """
@@ -137,6 +138,8 @@ defmodule SoshWeb.UserChannel do
   end
 
   defp answer("bag_swap", %{"a" => a, "b" => b}, me, _), do: wrap(Me.bag_swap(me, a, b), &%{bag: &1})
+
+  defp answer("bag", p, me, _), do: wrap(Me.bag_op(me, Me.bag_op_of(p)), &%{bag: &1})
 
   defp answer("wallet", p, me, _), do: wrap(Me.wallet(me, Me.wallet_op(p)), & &1)
 

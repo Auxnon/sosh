@@ -62,6 +62,9 @@ defmodule Sosh.Universe do
   def bag_take(_bag, _item, _n), do: err()
   def bag_give(_bag, _item, _n), do: err()
   def bag_add_marbles(_bag, _n), do: err()
+  def bag_arrange(_bag, _from, _to), do: err()
+  def bag_split(_bag, _slot, _n, _to), do: err()
+  def drop_stack(_u, _on, _pos, _bag, _slot), do: err()
 
   # Passwords (Argon2id, on dirty CPU schedulers): see `Sosh.Accounts`.
   def hash_password(_password), do: err()

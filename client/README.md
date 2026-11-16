@@ -266,6 +266,13 @@ Inside a server, the client also joins two channels for its universe:
     which leads back to it. Whatever you carry comes through with you (a
     cow, a player, furniture and the helper on its other end).
   - `stash_action` and `take_action` move stacks in and out of furniture.
+  - `bag_action` sorts the bag: `move` [from, to] (onto a stack of the same
+    thing as far as it goes, two bags of marbles pour together, anything
+    else swaps), `split` [slot, n] (`n` off into the first empty slot) or
+    `drop` slot (the whole stack, at our feet, or at `position` / `on`
+    within reach: a bag of marbles as itself, anything else in a sack).
+    The same is `bag` on `user:<id>` (drop only while in a universe) and
+    `POST /api/me/bag`.
   - Marbles are the money. In the bag they're bags of them, the item
     `marbles:<n>` (up to 99,999 a bag, one bag a slot), placed and picked
     up like furniture (`marbles` in a `furniture` broadcast is how many);

@@ -65,6 +65,59 @@ defmodule Sosh.Me do
   def bag_swap(_, _, _), do: {:error, :no_such_slot}
 
   @doc """
+  Sort or set down what's in the bag: `{:move, from, to}` (onto a stack of
+  the same thing as far as it goes, two bags of marbles pour together,
+  anything else swaps), `{:split, slot, n}` (`n` off into the first empty
+  slot; a bag of marbles splits in two) or `{:drop, slot}` (the whole
+  stack, at the player's feet in the universe they're in; the action
+  channel can aim it). `{:ok, bag}`, also told to every client of the
+  account (`user:<id>` `bag`).
+  """
+  def bag_op(%User{handle: h, id: id}, op) do
+    result =
+      case op do
+        {:move, a, b} -> arranged(h, &Universe.bag_arrange(&1, a, b))
+        {:split, s, n} -> arranged(h, &Universe.bag_split(&1, s, n, nil))
+        # the universe's calls answer the bag as clients want it already
+        {:drop, s} -> drop_here(id, h, s)
+        {:drop, s, u, on, pos} -> Sosh.Sim.drop(u, h, on, pos, s)
+        {:drop_by, s, u, user} -> Sosh.Sim.drop_here(u, user, h, s)
+        _ -> {:error, :bad_request}
+      end
+
+    with {:ok, json} <- result do
+      SoshWeb.Endpoint.broadcast("user:#{id}", "bag", %{bag: json})
+      {:ok, json}
+    end
+  end
+
+  defp arranged(h, fun) do
+    with {:ok, bag} <- Players.change_bag(h, fun), do: {:ok, Players.bag_json(bag)}
+  end
+
+  # Wherever one of the account's connections stands in a universe.
+  defp drop_here(account_id, h, slot) do
+    case Enum.find(Sosh.Lobby.list(), &(&1[:account_id] == account_id)) do
+      %{universe: u, user_id: user} ->
+        with {:ok, _} <- Sosh.Sim.ensure(u), do: Sosh.Sim.drop_here(u, user, h, slot)
+
+      nil ->
+        {:error, :not_in_world}
+    end
+  end
+
+  @max_slot 255
+
+  @doc "What a bag call's params (`move` [from, to], `split` [slot, n], `drop` slot) ask for."
+  def bag_op_of(%{"move" => [a, b]}) when a in 0..@max_slot and b in 0..@max_slot, do: {:move, a, b}
+
+  def bag_op_of(%{"split" => [s, n]}) when s in 0..@max_slot and is_integer(n) and n > 0 and n < 4_294_967_296,
+    do: {:split, s, n}
+
+  def bag_op_of(%{"drop" => s}) when s in 0..@max_slot, do: {:drop, s}
+  def bag_op_of(_), do: :bad_request
+
+  @doc """
   Marbles between the bag and the wallet: `{:deposit, slot}` empties the
   bag of marbles in that slot into the wallet, `{:withdraw, n}` takes `n`
   out into the bag. `{:ok, %{bag, wallet}}`, also told to every client of
