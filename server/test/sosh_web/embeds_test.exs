@@ -77,7 +77,62 @@ defmodule Sosh.EmbedsTest do
     assert %{provider: "bluesky", url: "https://bsky.app/profile/a.b/post/xyz", title: nil, text: nil} = preview(b)
   end
 
-  defp preview({p, url, target}), do: Embeds.preview(p, url, target, nil)
+  test "videos are marked, and posts with a picture or video get it" do
+    png = <<0x89, "PNG", 0x0D, 0x0A, 0x1A, 0x0A, 13::32, "IHDR", 4::32, 3::32, 8, 6, 0, 0, 0, 0::32, 0::32, "IEND", 0::32>>
+    owner = account("poster").id
+
+    fake([
+      {"https://cdn.syndication.twimg.com/tweet-result?id=1628832338187636740&lang=en&token=3y54libozsy",
+       Jason.encode!(%{
+         text: "look at this https://t.co/abc",
+         user: %{name: "Some One", screen_name: "someone"},
+         mediaDetails: [%{type: "video", url: "https://t.co/abc", media_url_https: "https://pbs.twimg.com/v.jpg"}]
+       })},
+      {"https://public.api.bsky.app/xrpc/app.bsky.feed.getPosts",
+       Jason.encode!(%{
+         posts: [
+           %{
+             author: %{handle: "a.b", displayName: ""},
+             record: %{text: "a clip"},
+             embed: %{"$type" => "app.bsky.embed.video#view", thumbnail: "https://video.bsky.app/t.jpg"}
+           }
+         ]
+       })},
+      {"https://www.reddit.com/r/aww/comments/abc.json",
+       Jason.encode!([
+         %{data: %{children: [%{data: %{title: "a dog", author: "dogs", is_video: true, preview: %{images: [%{source: %{url: "https://preview.redd.it/d.jpg?a=1&amp;b=2"}}]}}}]}}
+       ])},
+      {"https://pbs.twimg.com/v.jpg", png},
+      {"https://video.bsky.app/t.jpg", png},
+      {"https://preview.redd.it/d.jpg?a=1&b=2", png}
+    ])
+
+    [x] = Embeds.links("https://x.com/someone/status/1628832338187636740")
+    assert %{author: "Some One", text: "look at this", video: true, thumb: %{}} = preview(x, owner)
+
+    [b] = Embeds.links("https://bsky.app/profile/a.b/post/xyz")
+    assert %{author: "a.b", text: "a clip", video: true, thumb: %{}} = preview(b, owner)
+
+    [r] = Embeds.links("https://www.reddit.com/r/aww/comments/abc/a_dog/")
+    assert %{title: "a dog", author: "u/dogs", video: true, thumb: %{}} = preview(r, owner)
+
+    # always videos, even when the provider says nothing
+    [y] = Embeds.links("https://youtu.be/dQw4w9WgXcQ")
+    assert %{video: true} = preview(y, owner)
+    [i] = Embeds.links("https://www.instagram.com/reel/C0deX_1/")
+    assert %{video: true} = preview(i, owner)
+    [s] = Embeds.links("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC")
+    assert %{video: false} = preview(s, owner)
+  end
+
+  test "X's embed token is JavaScript's" do
+    for {id, token} <- [{"1", "bhi2ay3f28n"}, {"20", "6dq1a2xwd93"}, {"1628832338187636740", "3y54libozsy"}, {"1902321123456789012", "4mbg7p42j"}] do
+      assert Embeds.x_token(id) == token
+    end
+  end
+
+  defp preview(link, owner \\ nil)
+  defp preview({p, url, target}, owner), do: Embeds.preview(p, url, target, owner)
 
   test "private hosts are never fetched" do
     refute Embeds.public_host?("localhost")

@@ -8,15 +8,18 @@ defmodule Sosh.Embeds do
   provider here recognises are looked up (`attach/1`, in the background)
   and kept on the message (`messages.embeds`), then announced to its chat
   as `embeds` `%{id, embeds}`. Each embed, as clients see it:
-  `%{url, provider, title, author, text, thumb}`, everything but `url`
-  and `provider` maybe nil, `thumb` a picture kept like any other
+  `%{url, provider, title, author, text, thumb, video}`, everything but
+  `url`, `provider` and `video` maybe nil; `video` is true when the link
+  is to a video (clients put a play mark on its picture; opening it goes
+  to the provider, nothing plays here), `thumb` a picture kept like any other
   (`Sosh.Media.view/1`, served from here, so clients never reach the
   provider). A link whose provider won't say anything still gets a bare
   card.
 
   Only providers' own public endpoints are asked (oEmbed, Mastodon's
-  statuses API, a page's OpenGraph tags for Instagram and Threads, unless
-  `META_OEMBED_TOKEN` is set), never the link as given; Mastodon only on
+  statuses API, X's syndication API and Bluesky's public AppView for a
+  post's picture or video, Reddit's JSON, a page's OpenGraph tags for
+  Instagram and Threads, unless `META_OEMBED_TOKEN` is set), never the link as given; Mastodon only on
   the instances in `@mastodon` (plus `SOSH_MASTODON_HOSTS`, comma
   separated). Nothing is fetched from a host that resolves to a private
   address, redirects aren't followed, and answers are capped in size.
@@ -51,6 +54,9 @@ defmodule Sosh.Embeds do
                aus.social mastodon.nz toot.community indieweb.social)
 
   @providers ~w(x instagram threads bluesky mastodon youtube tiktok reddit spotify vimeo soundcloud)
+
+  # links to these are always videos
+  @video_providers ~w(youtube tiktok vimeo)
 
   def providers, do: @providers
 
@@ -224,7 +230,8 @@ defmodule Sosh.Embeds do
       title: get.(:title),
       author: get.(:author),
       text: get.(:text),
-      thumb: get.(:thumb)
+      thumb: get.(:thumb),
+      video: get.(:video) == true
     }
   end
 
@@ -249,8 +256,11 @@ defmodule Sosh.Embeds do
     end
   end
 
+  defp video_target?({:instagram, kind, _}), do: kind in ["reel", "reels", "tv"]
+  defp video_target?(_), do: false
+
   defp bare(provider, url),
-    do: %{url: url, provider: provider, title: nil, author: nil, text: nil, thumb: nil}
+    do: %{url: url, provider: provider, title: nil, author: nil, text: nil, thumb: nil, video: provider in @video_providers}
 
   defp fetched(provider, url, target, owner_id) do
     found =
@@ -271,28 +281,30 @@ defmodule Sosh.Embeds do
       title: clip(found[:title], 200),
       author: clip(found[:author], 80),
       text: clip(found[:text], @max_text),
-      thumb: thumb
+      thumb: thumb,
+      video: provider in @video_providers or found[:video] == true or video_target?(target)
     }
   end
 
   defp ask({:youtube, id}),
     do: oembed("https://www.youtube.com/oembed", "https://www.youtube.com/watch?v=" <> id, format: "json")
 
+  # X's syndication API (what its own embeds use) has the post's picture,
+  # or a video's; its oEmbed only the words.
   defp ask({:x, user, id}) do
-    with {:ok, j} <-
-           oembed_json("https://publish.x.com/oembed", "https://twitter.com/#{user}/status/#{id}",
-             omit_script: "true",
-             dnt: "true"
-           ) do
-      {:ok, %{author: j["author_name"], text: blockquote_text(j["html"]), title: nil}}
+    case x_syndication(id) do
+      {:ok, _} = ok -> ok
+      _ -> x_oembed(user, id)
     end
   end
 
   defp ask({:bluesky, who, rkey}) do
-    with {:ok, j} <- oembed_json("https://embed.bsky.app/oembed", "https://bsky.app/profile/#{who}/post/#{rkey}", format: "json") do
-      {:ok, %{author: j["author_name"], text: blockquote_text(j["html"]), title: nil}}
+    case bluesky_post(who, rkey) do
+      {:ok, _} = ok -> ok
+      _ -> bluesky_oembed(who, rkey)
     end
   end
+
 
   defp ask({:mastodon, host, id}) do
     with {:ok, j} <- get_json("https://#{host}/api/v1/statuses/#{id}") do
@@ -304,7 +316,8 @@ defmodule Sosh.Embeds do
          author: present(account["display_name"]) || account["acct"],
          text: html_text(j["content"] || ""),
          title: nil,
-         thumb_url: media && media["preview_url"]
+         thumb_url: media && media["preview_url"],
+         video: media != nil and media["type"] in ["video", "gifv"]
        }}
     end
   end
@@ -325,7 +338,32 @@ defmodule Sosh.Embeds do
 
   defp ask({:reddit, sub, id, slug}) do
     path = "https://www.reddit.com/r/#{sub}/comments/#{id}/" <> if(slug, do: slug <> "/", else: "")
-    oembed("https://www.reddit.com/oembed", path)
+
+    case reddit_json(sub, id) do
+      {:ok, _} = ok -> ok
+      _ -> oembed("https://www.reddit.com/oembed", path)
+    end
+  end
+
+  # A post's own JSON: its title, and its preview picture (a video's too).
+  defp reddit_json(sub, id) do
+    with {:ok, 200, body} <- get("https://www.reddit.com/r/#{sub}/comments/#{id}.json?limit=1&raw_json=1"),
+         {:ok, [%{"data" => %{"children" => [%{"data" => d} | _]}} | _]} <- Jason.decode(body) do
+      picture =
+        get_in(d, ["preview", "images", Access.at(0), "source", "url"]) ||
+          (is_binary(d["thumbnail"]) and String.starts_with?(d["thumbnail"], "https://") && d["thumbnail"]) || nil
+
+      {:ok,
+       %{
+         title: present(d["title"]),
+         author: present(d["author"]) && "u/" <> d["author"],
+         text: present(d["selftext"]),
+         thumb_url: picture && entities(picture),
+         video: d["is_video"] == true or d["post_hint"] in ["hosted:video", "rich:video"]
+       }}
+    else
+      _ -> :error
+    end
   end
 
   defp ask({:spotify, kind, id}),
@@ -335,6 +373,129 @@ defmodule Sosh.Embeds do
 
   defp ask({:soundcloud, user, track}),
     do: oembed("https://soundcloud.com/oembed", "https://soundcloud.com/#{user}/#{track}", format: "json")
+
+  defp x_syndication(id) do
+    q = URI.encode_query(id: id, lang: "en", token: x_token(id))
+
+    with {:ok, j} <- get_json("https://cdn.syndication.twimg.com/tweet-result?" <> q),
+         true <- is_binary(j["text"]) or is_list(j["mediaDetails"]) do
+      media = List.first(j["mediaDetails"] || []) || %{}
+      user = j["user"] || %{}
+
+      {:ok,
+       %{
+         author: present(user["name"]) || present(user["screen_name"]),
+         text: present(strip_media_links(j["text"] || "", j)),
+         title: nil,
+         thumb_url: media["media_url_https"],
+         video: media["type"] in ["video", "animated_gif"]
+       }}
+    else
+      _ -> :error
+    end
+  end
+
+  # the t.co links X puts at the end for the post's own pictures
+  defp strip_media_links(text, j) do
+    (j["mediaDetails"] || [])
+    |> Enum.map(& &1["url"])
+    |> Enum.filter(&is_binary/1)
+    |> Enum.reduce(text, &String.replace(&2, &1, ""))
+    |> entities()
+    |> String.trim()
+  end
+
+  @doc false
+  # The token X's embed script sends: (id / 1e15 * pi) in base 36, without
+  # its zeros and point (as JavaScript's toString(36) writes it).
+  def x_token(id) do
+    {n, ""} = Integer.parse(id)
+    (n / 1.0e15 * :math.pi()) |> js_base36() |> String.replace(~r/0+|\./, "")
+  end
+
+  @digits ~c"0123456789abcdefghijklmnopqrstuvwxyz"
+
+  # V8's DoubleToRadixCString for radix 36 and a positive double: the
+  # shortest fraction digits that still read back as the same double.
+  defp js_base36(value) do
+    int = Float.floor(value)
+    frac = value - int
+    <<bits::64>> = <<value::float>>
+    <<next::float>> = <<bits + 1::64>>
+    delta = max(0.5 * (next - value), 5.0e-324)
+
+    {int, frac_digits} =
+      if frac >= delta, do: fraction36(frac, delta, [], int), else: {int, []}
+
+    int_digits = Integer.to_string(trunc(int), 36) |> String.downcase()
+    if frac_digits == [], do: int_digits, else: int_digits <> "." <> to_string(Enum.reverse(frac_digits))
+  end
+
+  defp fraction36(frac, delta, acc, int) do
+    frac = frac * 36
+    delta = delta * 36
+    digit = trunc(frac)
+    acc = [Enum.at(@digits, digit) | acc]
+    frac = frac - digit
+
+    cond do
+      (frac > 0.5 or (frac == 0.5 and rem(digit, 2) == 1)) and frac + delta > 1 -> round_up(acc, int)
+      frac >= delta -> fraction36(frac, delta, acc, int)
+      true -> {int, acc}
+    end
+  end
+
+  # carry one into the last digit (acc is reversed)
+  defp round_up([], int), do: {int + 1, []}
+
+  defp round_up([c | rest], int) do
+    d = Enum.find_index(@digits, &(&1 == c))
+    if d + 1 < 36, do: {int, [Enum.at(@digits, d + 1) | rest]}, else: round_up(rest, int)
+  end
+
+  # Bluesky's public AppView: the post, its words and a picture or video.
+  defp bluesky_post(who, rkey) do
+    uri = "at://#{who}/app.bsky.feed.post/#{rkey}"
+
+    with {:ok, %{"posts" => [post | _]}} <-
+           get_json("https://public.api.bsky.app/xrpc/app.bsky.feed.getPosts?" <> URI.encode_query(uris: uri)) do
+      author = post["author"] || %{}
+      {thumb, video} = bluesky_media(post["embed"])
+
+      {:ok,
+       %{
+         author: present(author["displayName"]) || present(author["handle"]),
+         text: present((post["record"] || %{})["text"]),
+         title: nil,
+         thumb_url: thumb,
+         video: video
+       }}
+    else
+      _ -> :error
+    end
+  end
+
+  defp bluesky_media(%{"$type" => "app.bsky.embed.video#view"} = e), do: {e["thumbnail"], true}
+  defp bluesky_media(%{"$type" => "app.bsky.embed.images#view", "images" => [i | _]}), do: {i["thumb"], false}
+  defp bluesky_media(%{"$type" => "app.bsky.embed.external#view", "external" => x}), do: {x["thumb"], false}
+  defp bluesky_media(%{"$type" => "app.bsky.embed.recordWithMedia#view", "media" => m}), do: bluesky_media(m)
+  defp bluesky_media(_), do: {nil, false}
+
+  defp x_oembed(user, id) do
+    with {:ok, j} <-
+           oembed_json("https://publish.x.com/oembed", "https://twitter.com/#{user}/status/#{id}",
+             omit_script: "true",
+             dnt: "true"
+           ) do
+      {:ok, %{author: j["author_name"], text: blockquote_text(j["html"]), title: nil}}
+    end
+  end
+
+  defp bluesky_oembed(who, rkey) do
+    with {:ok, j} <- oembed_json("https://embed.bsky.app/oembed", "https://bsky.app/profile/#{who}/post/#{rkey}", format: "json") do
+      {:ok, %{author: j["author_name"], text: blockquote_text(j["html"]), title: nil}}
+    end
+  end
 
   # An oEmbed answer's usual fields.
   defp oembed(endpoint, url, params \\ []) do
@@ -364,7 +525,8 @@ defmodule Sosh.Embeds do
       text = meta(html, "og:description")
 
       if title || text do
-        {:ok, %{title: title, author: nil, text: text, thumb_url: meta(html, "og:image")}}
+        video = meta(html, "og:video") != nil or String.starts_with?(meta(html, "og:type") || "", "video")
+        {:ok, %{title: title, author: nil, text: text, thumb_url: meta(html, "og:image"), video: video}}
       else
         :error
       end
