@@ -10,7 +10,8 @@
 -- A link to a post or video on another app (Sosh.Embeds: X, Instagram,
 -- Threads, Bluesky, Mastodon, YouTube, TikTok, Reddit, Spotify, Vimeo,
 -- SoundCloud) shows the same way, as its own shape: a tile in the app's
--- colour with an arrow out of it, then the app and what the post is. The
+-- colour with an arrow out of it (a play mark for a video, which plays on
+-- its own app), then the app and what the post is. The
 -- apps show the preview itself (`Media.from_embeds` makes one of these
 -- from a message's `embeds`, the first of them; a picture or cart wins).
 --
@@ -56,6 +57,7 @@ function Media.from_embeds(list)
 	m.title = e.title or e.text or e.author
 	m.author = e.author
 	m.url = e.url
+	m.video = e.video == true
 	m.more = #list - 1
 	return m
 end
@@ -78,6 +80,9 @@ function Media.label(m)
 			t = t .. ": " .. flat
 		elseif m.author ~= nil then
 			t = t .. ": " .. m.author
+		end
+		if m.video then
+			t = t .. " (video)"
 		end
 		if m.more ~= nil and m.more > 0 then
 			t = t .. " +" .. tostring(m.more)
@@ -125,6 +130,14 @@ function Media.glyph(x, y, m, t)
 		local n = w - 4
 		if h - 4 < n then
 			n = h - 4
+		end
+		if m.video then
+			-- a play mark: a triangle pointing right
+			local mid = flr(h / 2)
+			for i = 0, 3 do
+				gui:rect(x + 2 + i, y + mid - 3 + i, 1, 7 - 2 * i, "FFFFFF")
+			end
+			return
 		end
 		for i = 0, n - 1 do
 			gui:rect(x + 2 + i, y + h - 3 - i, 1, 1, "FFFFFF")
