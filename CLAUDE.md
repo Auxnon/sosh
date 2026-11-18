@@ -82,7 +82,7 @@ npm run preview
 - `lib/sosh/`: Core domain logic
   - `universes.ex`: the grid of universes (`universes` table); `sim.ex`: one process per universe running its Rust universe
   - `universe.ex`: Elixir interface to the Rust NIF functions; `world.ex`: block ids and saved chunks in Postgres
-  - `players.ex`: players by name: their bag and which universe they're in (`players` table)
+  - `players.ex`: players by name: their bag, which universe they're in, their recipes in progress and the stations they're in range of (`players` table)
   - `lobby.ex`: who is where right now; `application.ex`: OTP application supervisor tree
 - `lib/sosh_web/`: Web layer
   - `channels/room_channel.ex`: a universe's people (presence, movement, chat); `channels/action_channel.ex`: everything done in it
@@ -90,8 +90,8 @@ npm run preview
   - `endpoint.ex`: Phoenix endpoint configuration
 - `native/universe/`: Rust NIF implementation
   - `src/lib.rs`: NIF function exports
-  - `src/sim.rs`: one universe: crops, cows, carrying, furniture, blueprints, airships, helpers, sleeping (tests in `src/sim/tests.rs`)
-  - `src/terrain.rs` (blocks and floating islands), `src/items.rs` (bags and stacks), `src/furniture.rs` (kinds, footprints, blueprints), `src/ships.rs` (airships)
+  - `src/sim.rs`: one universe: crops, cows and sheep, carrying (and being pinned under it), furniture, crafting and breaking, old blueprints, airships, helpers, sleeping (tests in `src/sim/tests.rs`)
+  - `src/terrain.rs` (blocks and floating islands), `src/items.rs` (bags and stacks), `src/furniture.rs` (kinds, footprints, old blueprints), `src/recipes.rs` (steps, stations, gestures and stroke scoring, salvage), `src/ships.rs` (airships)
 
 ### Frontend Structure
 - `src/App.svelte`: Root component, composes ThreeCanvas and ChatPane
@@ -132,10 +132,13 @@ npm run preview
 ### Universes and the Rust NIF
 - The world is a grid of universes, `{gx, gy}`, each 96x96 blocks of floating islands over the sea or wild land. Channels are per universe: `room:gx,gy` and `actions:gx,gy`. A player is in one at a time (`Sosh.Players`, by name); joining another is refused with `reason: "elsewhere"`.
 - Each universe is a Rust `Sim` (`native/universe/src/sim.rs`) owned by a `Sosh.Sim` GenServer (registered in `Sosh.Sims`, started under `Sosh.SimSup`). The universe owns its blocks; `Sosh.World` only loads and saves the changed chunks.
-- Awake, a universe ticks every 100ms with positions from `Sosh.Lobby` and broadcasts on `actions:gx,gy`. Empty for 10s, it saves and sleeps: only ambient systems run (ships home, a ship rebuilt if none, helpers and cows home); growth catches up on the world ticks it missed when it wakes.
-- Its state (crops, furniture, blueprints, ships, world tick) is saved as JSON in `universes.state`; cows respawn on start.
+- Awake, a universe ticks every 100ms with positions from `Sosh.Lobby` and broadcasts on `actions:gx,gy`. Empty for 10s, it saves and sleeps: only ambient systems run (ships home, a ship rebuilt if none, helpers and cows home); growth (crops, wool) catches up on the world ticks it missed when it wakes.
+- Its state (crops, furniture, blueprints, ships, world tick) is saved as JSON in `universes.state`; cows and sheep respawn on start.
 - Airships are block grids with a pose (`ships.rs`): cells are in the world or in a ship's frame (`on`, the ship id; 0 is the world), so blocks, furniture and blueprints can go aboard. Whoever stands at the helm steers (`helm_action`, `steer`); ships collide with islands and each other; players on deck report `on` and `local` in their moves (`Sosh.Lobby.frame/2`).
 - Airships fly off a universe's edge into the neighbour on that side (if the grid has one), taking everyone and everything aboard: the sim emits `departed` with the cargo, `Sosh.Sim` hands it to the neighbour and broadcasts `travel`.
+- Crafting is recipe steps (`recipes.rs`, the catalog's `recipes`): inputs to an output at a station kind (`veneer`, `bench`, `spinning_wheel`, `loom`) or by hand. Each tick the sim works out the station kinds within reach of each player (twice that in a pocket room); `Sosh.Sim` records changes on the player (`Sosh.Players.set_stations/3`, pushed on `user:<id>`, never broadcast), and again on a player's first tick after (re)joining. `craft_action` goes by that record only, scores the client's stroke (a better one yields more, half at worst) and changes the bag through `change_bag`; furniture too big for a bag is placed (`how: "place"`, reach-checked) or carried (`"carry"`). Hand steps also work outside a world (`craft` on `user:<id>`, `Sosh.Me.craft/2`)
+- Holding furniture with fewer carriers than it takes pins the holder (`Sim::pinned`, `encumbered`): `Sosh.Sim` stands them still in `Sosh.Lobby` (`pinned: true`) and `Sosh.Lobby.move/2` refuses their moves until they're free. `break_action` breaks held or empty furniture in reach for three quarters of its raw materials (`recipes::salvage`), or an old blueprint for all put in it
+- Scaffold blueprints are retired: nothing lays one out any more (no `start_site`/`deposit`); old ones still load, show (`sites`) and can be broken or dug. Sheep (`Sheep`, wandering like cows) are shorn for wool (`shear_action`), which regrows on world ticks
 - Saved state that no longer parses (an older ship, say) is dropped entry by entry, not wholesale (`readable` in `sim.rs`): keep it that way when changing what's saved.
 - Rust tests: `cargo test` in `server/native/universe/`. Editing Rust while `mix phx.server` runs reloads the NIF and can take the app down; restart it
 

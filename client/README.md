@@ -215,7 +215,11 @@ looks, the way home and the bag, which the app has as its own screens). The clie
   (`item`: the item in hand, passed on to your other clients), `crafting`
   (replies `crafting`, the recipes in progress as `{recipe: {step, at}}`, and
   `stations`, the station kinds you're in range of), `set_crafting`
-  (`crafting`: that map; replies the cleaned one, at most 20 recipes), `members`,
+  (`crafting`: that map; replies the cleaned one, at most 20 recipes),
+  `craft` (`step`: a recipe step done outside any world, a hand step or
+  one at a station you're in range of in one, with no stroke; replies
+  what came of it as `craft_action` does, and your `bag`; heavy furniture
+  is `place_or_carry`, finished only in a world), `members`,
   `member` (moderation), `invite`, `server_update`, `media_ticket`
   (`place`: `"server:<id>"`: a ticket for the web page to share pictures
   there), `upload` (`data` in base64, `name`: a picture or cart to attach,
@@ -248,17 +252,45 @@ Inside a server, the client also joins two channels for its universe:
   is refused with `reason: "elsewhere"` and the `universe` you are in, and
   the client goes there. See `SoshWeb.RoomChannel`.
 - **`actions:gx,gy`**: everything else. See `SoshWeb.ActionChannel` and
-  `Sosh.Sim`. The join reply is the universe: crops, cows, furniture,
-  blueprints (`sites`), ships, helpers, who holds what, which sides lead
-  to another universe (`open`), and what lies below (`kind`). It also
-  carries your `bag` and the `catalog` of items and furniture.
+  `Sosh.Sim`. The join reply is the universe: crops, cows, `sheep`
+  (`id`, `x`, `y`, `z`, `heading`, `woolly`), furniture, blueprints left
+  from before recipes (`sites`), ships, helpers, who holds what (and
+  whether it pins them), which sides lead to another universe (`open`),
+  and what lies below (`kind`). It also carries your `bag` and the
+  `catalog`: items, furniture kinds (each with its `recipe` and whether
+  it's a `station`), `recipes` (steps: `id`, `inputs`, `outputs`,
+  `station` or nil for a hand step, `gesture`, whether it takes a
+  `stroke`, and whether it goes `to_bag`), `stations` and `gestures`.
   - `get_chunks` returns 16×16×16 chunks, run-length encoded.
   - Cells are in the world, or, with `on` a ship's id, in that ship's own
     frame. Every action aimed at a cell takes `on`.
   - `dig_action`, `place_action` (`item`, `rot`), `plant_action` and
     `harvest_action` edit the world, and ships.
-  - `build_action` (`kind`, `rot`) lays out a blueprint, and
-    `deposit_action` puts ingredients in.
+  - `craft_action` (`step`, `stroke` [[x, y], ...] drawn in the station's
+    area, 0..1 each way) does a recipe step. Station steps need you in
+    range of that kind of station by the server's own count (pushed as
+    `stations` on `user:<id>`; nothing the client says counts), and a
+    better stroke yields more, never less than half and never none.
+    Furniture too big for a bag needs `how`: `place` builds it at
+    `position` (`on`, `rot`, within reach), `carry` puts it in your arms.
+    Replies `step`, `item`, `n`, `score`, `how` (`bag`, `place` or
+    `carry`), `furniture` (its id) and `bag`; errors include
+    `no_station_near`, `missing_ingredients`, `bag_full`,
+    `place_or_carry`, `occupied` and `hands_full`.
+  - `break_action` (`furniture`, an empty piece in reach or yours in your
+    arms; `site`, a blueprint from before recipes; or neither, what you
+    hold) breaks it for three quarters of its raw materials (a blueprint:
+    everything put in it), into the bag or a sack at your feet. Replies
+    `returned` [[item, n]], `sack` and `bag`.
+  - `shear_action` (`sheep`) shears a sheep in reach: `wool` and `bag`. Its
+    wool grows back after a while.
+  - Holding furniture that takes more carriers than it has (a dresser,
+    alone) pins you: `encumbered` (`user_id`, `pinned`, `on`, `at`) says
+    where you're stuck, the server stands you still there with a `move`
+    and ignores yours until a second carrier takes hold, or you put it
+    down or break it (`encumbered` again, `pinned` false).
+  - `build_action` and `deposit_action` are retired with scaffold
+    blueprints (`bad_request`).
   - `pick_up_action` (`position`, `cow`, `furniture` or `player`, a user
     id) and `put_down_action` (`rot`) carry things; `call_helper_action`
     asks a helper for a hand. Someone carried sends `wiggle` (each move key
@@ -290,8 +322,10 @@ Inside a server, the client also joins two channels for its universe:
     [thrust, turn, lift], each -1..1) flies the ship.
 
   Every reply that changes your bag carries the new one. Broadcasts cover
-  everything as it changes: `block_changed`, `crop`, `cows`, `moo`,
-  `carry`, `furniture`/`furniture_gone`, `site`/`site_gone`, `helpers`,
+  everything as it changes: `block_changed`, `crop`, `cows`, `sheep`
+  (rows like `cows`), `wool` (`id`, `woolly`: shorn or grown back), `moo`,
+  `carry` (with `pinned`), `encumbered`, `furniture`/`furniture_gone`,
+  `site`/`site_gone`, `helpers`,
   `ship` (a whole ship: pose, pilot, blocks; `pocket` and `door` for a
   room), `ship_block`, `ships` (poses and velocities, ten times a second),
   `travel` when a ship crosses into the next universe with its riders, and
