@@ -13,6 +13,11 @@ defmodule Sosh.Player do
     # marbles, not in the bag (`Sosh.Players.deposit/2`)
     field :wallet, :integer, default: 0
 
+    # recipes in progress: %{name => %{"step" => n, "at" => unix seconds}}
+    field :crafting, :map, default: %{}
+    # station kinds in range right now, set by the universe's sim
+    field :stations, {:array, :string}, default: []
+
     timestamps(type: :utc_datetime)
   end
 end

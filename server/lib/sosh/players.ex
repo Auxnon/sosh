@@ -20,11 +20,16 @@ defmodule Sosh.Players do
 
   @wallet_max 999_999_999
 
+  @crafting_max 20
+  @recipe_max 64
+  @station_max 32
+  @stations_max 32
+
   def wallet_max, do: @wallet_max
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @doc "`%{name, universe, at, bag, wallet}`; a new player starts in universe (0, 0)."
+  @doc "`%{name, universe, at, bag, wallet, crafting, stations}`; a new player starts in universe (0, 0)."
   def get(name), do: GenServer.call(__MODULE__, {:get, name})
 
   def bag(name), do: get(name).bag
@@ -46,6 +51,67 @@ defmodule Sosh.Players do
   def change_bag(name, fun), do: GenServer.call(__MODULE__, {:change_bag, name, fun})
 
   def wallet(name), do: get(name).wallet
+
+  @doc """
+  The recipes they have in progress: `%{recipe => %{"step" => n, "at" => unix seconds}}`.
+  """
+  def crafting(name), do: get(name).crafting
+
+  @doc """
+  Save the recipes in progress, cleaned (`clean_crafting/1`): `{:ok, saved}`.
+  A change is pushed to the account's clients as `crafting` on `user:<id>`.
+  """
+  def set_crafting(name, map),
+    do: GenServer.call(__MODULE__, {:set_crafting, name, clean_crafting(map)})
+
+  @doc "The station kinds they're in range of right now, sorted."
+  def stations(name), do: get(name).stations
+
+  @doc """
+  Record which station kinds they're in range of (only a universe's sim
+  calls this): `{:ok, saved}`, sorted and de-duplicated. A change is pushed
+  as `stations` on `user:<id>`. They're emptied when the player leaves.
+  """
+  def set_stations(name, list),
+    do: GenServer.call(__MODULE__, {:set_stations, name, clean_stations(list)})
+
+  @doc """
+  Clean a crafting map: keys are recipe names (strings, up to
+  #{@recipe_max} bytes), values keep an integer `step` >= 0 and an integer
+  `at`; anything else is dropped. Only the #{@crafting_max} most recent
+  (by `at`) are kept.
+  """
+  def clean_crafting(map) when is_map(map) do
+    map
+    |> Enum.flat_map(fn
+      {k, %{} = v} when is_binary(k) and byte_size(k) in 1..@recipe_max ->
+        step = Map.get(v, "step", Map.get(v, :step))
+        at = Map.get(v, "at", Map.get(v, :at))
+
+        if is_integer(step) and step >= 0 and is_integer(at),
+          do: [{k, %{"step" => step, "at" => at}}],
+          else: []
+
+      _ ->
+        []
+    end)
+    |> Enum.sort_by(fn {k, v} -> {-v["at"], k} end)
+    |> Enum.take(@crafting_max)
+    |> Map.new()
+  end
+
+  def clean_crafting(_), do: %{}
+
+  @doc "A station list cleaned: strings of 1 to #{@station_max} bytes, sorted, once each (at most #{@stations_max})."
+  def clean_stations(list) when is_list(list) do
+    list
+    |> Enum.filter(&(is_binary(&1) and byte_size(&1) in 1..@station_max))
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.take(@stations_max)
+  end
+
+  def clean_stations(_), do: []
 
   @doc """
   Empty the bag of marbles in `slot` into the wallet: `{:ok, bag, wallet}`.
@@ -90,7 +156,12 @@ defmodule Sosh.Players do
 
   def handle_call({:update, name, changes}, _from, state) do
     {p, state} = fetch(state, name)
+    was = p.stations
+    from = p.universe
     p = Map.merge(p, changes)
+    # changing universe leaves the old one's stations behind
+    p = if p.universe != from, do: %{p | stations: []}, else: p
+    if was != [] and p.stations == [], do: push(name, "stations", %{stations: []})
     store(p)
     {:reply, :ok, Map.put(state, name, p)}
   end
@@ -116,6 +187,28 @@ defmodule Sosh.Players do
       {:ok, bag} = r when is_list(bag) -> {:reply, r, keep(state, %{p | bag: bag})}
       {:ok, _, bag} = r when is_list(bag) -> {:reply, r, keep(state, %{p | bag: bag})}
       other -> {:reply, other, state}
+    end
+  end
+
+  def handle_call({:set_crafting, name, map}, _from, state) do
+    {p, state} = fetch(state, name)
+
+    if p.crafting == map do
+      {:reply, {:ok, map}, state}
+    else
+      push(name, "crafting", %{crafting: map})
+      {:reply, {:ok, map}, keep(state, %{p | crafting: map})}
+    end
+  end
+
+  def handle_call({:set_stations, name, list}, _from, state) do
+    {p, state} = fetch(state, name)
+
+    if p.stations == list do
+      {:reply, {:ok, list}, state}
+    else
+      push(name, "stations", %{stations: list})
+      {:reply, {:ok, list}, keep(state, %{p | stations: list})}
     end
   end
 
@@ -154,8 +247,10 @@ defmodule Sosh.Players do
     {p, state} = fetch(state, name)
 
     if p.universe == u do
-      p = %{p | at: at}
+      was = p.stations
+      p = %{p | at: at, stations: []}
       store(p)
+      if was != [], do: push(name, "stations", %{stations: []})
       {:reply, :ok, Map.put(state, name, p)}
     else
       {:reply, :ok, state}
@@ -163,6 +258,14 @@ defmodule Sosh.Players do
   end
 
   def handle_call(:reset, _from, _state), do: {:reply, :ok, %{}}
+
+  # Tell every client of the player's account (the player is named by handle).
+  defp push(name, event, payload) do
+    case Sosh.Accounts.get_by_handle(name) do
+      %{id: id} -> SoshWeb.Endpoint.broadcast("user:#{id}", event, payload)
+      nil -> :ok
+    end
+  end
 
   defp keep(state, p) do
     store(p)
@@ -186,7 +289,7 @@ defmodule Sosh.Players do
   end
 
   defp new(name) do
-    p = %{name: name, universe: {0, 0}, at: nil, bag: Universe.starter_bag(), wallet: 0}
+    p = %{name: name, universe: {0, 0}, at: nil, bag: Universe.starter_bag(), wallet: 0, crafting: %{}, stations: []}
     store(p)
     p
   end
@@ -201,15 +304,27 @@ defmodule Sosh.Players do
       end)
 
     at = if r.at, do: List.to_tuple(r.at)
-    %{name: r.name, universe: {r.gx, r.gy}, at: at, bag: bag, wallet: r.wallet || 0}
+    %{
+      name: r.name,
+      universe: {r.gx, r.gy},
+      at: at,
+      bag: bag,
+      wallet: r.wallet || 0,
+      crafting: clean_crafting(r.crafting || %{}),
+      stations: clean_stations(r.stations || [])
+    }
   end
 
-  defp store(%{name: name, universe: {gx, gy}, at: at, bag: bag, wallet: wallet}) do
+  defp store(%{name: name, universe: {gx, gy}, at: at, bag: bag, wallet: wallet} = p) do
     at = if at, do: Enum.map(Tuple.to_list(at), &(&1 * 1.0))
 
     Repo.insert!(
-      %Player{name: name, gx: gx, gy: gy, at: at, bag: %{"slots" => bag_json(bag)}, wallet: wallet},
-      on_conflict: {:replace, [:gx, :gy, :at, :bag, :wallet, :updated_at]},
+      %Player{name: name, gx: gx, gy: gy, at: at, bag: %{"slots" => bag_json(bag)},
+        wallet: wallet,
+        crafting: p.crafting,
+        stations: p.stations
+      },
+      on_conflict: {:replace, [:gx, :gy, :at, :bag, :wallet, :crafting, :stations, :updated_at]},
       conflict_target: :name
     )
   end

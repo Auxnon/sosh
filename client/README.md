@@ -212,13 +212,16 @@ looks, the way home and the bag, which the app has as its own screens). The clie
   `bag_swap` (`a`, `b`: sort the bag by swapping two slots), `wallet`
   (`deposit`: a slot holding a bag of marbles, or `withdraw`: how many;
   replies `bag` and `wallet`), `hold`
-  (`item`: the item in hand, passed on to your other clients), `members`,
+  (`item`: the item in hand, passed on to your other clients), `crafting`
+  (replies `crafting`, the recipes in progress as `{recipe: {step, at}}`, and
+  `stations`, the station kinds you're in range of), `set_crafting`
+  (`crafting`: that map; replies the cleaned one, at most 20 recipes), `members`,
   `member` (moderation), `invite`, `server_update`, `media_ticket`
   (`place`: `"server:<id>"`: a ticket for the web page to share pictures
   there), `upload` (`data` in base64, `name`: a picture or cart to attach,
   for clients that can't make HTTP requests). Events tell you
-  when servers, friends, your bag, your `wallet`, the item in hand or
-  your character change, and about DMs and gifts. See `SoshWeb.UserChannel`.
+  when servers, friends, your bag, your `wallet`, your `crafting`, your
+  `stations`, the item in hand or your character change, and about DMs and gifts. See `SoshWeb.UserChannel`.
 - **`server:<id>`**: a server's chat, for its members. `post` (`body`, and
   optionally `gift: {item, count, to}` and `media`, the key of an upload) and `history`; `message`, `gift`,
   `edited`, `deleted`, `reactions`, `pins` and `members` come in. Gifts go out wrapped: who they're for,

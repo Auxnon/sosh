@@ -8,6 +8,8 @@ defmodule SoshWeb.UserChannel do
     * `dm` `%{conversation_id, from, message}` - a direct message
     * `gift` `%{message_id, from}` - items were sent to you
     * `bag` `%{bag}`, `character` `%{character}`
+    * `crafting` `%{crafting}`, `stations` `%{stations}` - the recipes in
+      progress and the station kinds in range changed
     * `hold` `%{item}` - the item in hand (nil for none), as one of the
       account's clients chose it, so the others (the app's pockets, the
       game) follow
@@ -24,7 +26,10 @@ defmodule SoshWeb.UserChannel do
   {id} (a message), `bag_swap` {a, b} (two slot indexes) -> {bag}, `bag` {move: [from, to]} |
   {split: [slot, n]} | {drop: slot} -> {bag} (see `Sosh.Me.bag_op/2`),
   `wallet` {deposit: slot} | {withdraw: n} -> {bag, wallet}, `hold`
-  {item} (an item name or nil; not kept, only passed on), `logout`.
+  {item} (an item name or nil; not kept, only passed on), `crafting` ->
+  {crafting, stations}, `set_crafting` {crafting} (a map of recipe =>
+  {step, at}; see `Sosh.Players.clean_crafting/1`) -> {crafting} as saved,
+  `logout`.
   """
   use Phoenix.Channel
 
@@ -142,6 +147,12 @@ defmodule SoshWeb.UserChannel do
   defp answer("bag", p, me, _), do: wrap(Me.bag_op(me, Me.bag_op_of(p)), &%{bag: &1})
 
   defp answer("wallet", p, me, _), do: wrap(Me.wallet(me, Me.wallet_op(p)), & &1)
+
+  defp answer("crafting", _, me, _),
+    do: {:ok, %{crafting: Sosh.Players.crafting(me.handle), stations: Sosh.Players.stations(me.handle)}}
+
+  defp answer("set_crafting", %{"crafting" => c}, me, _) when is_map(c),
+    do: wrap(Sosh.Players.set_crafting(me.handle, c), &%{crafting: &1})
 
   defp answer("hold", %{"item" => item}, _, socket) when is_nil(item) or (is_binary(item) and byte_size(item) <= 32) do
     broadcast!(socket, "hold", %{item: item})
