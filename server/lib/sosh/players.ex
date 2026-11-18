@@ -73,7 +73,14 @@ defmodule Sosh.Players do
   as `stations` on `user:<id>`. They're emptied when the player leaves.
   """
   def set_stations(name, list),
-    do: GenServer.call(__MODULE__, {:set_stations, name, clean_stations(list)})
+    do: GenServer.call(__MODULE__, {:set_stations, name, clean_stations(list), nil})
+
+  @doc """
+  The same, only if they're in universe `u` (a universe they've left can't
+  overwrite the next one's): `{:error, :elsewhere}` if they aren't.
+  """
+  def set_stations(name, list, u),
+    do: GenServer.call(__MODULE__, {:set_stations, name, clean_stations(list), u})
 
   @doc """
   Clean a crafting map: keys are recipe names (strings, up to
@@ -201,14 +208,19 @@ defmodule Sosh.Players do
     end
   end
 
-  def handle_call({:set_stations, name, list}, _from, state) do
+  def handle_call({:set_stations, name, list, u}, _from, state) do
     {p, state} = fetch(state, name)
 
-    if p.stations == list do
-      {:reply, {:ok, list}, state}
-    else
-      push(name, "stations", %{stations: list})
-      {:reply, {:ok, list}, keep(state, %{p | stations: list})}
+    cond do
+      u != nil and p.universe != u ->
+        {:reply, {:error, :elsewhere}, state}
+
+      p.stations == list ->
+        {:reply, {:ok, list}, state}
+
+      true ->
+        push(name, "stations", %{stations: list})
+        {:reply, {:ok, list}, keep(state, %{p | stations: list})}
     end
   end
 

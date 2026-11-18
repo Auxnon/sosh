@@ -22,7 +22,9 @@ defmodule SoshWeb.RoomChannel do
       only updates the server's: it isn't sent on to anyone. On an airship `on` is its id and
       `local` [x, y, z] where on it they stand, with `v` and `to` in its
       frame too (`at` is only roughly where that was in the world); else
-      `on` is 0 and `local` nil.
+      `on` is 0 and `local` nil. Someone overencumbered (`encumbered` on
+      `actions:gx,gy`) can't move: the server sends one `move` standing
+      them still where they're stuck and ignores theirs until they're free.
     * `face` `%{user_id, face}`, `animation` `%{user_id, animation}`
     * `new_msg` `%{user_id, name, body}` - chat, echoed to the sender too
     * `emote` `%{user_id, emote}` - one of wave, dance, jump, cheer
@@ -173,9 +175,17 @@ defmodule SoshWeb.RoomChannel do
 
     now = Lobby.now()
     user_id = socket.assigns.user_id
-    news = not restated?(Lobby.get(user_id), motion, now)
-    Lobby.update(user_id, Map.put(motion, :t, now))
-    if news, do: broadcast_from!(socket, "move", Map.put(motion, :user_id, user_id))
+
+    # overencumbered (`encumbered` on actions:gx,gy), they stay put
+    case Lobby.move(user_id, Map.put(motion, :t, now)) do
+      {:ok, prev} ->
+        if not restated?(prev, motion, now),
+          do: broadcast_from!(socket, "move", Map.put(motion, :user_id, user_id))
+
+      :pinned ->
+        :ok
+    end
+
     {:noreply, socket}
   end
 

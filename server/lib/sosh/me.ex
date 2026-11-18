@@ -139,6 +139,26 @@ defmodule Sosh.Me do
     end
   end
 
+  @doc """
+  Do recipe step `step` outside any world: a hand step (no station), or
+  one at a station they're recorded as in reach of (`Sosh.Players.stations/1`),
+  with no stroke drawn (the least a stroke yields). Furniture too big for a
+  bag can't be made this way (`place_or_carry`: it's finished in a world).
+  `{:ok, %{step, item, n, score, how, furniture, bag}}`, the bag also told
+  to every client of the account (`user:<id>` `bag`).
+  """
+  def craft(%User{handle: h, id: id}, step) when is_binary(step) and byte_size(step) <= 64 do
+    stations = Players.stations(h)
+
+    with {:ok, made, bag} <- Players.change_bag(h, &Universe.craft(step, [], stations, &1)) do
+      json = Players.bag_json(bag)
+      SoshWeb.Endpoint.broadcast("user:#{id}", "bag", %{bag: json})
+      {:ok, Map.put(made, :bag, json)}
+    end
+  end
+
+  def craft(_, _), do: {:error, :no_such_step}
+
   @doc "What the wallet's params (`deposit` a slot or `withdraw` a count) ask for."
   def wallet_op(%{"deposit" => slot}) when is_integer(slot), do: {:deposit, slot}
   def wallet_op(%{"withdraw" => n}) when is_integer(n), do: {:withdraw, n}

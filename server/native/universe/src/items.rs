@@ -30,6 +30,24 @@ const fn block(name: &'static str, id: u8) -> ItemInfo {
     }
 }
 
+const fn plain(name: &'static str) -> ItemInfo {
+    ItemInfo {
+        name,
+        stack: 64,
+        block: None,
+        furniture: None,
+    }
+}
+
+const fn furniture(name: &'static str, stack: u16) -> ItemInfo {
+    ItemInfo {
+        name,
+        stack,
+        block: None,
+        furniture: Some(name),
+    }
+}
+
 pub const ITEMS: &[ItemInfo] = &[
     block("grass", terrain::GRASS),
     block("dirt", terrain::DIRT),
@@ -42,12 +60,18 @@ pub const ITEMS: &[ItemInfo] = &[
     block("balloon", terrain::BALLOON),
     block("rail", terrain::RAIL),
     block("helm", terrain::HELM),
-    ItemInfo {
-        name: "carrot",
-        stack: 64,
-        block: None,
-        furniture: None,
-    },
+    plain("carrot"),
+    // made things (`recipes`): wood veneered into planks, planks sawn into
+    // posts; sheep's wool spun into yarn, yarn woven into cloth
+    plain("plank"),
+    plain("post"),
+    plain("wool"),
+    plain("yarn"),
+    plain("cloth"),
+    // stations that pack into a bag (`recipes::STATIONS`)
+    furniture("veneer", 1),
+    furniture("bench", 1),
+    furniture("spinning_wheel", 1),
     ItemInfo {
         name: "drawer",
         stack: 4,

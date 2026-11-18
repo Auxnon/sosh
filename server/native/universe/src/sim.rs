@@ -1,7 +1,8 @@
 //! A universe: one cell of the grid of worlds. It owns its blocks (floating
-//! islands, see `terrain`), what grows on them, the cows that wander them,
-//! the furniture built on them and what's inside it, the airships between
-//! them, the helpers who carry heavy things, and what everyone holds.
+//! islands, see `terrain`), what grows on them, the cows and sheep that
+//! wander them, the furniture built on them and what's inside it, the
+//! airships between them, the helpers who carry heavy things, and what
+//! everyone holds.
 //!
 //! **Frames.** A cell is in the world, or in a ship's own frame (`on`, the
 //! ship's id; 0 is the world). Ships are blocks too: whatever can be built
@@ -16,8 +17,18 @@
 //! it slept through at once, since crops grow on the tick count alone.
 //!
 //! **Hands.** A player holds one thing: a carryable block, a cow, a piece
-//! of furniture, or another player (who can wiggle free: `wiggle`). Furniture that takes two (`Kind::carriers`) stays put
-//! when grabbed until a second player, or a helper, takes the other end.
+//! of furniture, or another player (who can wiggle free: `wiggle`).
+//! Furniture that takes two (`Kind::carriers`) stays put when grabbed until
+//! a second player, or a helper, takes the other end. Heavy furniture made
+//! straight into someone's arms (`craft`) is up with too few hands under
+//! it: they're overencumbered (`pinned`), stuck where they stand until
+//! someone takes the other end, they put it down, or they break it.
+//!
+//! **Crafting.** Recipe steps (`recipes`) are done at stations, furniture
+//! of a station kind. Each tick works out which station kinds each player
+//! is in reach of (`stations_near`; twice as far in a pocket room) and says
+//! when that changes (`Event::Stations`), for the caller to keep on the
+//! player: crafting checks that record, never the client's word.
 //!
 //! **Bags.** Players' bags belong to the caller (they follow players from
 //! one universe to the next). Anything that gives or takes items is passed
@@ -39,6 +50,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::furniture::{self, Furniture, Grip, Site};
 use crate::items::{self, Slot};
+use crate::recipes::{self, Made};
 use crate::ships::{self, Helm, Pocket, Pose, Ship, Side};
 use crate::terrain::{
     self, cell, Island, Pos, Rng, Terrain, AIR, DIRT, FURNITURE, GRASS, POT, SCAFFOLD,
@@ -62,6 +74,13 @@ pub const REACH: f64 = 7.0;
 pub const CARRY_Z: f64 = 1.5;
 /// Ripe at this stage.
 pub const RIPE: u8 = 3;
+/// World ticks a shorn sheep takes to grow its wool back: five minutes.
+pub const WOOL_REGROW_TICKS: i64 = 3000;
+/// Wool a shearing gives.
+pub const SHEAR_WOOL: u16 = 3;
+/// How far someone overencumbered can stray from where they're stuck
+/// before they're put back.
+pub const PIN_SLACK: f64 = 0.75;
 
 const COW_SPEED: f64 = 0.9; // tiles per second
 const COW_TURN: f64 = 4.0; // radians per second
@@ -114,6 +133,16 @@ pub struct Cow {
     pub pen: Option<u32>,
 }
 
+/// A sheep: wanders like a cow (it is one, as far as walking goes) and
+/// grows wool, which shearing takes.
+pub struct Sheep {
+    pub body: Cow,
+    /// The world tick it was last shorn at.
+    shorn: Option<i64>,
+    /// Its wool has grown (back).
+    pub woolly: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Task {
     Idle,
@@ -155,6 +184,8 @@ struct Holder {
     held: Held,
     /// Where they last stood (feet), from the last tick or the pick up.
     at: (f64, f64, f64),
+    /// The same, in the frame they stood in, as they last said.
+    frame: Option<(u32, (f64, f64, f64))>,
     /// A carried player's wiggles so far, and when the last one was.
     wiggles: u32,
     wiggle_ms: i64,
@@ -165,10 +196,39 @@ impl Holder {
         Holder {
             held,
             at,
+            frame: None,
             wiggles: 0,
             wiggle_ms: i64::MIN / 2,
         }
     }
+}
+
+/// Where someone stands: frame, and feet in it.
+pub type Spot = (u32, (f64, f64, f64));
+
+/// How a step that makes heavy furniture finishes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Finish {
+    /// Built in frame `on` with its origin at the cell, turned.
+    Place(u32, Pos, u8),
+    /// Into the arms of whoever made it, standing there.
+    Carry(Spot),
+}
+
+/// What a craft did: what it made, and the furniture, if it's furniture
+/// that was placed or carried rather than bagged.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Crafted {
+    pub made: Made,
+    pub furniture: Option<u32>,
+    pub carried: bool,
+}
+
+/// What breaking something gave back, and the sack what didn't fit went in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Broken {
+    pub back: Vec<(String, u16)>,
+    pub sack: Option<u32>,
 }
 
 /// Where going through a door puts you: frame, feet in it, facing.
@@ -203,6 +263,13 @@ pub enum Event {
     Evicted(u32, Door),
     /// Someone dug up a bag of marbles: how many.
     Found(String, u32),
+    /// The station kinds a player is in reach of now.
+    Stations(String, Vec<&'static str>),
+    /// A player is overencumbered and stuck at the spot (sent again if
+    /// they stray from it), or free again (None).
+    Encumbered(String, Option<Spot>),
+    /// A sheep was shorn or its wool grew back.
+    Sheep(u32),
 }
 
 /// A ship leaving for the next universe, and all it takes along.
@@ -233,6 +300,8 @@ pub struct TickOut {
     /// [id, x, y, z, heading, vx, vy, vz, spin] for every ship that moved.
     pub ships: Vec<Vec<f64>>,
     pub helpers: Vec<(u32, f64, f64, f64, f64)>,
+    /// As `cows`, for sheep.
+    pub sheep: Vec<(u32, f64, f64, f64, f64)>,
 }
 
 /// What `grab` did with the furniture.
@@ -283,16 +352,23 @@ pub struct Sim {
     pub islands: Vec<Island>,
     pub crops: HashMap<Pos, Crop>,
     pub cows: Vec<Cow>,
+    pub sheep: Vec<Sheep>,
     pub furniture: HashMap<u32, Furniture>,
     pub sites: HashMap<u32, Site>,
     pub ships: Vec<Ship>,
     pub helpers: Vec<Helper>,
     holders: HashMap<String, Holder>,
+    /// Who's overencumbered: where they're stuck, and whether they've been
+    /// said to stray from it since they were last put back.
+    pins: HashMap<String, (Spot, bool)>,
     // cows lifted since the last tick, mooing about it
     lifted: Vec<u32>,
     events: Vec<Event>,
     next_id: u32,
     next_cow: u32,
+    next_sheep: u32,
+    /// The station kinds each player was last in reach of, when any.
+    access: HashMap<String, Vec<&'static str>>,
     stage_ms: i64,
     pub world_tick: i64,
     tick_acc_ms: i64,
@@ -316,15 +392,19 @@ impl Sim {
             islands: Vec::new(),
             crops: HashMap::new(),
             cows: Vec::new(),
+            sheep: Vec::new(),
             furniture: HashMap::new(),
             sites: HashMap::new(),
             ships: Vec::new(),
             helpers: Vec::new(),
             holders: HashMap::new(),
+            pins: HashMap::new(),
             lifted: Vec::new(),
             events: Vec::new(),
             next_id: 1,
             next_cow: 1,
+            next_sheep: 1,
+            access: HashMap::new(),
             stage_ms: stage_ms.max(1),
             world_tick: 0,
             tick_acc_ms: 0,
@@ -443,6 +523,7 @@ impl Sim {
     }
 
     pub fn drain_events(&mut self) -> Vec<Event> {
+        self.update_pins();
         std::mem::take(&mut self.events)
     }
 
@@ -592,7 +673,7 @@ impl Sim {
 
     /// What runs while nobody is here: empty ships fly back to their docks,
     /// a universe left without a ship builds one, helpers put down what they
-    /// hold and go home, cows amble home.
+    /// hold and go home, cows and sheep amble home.
     pub fn ambient(&mut self, now_ms: i64) {
         if !self.has_ship() {
             if let Some(dock) = self.home_dock() {
@@ -628,7 +709,8 @@ impl Sim {
             h.task = Task::Idle;
             h.pen = None;
         }
-        for c in self.cows.iter_mut() {
+        let flock = self.sheep.iter_mut().map(|s| &mut s.body);
+        for c in self.cows.iter_mut().chain(flock) {
             if !c.carried {
                 c.target = Some(c.home);
                 c.idle_until_ms = now_ms;
@@ -735,8 +817,18 @@ impl Sim {
         grown.min(RIPE as i64) as u8
     }
 
-    /// Bring every crop's stage up to the world tick.
+    /// Bring every crop's stage, and every sheep's wool, up to the world
+    /// tick.
     fn grow(&mut self) {
+        let now = self.world_tick;
+        for sh in self.sheep.iter_mut() {
+            let grown = sh.shorn.is_none_or(|t| now - t >= WOOL_REGROW_TICKS);
+            if grown && !sh.woolly {
+                sh.woolly = true;
+                sh.shorn = None;
+                self.events.push(Event::Sheep(sh.body.id));
+            }
+        }
         let mut changed = Vec::new();
         for (p, c) in self.crops.iter() {
             let stage = self.stage_at(c.planted);
@@ -998,8 +1090,9 @@ impl Sim {
         Some(f)
     }
 
-    /// Break furniture apart: some of what it was made of and everything it
-    /// held go into `bag`, and what doesn't fit is left in a sack.
+    /// Break furniture apart (dug): three quarters of what it was made of
+    /// (`recipes::salvage`) and everything it held go into `bag`, and what
+    /// doesn't fit is left in a sack where it stood.
     pub fn break_furniture(&mut self, _user: &str, id: u32, bag: &mut Bag) -> R<()> {
         let f = self.furniture.get(&id).ok_or("no_such_furniture")?;
         if f.fixed() {
@@ -1009,7 +1102,7 @@ impl Sim {
             return Err("in_use");
         }
         let (on, origin, rot) = (f.on, f.origin, f.rot);
-        let mut back: Vec<(String, u16)> = furniture::salvage(f.info())
+        let mut back: Vec<(String, u16)> = recipes::salvage(&f.kind)
             .into_iter()
             .map(|(i, n)| (i.to_string(), n))
             .collect();
@@ -1065,19 +1158,7 @@ impl Sim {
         let marbles = items::marbles_in(&st.item);
         let kind = furniture::kind(if marbles.is_some() { "marbles" } else { "sack" })
             .expect("sacks and marbles exist");
-        let mut spot = if self.room(on, p, kind.size, 0) {
-            p
-        } else {
-            self.find_room(on, p, kind.size, 0, 3)
-                .ok_or("no_room_to_drop")?
-        };
-        for _ in 0..DROP_FALL {
-            let below = (spot.0, spot.1, spot.2 - 1);
-            if !self.holds(on, below) || !self.room(on, below, kind.size, 0) {
-                break;
-            }
-            spot = below;
-        }
+        let spot = self.settle(on, p, kind.size, 3).ok_or("no_room_to_drop")?;
         bag[slot] = None;
         let id = self.new_id();
         let mut f = Furniture::new(id, kind, spot, 0);
@@ -1088,6 +1169,58 @@ impl Sim {
         }
         self.put_furniture(f);
         Ok(id)
+    }
+
+    /// Where something `size` big set down at `p` in frame `on` comes to
+    /// rest: there or the nearest room within `r`, fallen to whatever is
+    /// under it.
+    fn settle(&self, on: u32, p: Pos, size: (i32, i32, i32), r: i32) -> Option<Pos> {
+        let mut spot = if self.room(on, p, size, 0) {
+            p
+        } else {
+            self.find_room(on, p, size, 0, r)?
+        };
+        for _ in 0..DROP_FALL {
+            let below = (spot.0, spot.1, spot.2 - 1);
+            if !self.holds(on, below) || !self.room(on, below, size, 0) {
+                break;
+            }
+            spot = below;
+        }
+        Some(spot)
+    }
+
+    /// Put `stuff` in `bag`; what doesn't fit is set down in a sack at the
+    /// feet `at` in frame `on`, as `drop_stack` would. The sack, if any.
+    fn give_at_feet(
+        &mut self,
+        bag: &mut Bag,
+        stuff: &[(String, u16)],
+        on: u32,
+        at: (f64, f64, f64),
+    ) -> Option<u32> {
+        let mut over: Vec<Slot> = Vec::new();
+        for (item, n) in stuff {
+            let mut left = items::add(bag, item, *n);
+            while left > 0 {
+                over.push(None);
+                left = items::add(&mut over, item, left);
+            }
+        }
+        if over.is_empty() {
+            return None;
+        }
+        let sack = furniture::kind("sack").expect("sacks exist");
+        let p = Self::cell_in(at);
+        let spot = self
+            .settle(on, p, sack.size, 3)
+            .or_else(|| self.settle(on, p, sack.size, 8))?;
+        let id = self.new_id();
+        let mut f = Furniture::new(id, sack, spot, 0);
+        f.on = on;
+        f.slots = over;
+        self.put_furniture(f);
+        Some(id)
     }
 
     /// Move the stack in `bag[slot]` into furniture `id`.
@@ -1135,7 +1268,9 @@ impl Sim {
     }
 
     /// `user`, standing at `at`, takes hold of furniture `id`. Small empty
-    /// pieces that pack away go into `bag` instead, if there's room.
+    /// pieces that pack away go into `bag` instead, if there's room. Heavy
+    /// furniture already up in someone's arms with too few hands under it
+    /// can be taken by the other end, which frees them.
     pub fn grab(&mut self, user: &str, at: (f64, f64, f64), id: u32, bag: &mut Bag) -> R<Grabbed> {
         if self.holders.contains_key(user) {
             return Err("hands_full");
@@ -1150,7 +1285,7 @@ impl Sim {
         if dist(at, self.furniture_middle(f)) > REACH {
             return Err("out_of_reach");
         }
-        if f.lifted || f.grips.len() >= f.info().carriers {
+        if f.grips.len() >= f.info().carriers {
             return Err("already_carried");
         }
         let k = f.info();
@@ -1169,12 +1304,19 @@ impl Sim {
         let held = Held::Furniture(id);
         self.holders.insert(user.to_string(), Holder::new(held.clone(), at));
         self.events.push(Event::Carry(user.to_string(), Some(held)));
-        if self.try_lift(id) {
-            Ok(Grabbed::Lifted)
+        let up = self.furniture.get(&id).is_some_and(|f| f.lifted);
+        let how = if self.try_lift(id) {
+            Grabbed::Lifted
         } else {
             self.events.push(Event::Furniture(id));
-            Ok(Grabbed::Gripped)
-        }
+            if up {
+                Grabbed::Lifted
+            } else {
+                Grabbed::Gripped
+            }
+        };
+        self.update_pins();
+        Ok(how)
     }
 
     /// Where someone holding furniture is.
@@ -1389,8 +1531,9 @@ impl Sim {
         if self.carried_by(who).is_some() {
             return Err("already_carried");
         }
-        // nobody carries someone carrying someone
-        if matches!(self.held(who), Some(Held::Player(_))) {
+        // nobody carries someone carrying someone, nor someone stuck under
+        // something too heavy for them
+        if matches!(self.held(who), Some(Held::Player(_))) || self.pinned(who).is_some() {
             return Err("cannot_carry");
         }
         if dist(at, their_at) > REACH {
@@ -1505,7 +1648,7 @@ impl Sim {
     }
 
     /// `holder` left the universe: whatever they carried is set down where
-    /// they last stood, and they leave any helm.
+    /// they last stood, they leave any helm, and they're near no station.
     pub fn release(&mut self, holder: &str) {
         self.leave_helm(holder);
         self.set_down_held(holder);
@@ -1513,6 +1656,7 @@ impl Sim {
             self.holders.remove(&c);
             self.events.push(Event::Carry(c, None));
         }
+        self.set_access(holder, Vec::new());
     }
 
     /// Whatever `holder` carries is set down where they stand.
@@ -1605,6 +1749,9 @@ impl Sim {
     pub fn use_door(&mut self, user: &str, name: &str, at: (f64, f64, f64), id: u32) -> R<Door> {
         if self.carried_by(user).is_some() {
             return Err("carried");
+        }
+        if self.pinned(user).is_some() {
+            return Err("overencumbered");
         }
         let f = self.furniture.get(&id).ok_or("no_such_furniture")?;
         if f.lifted {
@@ -1792,73 +1939,13 @@ impl Sim {
         }
     }
 
-    // -- blueprints
+    // -- blueprints (retired: only the ones laid out before are left)
 
     pub fn site_at(&self, on: u32, p: Pos) -> Option<u32> {
         self.sites
             .values()
             .find(|s| s.on == on && s.cells().contains(&p))
             .map(|s| s.id)
-    }
-
-    /// Lay out blueprint `kind` with its origin at `p` in frame `on`, turned
-    /// `rot`: its footprint fills with scaffolding until the ingredients are
-    /// in.
-    pub fn start_site(&mut self, kind: &str, on: u32, p: Pos, rot: u8) -> R<u32> {
-        let k = furniture::buildable(kind).ok_or("no_such_blueprint")?;
-        let cells = furniture::cells(p, k.size, rot);
-        if cells.iter().any(|&c| !self.holds(on, c)) {
-            return Err("edge_of_the_world");
-        }
-        if !cells.iter().all(|&c| self.free(on, c)) {
-            return Err("occupied");
-        }
-        let id = self.new_id();
-        for c in cells {
-            self.set_block(on, c, SCAFFOLD);
-        }
-        self.sites.insert(
-            id,
-            Site {
-                id,
-                kind: k.name.to_string(),
-                on,
-                origin: p,
-                rot: rot % 4,
-                have: Vec::new(),
-            },
-        );
-        self.events.push(Event::Site(id));
-        Ok(id)
-    }
-
-    /// Put ingredients from `bag` into site `id`: as much as it still needs
-    /// of the first missing ingredient the bag has. Once nothing is missing
-    /// the scaffolding becomes the furniture, whose id is returned.
-    pub fn deposit(&mut self, id: u32, bag: &mut Bag) -> R<Option<u32>> {
-        let site = self.sites.get(&id).ok_or("no_such_site")?;
-        let pick = site
-            .missing()
-            .into_iter()
-            .find(|(i, _)| items::count(bag, i) > 0);
-        let Some((item, need)) = pick else {
-            return Err("missing_ingredients");
-        };
-        let n = need.min(items::count(bag, item).min(u16::MAX as u32) as u16);
-        items::take(bag, item, n);
-        let site = self.sites.get_mut(&id).expect("checked");
-        site.put(item, n);
-        if !site.missing().is_empty() {
-            self.events.push(Event::Site(id));
-            return Ok(None);
-        }
-        let site = self.sites.remove(&id).expect("checked");
-        self.events.push(Event::SiteGone(id));
-        let fid = self.new_id();
-        let mut f = Furniture::new(fid, site.info(), site.origin, site.rot);
-        f.on = site.on;
-        self.put_furniture(f);
-        Ok(Some(fid))
     }
 
     /// Take the scaffolding down; everything put in comes back.
@@ -1870,6 +1957,317 @@ impl Sim {
         self.events.push(Event::SiteGone(id));
         self.give(bag, site.have.clone(), site.on, site.origin, site.rot);
         Ok(())
+    }
+
+    // -- crafting
+
+    /// The station kinds within reach of someone standing at `at` in frame
+    /// `on`: stations standing in the same frame (not being carried), feet
+    /// to the middle of their footprint, twice `REACH` in a pocket room.
+    pub fn stations_near(&self, on: u32, at: (f64, f64, f64)) -> Vec<&'static str> {
+        let reach = if self.pocket(on).is_some() {
+            REACH * 2.0
+        } else {
+            REACH
+        };
+        recipes::STATIONS
+            .iter()
+            .copied()
+            .filter(|k| {
+                self.furniture.values().any(|f| {
+                    f.kind == *k && f.on == on && !f.lifted && dist(at, f.center()) <= reach
+                })
+            })
+            .collect()
+    }
+
+    /// The station kinds `user` was last found in reach of (on tick).
+    pub fn access(&self, user: &str) -> Vec<&'static str> {
+        self.access.get(user).cloned().unwrap_or_default()
+    }
+
+    /// Note who's near which stations; say so for each whose set changed.
+    /// Anyone not in `players` has left: they're near nothing.
+    fn check_access(&mut self, players: &[Walker]) {
+        let mut seen = std::collections::HashSet::new();
+        for w in players {
+            seen.insert(w.id.as_str());
+            let now = self.stations_near(w.on, w.at);
+            self.set_access(&w.id, now);
+        }
+        let gone: Vec<String> = self
+            .access
+            .keys()
+            .filter(|k| !seen.contains(k.as_str()))
+            .cloned()
+            .collect();
+        for u in gone {
+            self.set_access(&u, Vec::new());
+        }
+    }
+
+    fn set_access(&mut self, user: &str, now: Vec<&'static str>) {
+        let before = self.access.get(user).map_or(&[][..], |v| v.as_slice());
+        if before == now.as_slice() {
+            return;
+        }
+        self.events.push(Event::Stations(user.to_string(), now.clone()));
+        if now.is_empty() {
+            self.access.remove(user);
+        } else {
+            self.access.insert(user.to_string(), now);
+        }
+    }
+
+    /// `user` does recipe step `step` with `stations` in reach (the record
+    /// kept from `Event::Stations`, never the client's say) and `stroke`
+    /// drawn. Whatever fits a bag goes into `bag` (`recipes::craft`);
+    /// furniture too big for one finishes as `finish` says: built where
+    /// they chose, with the checks placing has, or straight into their arms
+    /// if they're free. Nothing is taken unless it could be made.
+    #[allow(clippy::too_many_arguments)]
+    pub fn craft(
+        &mut self,
+        user: &str,
+        step: &str,
+        stroke: &[(f64, f64)],
+        stations: &[&str],
+        finish: Option<Finish>,
+        bag: &mut Bag,
+    ) -> R<Crafted> {
+        let s = recipes::check(step, stations, bag)?;
+        if recipes::to_bag(s) {
+            let made = recipes::craft(step, stroke, stations, bag)?;
+            return Ok(Crafted {
+                made,
+                furniture: None,
+                carried: false,
+            });
+        }
+        let kind = furniture::kind(s.output.0).ok_or("no_such_step")?;
+        let finish = finish.ok_or("place_or_carry")?;
+        match finish {
+            Finish::Place(on, p, _) if !self.holds(on, p) => return Err("edge_of_the_world"),
+            Finish::Place(on, p, rot) if !self.room(on, p, kind.size, rot) => {
+                return Err("occupied")
+            }
+            Finish::Carry((on, at)) => {
+                self.free_hands(user)?;
+                self.world_of(on, at).ok_or("no_such_ship")?;
+            }
+            Finish::Place(..) => {}
+        }
+        let made = recipes::outcome(s, stroke);
+        recipes::take_inputs(s, bag);
+        let id = self.new_id();
+        let carried = match finish {
+            Finish::Place(on, p, rot) => {
+                let mut f = Furniture::new(id, kind, p, rot);
+                f.on = on;
+                self.put_furniture(f);
+                false
+            }
+            Finish::Carry((on, at)) => {
+                let w = self.world_of(on, at).expect("checked");
+                let mut f = Furniture::new(id, kind, Self::cell_in(at), 0);
+                f.on = on;
+                f.lifted = true;
+                f.at = w;
+                f.grips.push(Grip::Player(user.to_string()));
+                self.furniture.insert(id, f);
+                self.events.push(Event::Furniture(id));
+                let held = Held::Furniture(id);
+                let mut h = Holder::new(held.clone(), w);
+                h.frame = Some((on, at));
+                self.holders.insert(user.to_string(), h);
+                self.events.push(Event::Carry(user.to_string(), Some(held)));
+                self.update_pins();
+                true
+            }
+        };
+        Ok(Crafted {
+            made,
+            furniture: Some(id),
+            carried,
+        })
+    }
+
+    /// Where `user` is stuck, overencumbered, if they are.
+    pub fn pinned(&self, user: &str) -> Option<Spot> {
+        let h = self.holders.get(user)?;
+        if !self.overloaded(h) {
+            return None;
+        }
+        Some(match self.pins.get(user) {
+            Some((spot, _)) => *spot,
+            None => h.frame.unwrap_or_else(|| self.frame_at(h.at)),
+        })
+    }
+
+    /// Holding lifted furniture with fewer hands under it than it takes.
+    fn overloaded(&self, h: &Holder) -> bool {
+        let Held::Furniture(fid) = h.held else {
+            return false;
+        };
+        self.furniture
+            .get(&fid)
+            .is_some_and(|f| f.lifted && f.grips.len() < f.info().carriers)
+    }
+
+    /// Pin whoever is newly overencumbered where they stand, and free whoever
+    /// isn't any more; say so either way.
+    fn update_pins(&mut self) {
+        let mut changes = Vec::new();
+        for (u, h) in &self.holders {
+            if self.overloaded(h) && !self.pins.contains_key(u) {
+                let spot = h.frame.unwrap_or_else(|| self.frame_at(h.at));
+                changes.push((u.clone(), Some(spot)));
+            }
+        }
+        for u in self.pins.keys() {
+            if self.holders.get(u).is_none_or(|h| !self.overloaded(h)) {
+                changes.push((u.clone(), None));
+            }
+        }
+        for (u, pin) in changes {
+            match pin {
+                Some(spot) => self.pins.insert(u.clone(), (spot, false)),
+                None => self.pins.remove(&u),
+            };
+            self.events.push(Event::Encumbered(u, pin));
+        }
+    }
+
+    /// `user`, standing at `at` in frame `on`, breaks `target`: furniture
+    /// they hold (`target` None, or its id), empty furniture in reach, or
+    /// an unfinished blueprint in reach. Furniture gives back three quarters
+    /// of its raw materials (`recipes::salvage`) and whatever it held; a
+    /// blueprint everything put into it. It goes into `bag`, and what
+    /// doesn't fit is set down in a sack at their feet.
+    pub fn break_apart(
+        &mut self,
+        user: &str,
+        on: u32,
+        at: (f64, f64, f64),
+        target: Option<u32>,
+        bag: &mut Bag,
+    ) -> R<Broken> {
+        let w = self.world_of(on, at).ok_or("no_such_ship")?;
+        let id = match (target, self.held(user)) {
+            (Some(id), _) => id,
+            (None, Some(Held::Furniture(id))) => id,
+            (None, _) => return Err("nothing_to_break"),
+        };
+        if let Some(site) = self.sites.get(&id) {
+            let c = self.world_of(site.on, site.center()).ok_or("out_of_reach")?;
+            if dist(w, c) > REACH {
+                return Err("out_of_reach");
+            }
+            let site = self.sites.remove(&id).expect("found");
+            for c in site.cells() {
+                self.set_block(site.on, c, AIR);
+            }
+            self.events.push(Event::SiteGone(id));
+            let sack = self.give_at_feet(bag, &site.have, on, at);
+            return Ok(Broken {
+                back: site.have,
+                sack,
+            });
+        }
+        let f = self.furniture.get(&id).ok_or("no_such_furniture")?;
+        if f.fixed() {
+            return Err("the_walls_hold");
+        }
+        let mine = f.grips.contains(&Grip::Player(user.to_string()));
+        if !mine {
+            if f.lifted || !f.grips.is_empty() {
+                return Err("in_use");
+            }
+            if dist(w, self.furniture_middle(f)) > REACH {
+                return Err("out_of_reach");
+            }
+            if !items::is_empty(&f.slots) {
+                return Err("not_empty");
+            }
+        }
+        let mut back: Vec<(String, u16)> = recipes::salvage(&f.kind)
+            .into_iter()
+            .map(|(i, n)| (i.to_string(), n))
+            .collect();
+        back.extend(f.slots.iter().flatten().map(|s| (s.item.clone(), s.n)));
+        if f.whole() && f.note.is_some() {
+            back.push((f.item(), 1));
+        }
+        let grips = f.grips.clone();
+        self.let_go_all(&grips);
+        if let Some(f) = self.furniture.get_mut(&id) {
+            f.grips.clear();
+        }
+        self.remove_furniture(id);
+        let sack = self.give_at_feet(bag, &back, on, at);
+        Ok(Broken { back, sack })
+    }
+
+    // -- sheep
+
+    pub fn spawn_sheep_at(&mut self, x: f64, y: f64) -> u32 {
+        let id = self.next_sheep;
+        self.next_sheep += 1;
+        let z = self.terrain.ground(x, y, 16.0).unwrap_or(0.0);
+        let heading = self.rng.next() * std::f64::consts::TAU;
+        self.sheep.push(Sheep {
+            body: Cow {
+                id,
+                x,
+                y,
+                z,
+                vz: 0.0,
+                heading,
+                home: (x, y),
+                target: None,
+                idle_until_ms: 0,
+                last_moo_ms: i64::MIN / 2,
+                sent: None,
+                carried: false,
+                pen: None,
+            },
+            shorn: None,
+            woolly: true,
+        });
+        id
+    }
+
+    /// `n` sheep somewhere on the home island, woolly.
+    pub fn spawn_sheep(&mut self, n: usize) {
+        for (x, y) in self.home_spots(n) {
+            self.spawn_sheep_at(x, y);
+        }
+    }
+
+    /// Shear sheep `id`, within reach of feet `at` (world): its wool goes
+    /// into `bag`, and grows back in `WOOL_REGROW_TICKS`. How much wool.
+    pub fn shear(&mut self, at: (f64, f64, f64), id: u32, bag: &mut Bag) -> R<u16> {
+        let now = self.world_tick;
+        let sh = self
+            .sheep
+            .iter_mut()
+            .find(|s| s.body.id == id)
+            .ok_or("no_such_sheep")?;
+        let b = &sh.body;
+        if dist(at, (b.x, b.y, b.z + 0.5)) > REACH {
+            return Err("out_of_reach");
+        }
+        if !sh.woolly {
+            return Err("already_shorn");
+        }
+        if items::room_for(bag, "wool") < SHEAR_WOOL as u32 {
+            return Err("bag_full");
+        }
+        items::add(bag, "wool", SHEAR_WOOL);
+        sh.woolly = false;
+        sh.shorn = Some(now);
+        self.events.push(Event::Sheep(id));
+        Ok(SHEAR_WOOL)
     }
 
     // -- ships
@@ -1965,7 +2363,7 @@ impl Sim {
             return Err("nothing_to_help_with");
         };
         let f = self.furniture.get(&fid).ok_or("nothing_to_help_with")?;
-        if f.lifted || f.grips.len() >= f.info().carriers {
+        if f.grips.len() >= f.info().carriers {
             return Err("nothing_to_help_with");
         }
         let c = self.furniture_middle(f);
@@ -2006,7 +2404,10 @@ impl Sim {
                 let still = self
                     .furniture
                     .get(&fid)
-                    .filter(|f| !f.lifted && f.grips.iter().any(|g| matches!(g, Grip::Player(_))));
+                    .filter(|f| {
+                        f.grips.len() < f.info().carriers
+                            && f.grips.iter().any(|g| matches!(g, Grip::Player(_)))
+                    });
                 match still {
                     _ if now_ms - task_ms > HELPER_PATIENCE_MS => {
                         self.helpers[i].task = Task::Home;
@@ -2025,6 +2426,7 @@ impl Sim {
                             if !self.try_lift(fid) {
                                 self.events.push(Event::Furniture(fid));
                             }
+                            self.update_pins();
                             None
                         } else {
                             Some((c.0, c.1))
@@ -2117,22 +2519,29 @@ impl Sim {
 
     /// `n` cows somewhere on the home island.
     pub fn spawn_cows(&mut self, n: usize) {
+        for (x, y) in self.home_spots(n) {
+            self.spawn_cow(x, y);
+        }
+    }
+
+    /// Up to `n` places to stand somewhere on the home island.
+    fn home_spots(&mut self, n: usize) -> Vec<(f64, f64)> {
         let Some(home) = self.islands.first().cloned() else {
-            return;
+            return Vec::new();
         };
         let feet = home.top as f64 + 1.0;
-        let mut placed = 0;
+        let mut out = Vec::new();
         let mut tries = 0;
-        while placed < n && tries < 200 {
+        while out.len() < n && tries < 200 {
             tries += 1;
             let a = self.rng.next() * std::f64::consts::TAU;
             let d = 3.0 + self.rng.next() * home.r * 0.6;
             let (x, y) = (home.x as f64 + a.cos() * d, home.y as f64 + a.sin() * d);
             if self.terrain.walkable(x, y, feet) {
-                self.spawn_cow(x, y);
-                placed += 1;
+                out.push((x, y));
             }
         }
+        out
     }
 
     // -- the tick
@@ -2173,14 +2582,35 @@ impl Sim {
         }
         self.check_pilots(now_ms, &feet);
 
-        // carried cows ride over their holders
-        for (id, x, y, z) in &feet {
-            if let Some(h) = self.holders.get_mut(id) {
-                h.at = (*x, *y, *z);
-                if let Held::Cow(cid) = h.held {
-                    if let Some(cow) = self.cows.iter_mut().find(|c| c.id == cid) {
-                        (cow.x, cow.y, cow.z) = (*x, *y, *z + CARRY_Z);
+        // holders are where they stand, unless they're stuck under
+        // something too heavy (then it stays where they're stuck, and they
+        // hear about it if they stray); carried cows ride over them
+        for (w, (id, x, y, z)) in players.iter().zip(feet.iter()) {
+            let pin = self.pins.get(id).map(|p| p.0);
+            let stuck = pin.map(|(on, l)| self.world_of(on, l).unwrap_or((*x, *y, *z)));
+            let Some(h) = self.holders.get_mut(id) else {
+                continue;
+            };
+            match (pin, stuck) {
+                (Some((on, l)), Some(at)) => {
+                    h.at = at;
+                    let stray = w.on != on || dist(w.at, l) > PIN_SLACK;
+                    if let Some(p) = self.pins.get_mut(id) {
+                        if stray && !p.1 {
+                            self.events.push(Event::Encumbered(id.clone(), Some((on, l))));
+                        }
+                        p.1 = stray;
                     }
+                }
+                _ => {
+                    h.at = (*x, *y, *z);
+                    h.frame = Some((w.on, w.at));
+                }
+            }
+            if let Held::Cow(cid) = h.held {
+                let at = h.at;
+                if let Some(cow) = self.cows.iter_mut().find(|c| c.id == cid) {
+                    (cow.x, cow.y, cow.z) = (at.0, at.1, at.2 + CARRY_Z);
                 }
             }
         }
@@ -2189,20 +2619,34 @@ impl Sim {
             self.step_helper(i, now_ms, dt);
         }
         self.carry_furniture();
+        self.update_pins();
+        self.check_access(players);
 
         let walkers: Vec<(f64, f64, f64)> = feet.iter().map(|&(_, x, y, z)| (x, y, z)).collect();
-        for i in 0..self.cows.len() {
-            if !self.cows[i].carried {
-                self.step_cow(i, now_ms, dt, &walkers, &mut out);
-            }
+        let mut cows = std::mem::take(&mut self.cows);
+        for c in cows.iter_mut().filter(|c| !c.carried) {
+            self.step_animal(c, now_ms, dt, &walkers, &mut out.moos);
         }
-        self.separate_cows();
+        self.separate(&mut cows.iter_mut().collect::<Vec<_>>());
+        self.cows = cows;
+        let mut flock = std::mem::take(&mut self.sheep);
+        let mut baas = Vec::new();
+        for sh in flock.iter_mut() {
+            self.step_animal(&mut sh.body, now_ms, dt, &walkers, &mut baas);
+        }
+        self.separate(&mut flock.iter_mut().map(|s| &mut s.body).collect::<Vec<_>>());
+        self.sheep = flock;
 
         self.fly(dt);
 
         for c in self.cows.iter_mut() {
             if moved(&mut c.sent, (c.x, c.y, c.z, c.heading)) {
                 out.cows.push((c.id, c.x, c.y, c.z, c.heading));
+            }
+        }
+        for c in self.sheep.iter_mut().map(|s| &mut s.body) {
+            if moved(&mut c.sent, (c.x, c.y, c.z, c.heading)) {
+                out.sheep.push((c.id, c.x, c.y, c.z, c.heading));
             }
         }
         for s in self.ships.iter_mut() {
@@ -2385,30 +2829,31 @@ impl Sim {
         self.events.push(Event::Departed(Box::new(cargo), side));
     }
 
-    fn step_cow(
+    /// A cow (or a sheep) wanders near home, grazes, and is shoved by
+    /// anyone standing in it, mooing about it into `moos`.
+    fn step_animal(
         &mut self,
-        i: usize,
+        c: &mut Cow,
         now_ms: i64,
         dt: f64,
         players: &[(f64, f64, f64)],
-        out: &mut TickOut,
+        moos: &mut Vec<u32>,
     ) {
         // pick something to do
-        if self.cows[i].target.is_none() && now_ms >= self.cows[i].idle_until_ms {
+        if c.target.is_none() && now_ms >= c.idle_until_ms {
             if self.rng.next() < 0.6 {
-                let (hx, hy) = self.cows[i].home;
+                let (hx, hy) = c.home;
                 let a = self.rng.next() * std::f64::consts::TAU;
                 let r = self.rng.next().sqrt() * COW_LEASH;
                 let (tx, ty) = (hx + a.cos() * r, hy + a.sin() * r);
-                let c = &self.cows[i];
                 if self.walkable_npc(c.pen, tx, ty, c.z) {
-                    self.cows[i].target = Some((tx, ty));
+                    c.target = Some((tx, ty));
                 }
             }
-            if self.cows[i].target.is_none() {
+            if c.target.is_none() {
                 // graze a while
                 let wait = 2000.0 + self.rng.next() * 5000.0;
-                self.cows[i].idle_until_ms = now_ms + wait as i64;
+                c.idle_until_ms = now_ms + wait as i64;
             }
         }
 
@@ -2416,23 +2861,22 @@ impl Sim {
         let mut dy = 0.0;
 
         // walk toward the target
-        if let Some((tx, ty)) = self.cows[i].target {
-            let cow = &mut self.cows[i];
-            let (ex, ey) = (tx - cow.x, ty - cow.y);
+        if let Some((tx, ty)) = c.target {
+            let (ex, ey) = (tx - c.x, ty - c.y);
             let dist = (ex * ex + ey * ey).sqrt();
             if dist < 0.15 {
-                cow.target = None;
-                cow.idle_until_ms = now_ms + 1500;
+                c.target = None;
+                c.idle_until_ms = now_ms + 1500;
             } else {
                 let want = ey.atan2(ex);
-                let turn = angle_diff(cow.heading, want);
+                let turn = angle_diff(c.heading, want);
                 let max = COW_TURN * dt;
-                cow.heading = wrap(cow.heading + turn.clamp(-max, max));
+                c.heading = wrap(c.heading + turn.clamp(-max, max));
                 // walk once roughly facing the way
                 if turn.abs() < 0.8 {
                     let step = (COW_SPEED * dt).min(dist);
-                    dx += cow.heading.cos() * step;
-                    dy += cow.heading.sin() * step;
+                    dx += c.heading.cos() * step;
+                    dy += c.heading.sin() * step;
                 }
             }
         }
@@ -2442,11 +2886,10 @@ impl Sim {
         let (mut px_sum, mut py_sum) = (0.0, 0.0);
         let reach = COW_RADIUS + PLAYER_RADIUS;
         for &(px, py, pz) in players {
-            let cow = &self.cows[i];
-            if (pz - cow.z).abs() > 1.5 {
+            if (pz - c.z).abs() > 1.5 {
                 continue;
             }
-            let (ox, oy) = (cow.x + dx - px, cow.y + dy - py);
+            let (ox, oy) = (c.x + dx - px, c.y + dy - py);
             let d = (ox * ox + oy * oy).sqrt();
             if d >= reach {
                 continue;
@@ -2454,7 +2897,7 @@ impl Sim {
             let (nx, ny) = if d > 0.0001 {
                 (ox / d, oy / d)
             } else {
-                (cow.heading.cos(), cow.heading.sin())
+                (c.heading.cos(), c.heading.sin())
             };
             let overlap = reach - d;
             px_sum += nx * overlap;
@@ -2470,20 +2913,17 @@ impl Sim {
         dx += px_sum;
         dy += py_sum;
         if pushed {
-            let cow = &mut self.cows[i];
             // stop and think about it
-            cow.target = None;
-            cow.idle_until_ms = now_ms + 1200;
-            if now_ms - cow.last_moo_ms > MOO_COOLDOWN_MS {
-                cow.last_moo_ms = now_ms;
-                out.moos.push(cow.id);
+            c.target = None;
+            c.idle_until_ms = now_ms + 1200;
+            if now_ms - c.last_moo_ms > MOO_COOLDOWN_MS {
+                c.last_moo_ms = now_ms;
+                moos.push(c.id);
             }
         }
 
-        let c = &self.cows[i];
-        let (pen, mut body) = (c.pen, (c.x, c.y, c.z, c.vz));
-        let blocked = self.move_npc(pen, &mut body, dx, dy, dt);
-        let c = &mut self.cows[i];
+        let mut body = (c.x, c.y, c.z, c.vz);
+        let blocked = self.move_npc(c.pen, &mut body, dx, dy, dt);
         (c.x, c.y, c.z, c.vz) = body;
         if blocked && c.target.is_some() {
             // walked into something: pick another plan
@@ -2528,31 +2968,24 @@ impl Sim {
         blocked
     }
 
-    fn separate_cows(&mut self) {
-        let n = self.cows.len();
+    /// Animals standing in each other step apart.
+    fn separate(&self, cs: &mut [&mut Cow]) {
+        let n = cs.len();
         for a in 0..n {
             for b in (a + 1)..n {
-                let (ox, oy) = (
-                    self.cows[b].x - self.cows[a].x,
-                    self.cows[b].y - self.cows[a].y,
-                );
+                let (ox, oy) = (cs[b].x - cs[a].x, cs[b].y - cs[a].y);
                 let d = (ox * ox + oy * oy).sqrt();
                 let min = COW_RADIUS * 2.0;
-                let carried = self.cows[a].carried || self.cows[b].carried;
-                if carried
-                    || d >= min
-                    || d < 0.0001
-                    || (self.cows[a].z - self.cows[b].z).abs() > 1.5
-                {
+                let carried = cs[a].carried || cs[b].carried;
+                if carried || d >= min || d < 0.0001 || (cs[a].z - cs[b].z).abs() > 1.5 {
                     continue;
                 }
                 let push = (min - d) / 2.0;
                 let (nx, ny) = (ox / d * push, oy / d * push);
                 for (i, sx, sy) in [(a, -nx, -ny), (b, nx, ny)] {
-                    let c = &self.cows[i];
-                    let (pen, mut body) = (c.pen, (c.x, c.y, c.z, c.vz));
-                    self.move_npc(pen, &mut body, sx, sy, 0.0);
-                    let c = &mut self.cows[i];
+                    let c = &mut *cs[i];
+                    let mut body = (c.x, c.y, c.z, c.vz);
+                    self.move_npc(c.pen, &mut body, sx, sy, 0.0);
                     (c.x, c.y, c.z, c.vz) = body;
                 }
             }

@@ -1,6 +1,10 @@
-//! Furniture: what it's made of, how big it is, what it holds and how many
-//! it takes to carry. Built from blueprints (`Site`): a footprint of
-//! scaffolding that ingredients are put into until the recipe is met.
+//! Furniture: how big it is, what it holds and how many it takes to carry.
+//! What it's made of is its recipe (`recipes`). Some kinds are stations,
+//! where recipe steps are done (`recipes::STATIONS`).
+//!
+//! Blueprints (`Site`) are retired: nothing starts one any more, but those
+//! laid out before are kept where they are, scaffolding and all, until
+//! they're broken for what was put into them.
 //!
 //! A piece sits in cells from its origin along +x (width), +y (depth) and +z
 //! (height), turned by `rot` quarter turns about the origin cell, so a model
@@ -22,7 +26,6 @@ pub struct Kind {
     pub carriers: usize,
     /// Packs into a bag (as the item of the same name) when empty.
     pub itemizable: bool,
-    pub recipe: &'static [(&'static str, u16)],
 }
 
 pub const KINDS: &[Kind] = &[
@@ -32,7 +35,6 @@ pub const KINDS: &[Kind] = &[
         slots: 12,
         carriers: 1,
         itemizable: false,
-        recipe: &[("wood", 4)],
     },
     Kind {
         name: "drawer",
@@ -40,7 +42,6 @@ pub const KINDS: &[Kind] = &[
         slots: 4,
         carriers: 1,
         itemizable: true,
-        recipe: &[("wood", 2), ("stone", 1)],
     },
     Kind {
         name: "dresser",
@@ -48,7 +49,6 @@ pub const KINDS: &[Kind] = &[
         slots: 16,
         carriers: 2,
         itemizable: false,
-        recipe: &[("wood", 6), ("stone", 2)],
     },
     Kind {
         name: "table",
@@ -56,7 +56,6 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 1,
         itemizable: false,
-        recipe: &[("wood", 5)],
     },
     Kind {
         name: "stool",
@@ -64,7 +63,6 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 1,
         itemizable: true,
-        recipe: &[("wood", 2)],
     },
     Kind {
         name: "wardrobe",
@@ -72,7 +70,6 @@ pub const KINDS: &[Kind] = &[
         slots: 20,
         carriers: 2,
         itemizable: false,
-        recipe: &[("wood", 8), ("stone", 1)],
     },
     // somewhere to lie down (the game lays you on it)
     Kind {
@@ -81,7 +78,6 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 2,
         itemizable: false,
-        recipe: &[("wood", 6)],
     },
     // a door to walk through (the game lets you pass its cells)
     Kind {
@@ -90,7 +86,6 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 1,
         itemizable: true,
-        recipe: &[("wood", 3)],
     },
     // a door into a pocket room of its own (`Sim::use_door`): the room
     // belongs to whoever first goes through, and outlives the door
@@ -100,7 +95,6 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 1,
         itemizable: true,
-        recipe: &[("wood", 4), ("stone", 6)],
     },
     // the way back out, inside a pocket room; part of the room, so it
     // can't be broken or moved
@@ -110,7 +104,6 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 1,
         itemizable: false,
-        recipe: &[],
     },
     // a pinned chat message, placed (its item is `sign:<pin id>`, kept in
     // `Furniture::note`); never built, and it packs back into a bag
@@ -120,7 +113,6 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 1,
         itemizable: true,
-        recipe: &[],
     },
     // a bag of marbles set down (its item is `marbles:<n>`, the count kept
     // in `Furniture::note`); never built, and it packs back into a bag
@@ -130,7 +122,36 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 1,
         itemizable: true,
-        recipe: &[],
+    },
+    // stations (`recipes::STATIONS`): where wood is veneered into planks,
+    // planks sawn and furniture put together, wool spun and yarn woven
+    Kind {
+        name: "veneer",
+        size: (1, 1, 1),
+        slots: 0,
+        carriers: 1,
+        itemizable: true,
+    },
+    Kind {
+        name: "bench",
+        size: (2, 1, 1),
+        slots: 0,
+        carriers: 1,
+        itemizable: true,
+    },
+    Kind {
+        name: "spinning_wheel",
+        size: (1, 1, 1),
+        slots: 0,
+        carriers: 1,
+        itemizable: true,
+    },
+    Kind {
+        name: "loom",
+        size: (2, 1, 2),
+        slots: 0,
+        carriers: 2,
+        itemizable: false,
     },
     // what's left when furniture breaks and its contents don't fit the
     // breaker's bag; it goes when emptied
@@ -140,26 +161,11 @@ pub const KINDS: &[Kind] = &[
         slots: 0,
         carriers: 1,
         itemizable: false,
-        recipe: &[],
     },
 ];
 
 pub fn kind(name: &str) -> Option<&'static Kind> {
     KINDS.iter().find(|k| k.name == name)
-}
-
-/// Buildable from a blueprint.
-pub fn buildable(name: &str) -> Option<&'static Kind> {
-    kind(name).filter(|k| !k.recipe.is_empty())
-}
-
-/// What breaking it gives back: half of each ingredient, rounded down.
-pub fn salvage(k: &Kind) -> Vec<(&'static str, u16)> {
-    k.recipe
-        .iter()
-        .map(|&(i, n)| (i, n / 2))
-        .filter(|&(_, n)| n > 0)
-        .collect()
 }
 
 /// The cells of something `size` big at `origin`, turned `rot` quarter
@@ -240,12 +246,7 @@ impl Furniture {
 
     /// The middle of its footprint, at its base, in its frame.
     pub fn center(&self) -> (f64, f64, f64) {
-        let cs = self.cells();
-        let n = cs.len() as f64;
-        let (sx, sy) = cs
-            .iter()
-            .fold((0.0, 0.0), |(a, b), c| (a + c.0 as f64, b + c.1 as f64));
-        (sx / n, sy / n, self.origin.2 as f64)
+        middle(&self.cells(), self.origin.2)
     }
 
     /// The item it packs into: its kind's, or a sign's or a marble bag's own.
@@ -295,8 +296,9 @@ impl Furniture {
     }
 }
 
-/// A blueprint being built: scaffolding in the footprint, and what's been
-/// put in so far.
+/// A blueprint laid out before blueprints were retired: scaffolding in its
+/// footprint, and what was put in so far. Kept as it is; breaking it gives
+/// back everything put in.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Site {
     pub id: u32,
@@ -318,29 +320,18 @@ impl Site {
         cells(self.origin, self.info().size, self.rot)
     }
 
-    pub fn has(&self, item: &str) -> u16 {
-        self.have
-            .iter()
-            .find(|(i, _)| i == item)
-            .map_or(0, |(_, n)| *n)
+    /// The middle of its footprint, at its base, in its frame.
+    pub fn center(&self) -> (f64, f64, f64) {
+        middle(&self.cells(), self.origin.2)
     }
+}
 
-    /// Each ingredient still missing, and how many.
-    pub fn missing(&self) -> Vec<(&'static str, u16)> {
-        self.info()
-            .recipe
-            .iter()
-            .map(|&(i, n)| (i, n.saturating_sub(self.has(i))))
-            .filter(|&(_, n)| n > 0)
-            .collect()
-    }
-
-    pub fn put(&mut self, item: &str, n: u16) {
-        match self.have.iter_mut().find(|(i, _)| i == item) {
-            Some((_, have)) => *have += n,
-            None => self.have.push((item.to_string(), n)),
-        }
-    }
+fn middle(cs: &[Pos], z: i32) -> (f64, f64, f64) {
+    let n = cs.len().max(1) as f64;
+    let (sx, sy) = cs
+        .iter()
+        .fold((0.0, 0.0), |(a, b), c| (a + c.0 as f64, b + c.1 as f64));
+    (sx / n, sy / n, z as f64)
 }
 
 #[cfg(test)]
@@ -356,29 +347,5 @@ mod tests {
         assert_eq!(cells((5, 5, 0), size, 3), vec![(5, 5, 0), (5, 4, 0)]);
         let tall = kind("wardrobe").unwrap().size;
         assert_eq!(cells((0, 0, 0), tall, 1), vec![(0, 0, 0), (0, 0, 1)]);
-    }
-
-    #[test]
-    fn breaking_gives_back_some_not_all() {
-        let k = kind("dresser").unwrap();
-        assert_eq!(salvage(k), vec![("wood", 3), ("stone", 1)]);
-        let drawer = kind("drawer").unwrap();
-        assert_eq!(salvage(drawer), vec![("wood", 1)]);
-        assert!(buildable("sack").is_none());
-    }
-
-    #[test]
-    fn a_site_counts_what_is_missing() {
-        let mut s = Site {
-            id: 1,
-            kind: "drawer".into(),
-            on: 0,
-            origin: (0, 0, 0),
-            rot: 0,
-            have: vec![],
-        };
-        assert_eq!(s.missing(), vec![("wood", 2), ("stone", 1)]);
-        s.put("wood", 2);
-        assert_eq!(s.missing(), vec![("stone", 1)]);
     }
 }

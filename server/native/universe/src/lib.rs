@@ -15,6 +15,7 @@ use rustler::{
 mod furniture;
 mod items;
 mod map;
+mod recipes;
 mod secret;
 mod ships;
 mod sim;
@@ -23,7 +24,7 @@ mod terrain;
 use furniture::{Furniture, Grip, Site};
 use items::{Slot, Stack};
 use ships::{Helm, Ship, Side};
-use sim::{Cargo, Door, Event, Grabbed, Held, Sim, Walker};
+use sim::{Broken, Cargo, Crafted, Door, Event, Finish, Grabbed, Held, Sim, Walker};
 
 rustler::atoms! {
     ok,
@@ -44,6 +45,9 @@ rustler::atoms! {
     departed,
     evicted,
     found,
+    stations,
+    encumbered,
+    sheep,
 }
 
 struct SimLock(Mutex<Sim>);
@@ -146,7 +150,8 @@ fn pairs<'a>(env: Env<'a>, p: &[(impl AsRef<str>, u16)]) -> Term<'a> {
         .encode(env)
 }
 
-fn held_term<'a>(env: Env<'a>, user: &str, h: Option<Held>) -> Term<'a> {
+/// What `user` holds, and whether it pins them (`Sim::pinned`).
+fn held_term<'a>(env: Env<'a>, user: &str, h: Option<Held>, pinned: bool) -> Term<'a> {
     let (mut b, mut c, mut f, mut p) = (None, None, None, None);
     match h {
         Some(Held::Block(id)) => b = Some(id as u32),
@@ -163,6 +168,7 @@ fn held_term<'a>(env: Env<'a>, user: &str, h: Option<Held>) -> Term<'a> {
             ("cow", opt(env, c)),
             ("furniture", opt(env, f)),
             ("player", opt(env, p)),
+            ("pinned", pinned.encode(env)),
         ],
     )
 }
@@ -225,7 +231,8 @@ fn site_term<'a>(env: Env<'a>, s: &Site) -> Term<'a> {
             ("origin", pos(env, s.origin)),
             ("rot", s.rot.encode(env)),
             ("have", pairs(env, &s.have)),
-            ("need", pairs(env, s.info().recipe)),
+            // blueprints are retired: nothing more goes in
+            ("need", Vec::<Term>::new().encode(env)),
         ],
     )
 }
@@ -270,7 +277,33 @@ fn event_term<'a>(env: Env<'a>, sim: &Sim, e: Event) -> Option<Term<'a>> {
                 &[("position", pos(env, p)), ("stage", opt(env, stage))],
             ),
         ),
-        Event::Carry(user, h) => (carry(), held_term(env, &user, h)),
+        Event::Carry(user, h) => {
+            let pinned = sim.pinned(&user).is_some();
+            (carry(), held_term(env, &user, h, pinned))
+        }
+        Event::Stations(user, kinds) => (
+            stations(),
+            map(env, &[("user_id", user.encode(env)), ("stations", kinds.encode(env))]),
+        ),
+        Event::Encumbered(user, spot) => (
+            encumbered(),
+            map(
+                env,
+                &[
+                    ("user_id", user.encode(env)),
+                    ("pinned", spot.is_some().encode(env)),
+                    ("on", opt(env, spot.map(|s| s.0))),
+                    ("at", opt(env, spot.map(|s| vec![s.1 .0, s.1 .1, s.1 .2]))),
+                ],
+            ),
+        ),
+        Event::Sheep(id) => {
+            let sh = sim.sheep.iter().find(|s| s.body.id == id)?;
+            (
+                sheep(),
+                map(env, &[("id", id.encode(env)), ("woolly", sh.woolly.encode(env))]),
+            )
+        }
         Event::Furniture(id) => (
             furniture_changed(),
             furniture_term(env, sim.furniture.get(&id)?),
@@ -458,6 +491,14 @@ fn spawn_cows(u: Uni, n: usize) -> NifResult<()> {
     Ok(())
 }
 
+/// `n` woolly sheep on the home island; like cows, they aren't saved, so
+/// a universe gets its flock again each time it starts.
+#[rustler::nif]
+fn spawn_sheep(u: Uni, n: usize) -> NifResult<()> {
+    lock(&u)?.spawn_sheep(n);
+    Ok(())
+}
+
 /// A crop planted `ago_ms` of world time ago (from an older save).
 #[rustler::nif]
 fn plant_aged(u: Uni, p: Pos, ago_ms: i64) -> NifResult<()> {
@@ -512,25 +553,6 @@ fn place(
     let mut b = bag_in(bag);
     Ok(match lock(&u)?.place(on, p, &item, rot, &mut b) {
         Ok(()) => (ok(), bag_out(b)).encode(env),
-        Err(e) => fail(env, e),
-    })
-}
-
-/// Lay out a blueprint: `{:ok, site_id}`.
-#[rustler::nif]
-fn start_site(env: Env, u: Uni, kind: String, on: u32, p: Pos, rot: u8) -> NifResult<Term> {
-    Ok(match lock(&u)?.start_site(&kind, on, p, rot) {
-        Ok(id) => (ok(), id).encode(env),
-        Err(e) => fail(env, e),
-    })
-}
-
-/// Put ingredients in: `{:ok, built_furniture_id | nil, bag}`.
-#[rustler::nif]
-fn deposit(env: Env, u: Uni, site_id: u32, bag: BagTerm) -> NifResult<Term> {
-    let mut b = bag_in(bag);
-    Ok(match lock(&u)?.deposit(site_id, &mut b) {
-        Ok(built) => (ok(), built, bag_out(b)).encode(env),
         Err(e) => fail(env, e),
     })
 }
@@ -689,21 +711,22 @@ fn call_helper(env: Env, u: Uni, user: String, id: u32) -> NifResult<Term> {
 }
 
 /// Advance to `now_ms` with players standing where `players` say
-/// (`{id, on, {x, y, z}}`). Returns `{cows, moos, ships, helpers}`: rows of
-/// `{id, x, y, z, heading}` for the cows and helpers that moved, cows that
-/// mooed, and `[id, x, y, z, heading, vx, vy, vz, spin]` for ships.
+/// (`{id, on, {x, y, z}}`). Returns `{cows, moos, ships, helpers, sheep}`:
+/// rows of `{id, x, y, z, heading}` for the cows, helpers and sheep that
+/// moved, cows that mooed, and `[id, x, y, z, heading, vx, vy, vz, spin]`
+/// for ships.
 #[rustler::nif]
 fn tick(
     u: Uni,
     now_ms: i64,
     players: Vec<WalkerTerm>,
-) -> NifResult<(Vec<Row>, Vec<u32>, Vec<Vec<f64>>, Vec<Row>)> {
+) -> NifResult<(Vec<Row>, Vec<u32>, Vec<Vec<f64>>, Vec<Row>, Vec<Row>)> {
     let walkers: Vec<Walker> = players
         .into_iter()
         .map(|(id, on, at)| Walker { id, on, at })
         .collect();
     let out = lock(&u)?.tick(now_ms, &walkers);
-    Ok((out.cows, out.moos, out.ships, out.helpers))
+    Ok((out.cows, out.moos, out.ships, out.helpers, out.sheep))
 }
 
 /// Everything that changed since last asked, as `{event, payload}`.
@@ -739,13 +762,31 @@ fn snapshot<'a>(env: Env<'a>, u: Uni) -> NifResult<Term<'a>> {
         .collect();
     let held: Vec<Term> = s
         .holding()
-        .map(|(u, h)| held_term(env, u, Some(h)))
+        .map(|(u, h)| held_term(env, u, Some(h), s.pinned(u).is_some()))
         .collect();
     let mut furn: Vec<&Furniture> = s.furniture.values().collect();
     furn.sort_by_key(|f| f.id);
     let furn: Vec<Term> = furn.into_iter().map(|f| furniture_term(env, f)).collect();
     let sites: Vec<Term> = s.sites.values().map(|x| site_term(env, x)).collect();
     let ships: Vec<Term> = s.ships.iter().map(|x| ship_term(env, x)).collect();
+    let flock: Vec<Term> = s
+        .sheep
+        .iter()
+        .map(|sh| {
+            let b = &sh.body;
+            map(
+                env,
+                &[
+                    ("id", b.id.encode(env)),
+                    ("x", b.x.encode(env)),
+                    ("y", b.y.encode(env)),
+                    ("z", b.z.encode(env)),
+                    ("heading", b.heading.encode(env)),
+                    ("woolly", sh.woolly.encode(env)),
+                ],
+            )
+        })
+        .collect();
     let helpers: Vec<Term> = s
         .helpers
         .iter()
@@ -767,6 +808,7 @@ fn snapshot<'a>(env: Env<'a>, u: Uni) -> NifResult<Term<'a>> {
         env,
         &[
             ("cows", cows.encode(env)),
+            ("sheep", flock.encode(env)),
             ("crops", crops.encode(env)),
             ("held", held.encode(env)),
             ("carryable", sim::CARRYABLE.to_vec().encode(env)),
@@ -779,12 +821,30 @@ fn snapshot<'a>(env: Env<'a>, u: Uni) -> NifResult<Term<'a>> {
     ))
 }
 
-/// What there is: furniture kinds and items, for clients.
+fn step_term<'a>(env: Env<'a>, st: &recipes::Step) -> Term<'a> {
+    map(
+        env,
+        &[
+            ("id", st.id.encode(env)),
+            ("inputs", pairs(env, st.inputs)),
+            ("outputs", pairs(env, &[st.output])),
+            ("station", opt(env, st.station)),
+            ("gesture", st.gesture.name().encode(env)),
+            ("stroke", st.gesture.stroke().encode(env)),
+            ("to_bag", recipes::to_bag(st).encode(env)),
+        ],
+    )
+}
+
+/// What there is, for clients: furniture kinds (each with its recipe's
+/// inputs, and whether it's a station), items, recipe steps, station kinds
+/// and gestures.
 #[rustler::nif]
 fn catalog(env: Env) -> Term {
     let kinds: Vec<Term> = furniture::KINDS
         .iter()
         .map(|k| {
+            let recipe = recipes::making(k.name).map_or(&[][..], |s| s.inputs);
             map(
                 env,
                 &[
@@ -793,7 +853,8 @@ fn catalog(env: Env) -> Term {
                     ("slots", k.slots.encode(env)),
                     ("carriers", k.carriers.encode(env)),
                     ("itemizable", k.itemizable.encode(env)),
-                    ("recipe", pairs(env, k.recipe)),
+                    ("recipe", pairs(env, recipe)),
+                    ("station", recipes::is_station(k.name).encode(env)),
                 ],
             )
         })
@@ -812,14 +873,229 @@ fn catalog(env: Env) -> Term {
             )
         })
         .collect();
+    let steps: Vec<Term> = recipes::STEPS.iter().map(|st| step_term(env, st)).collect();
+    let gestures: Vec<&str> = recipes::GESTURES.iter().map(|g| g.name()).collect();
     map(
         env,
         &[
             ("kinds", kinds.encode(env)),
             ("items", items.encode(env)),
             ("bag_slots", items::BAG_SLOTS.encode(env)),
+            ("recipes", steps.encode(env)),
+            ("stations", recipes::STATIONS.encode(env)),
+            ("gestures", gestures.encode(env)),
         ],
     )
+}
+
+// -- crafting
+
+/// A number from Elixir, integer or float.
+fn num(t: Term) -> Option<f64> {
+    t.decode::<f64>()
+        .ok()
+        .or_else(|| t.decode::<i64>().ok().map(|n| n as f64))
+}
+
+/// The elements of a 2- or 3-tuple or list.
+fn parts(t: Term) -> Option<Vec<Term>> {
+    rustler::types::tuple::get_tuple(t)
+        .ok()
+        .or_else(|| t.decode::<Vec<Term>>().ok())
+}
+
+/// A stroke: a list of points, each `{x, y}` or `[x, y]`, integers or
+/// floats. Points that aren't are skipped; anything but a list is none.
+fn stroke_in(t: Term) -> Option<Vec<(f64, f64)>> {
+    let pts: Vec<Term> = t.decode().ok()?;
+    Some(
+        pts.into_iter()
+            .take(recipes::MAX_POINTS)
+            .filter_map(|p| {
+                let xy = parts(p)?;
+                match xy.as_slice() {
+                    [x, y] => Some((num(*x)?, num(*y)?)),
+                    _ => None,
+                }
+            })
+            .collect(),
+    )
+}
+
+fn feet_in(t: Term) -> Option<Feet> {
+    match parts(t)?.as_slice() {
+        [x, y, z] => Some((num(*x)?, num(*y)?, num(*z)?)),
+        _ => None,
+    }
+}
+
+fn tag(t: Term) -> Option<String> {
+    t.atom_to_string().ok().or_else(|| t.decode::<String>().ok())
+}
+
+/// How heavy furniture finishes: nil, `{:place, on, {x, y, z}, rot}` or
+/// `{:carry, on, {x, y, z}}` (feet in frame `on`); tags may be strings.
+fn finish_in(t: Term) -> Result<Option<Finish>, &'static str> {
+    if t.is_atom() && tag(t).as_deref() == Some("nil") {
+        return Ok(None);
+    }
+    let bad = "bad_finish";
+    let xs = rustler::types::tuple::get_tuple(t).map_err(|_| bad)?;
+    match (xs.first().and_then(|x| tag(*x)).as_deref(), xs.as_slice()) {
+        (Some("place"), [_, on, p, rot]) => {
+            let on: u32 = on.decode().map_err(|_| bad)?;
+            let (x, y, z) = feet_in(*p).ok_or(bad)?;
+            let rot = num(*rot).ok_or(bad)?;
+            let p = (x.floor() as i32, y.floor() as i32, z.floor() as i32);
+            Ok(Some(Finish::Place(on, p, (rot as i64).rem_euclid(4) as u8)))
+        }
+        (Some("carry"), [_, on, at]) => {
+            let on: u32 = on.decode().map_err(|_| bad)?;
+            Ok(Some(Finish::Carry((on, feet_in(*at).ok_or(bad)?))))
+        }
+        _ => Err(bad),
+    }
+}
+
+fn crafted_term<'a>(env: Env<'a>, c: &Crafted) -> Term<'a> {
+    let how = match (c.furniture, c.carried) {
+        (None, _) => "bag",
+        (Some(_), false) => "place",
+        (Some(_), true) => "carry",
+    };
+    map(
+        env,
+        &[
+            ("step", c.made.step.encode(env)),
+            ("item", c.made.item.encode(env)),
+            ("n", c.made.n.encode(env)),
+            ("score", c.made.score.encode(env)),
+            ("how", how.encode(env)),
+            ("furniture", opt(env, c.furniture)),
+        ],
+    )
+}
+
+/// Recipe step `step` on a bag, outside any world (a hand step, or a
+/// station step with the player's recorded `stations`): `stroke` is the
+/// list of points drawn, 0..1 each way. `{:ok, %{step, item, n, score,
+/// how: "bag", furniture: nil}, bag}` or `{:error, reason}`: one of
+/// `no_such_step`, `no_station_near`, `missing_ingredients`, `bag_full`,
+/// `bad_stroke`, or `place_or_carry` for furniture too big for a bag.
+#[rustler::nif]
+fn craft<'a>(
+    env: Env<'a>,
+    step: String,
+    stroke: Term<'a>,
+    stations: Vec<String>,
+    bag: BagTerm,
+) -> Term<'a> {
+    let Some(pts) = stroke_in(stroke) else {
+        return fail(env, "bad_stroke");
+    };
+    let near: Vec<&str> = stations.iter().map(String::as_str).collect();
+    let mut b = bag_in(bag);
+    match recipes::craft(&step, &pts, &near, &mut b) {
+        Ok(made) => {
+            let c = Crafted {
+                made,
+                furniture: None,
+                carried: false,
+            };
+            (ok(), crafted_term(env, &c), bag_out(b)).encode(env)
+        }
+        Err(e) => fail(env, e),
+    }
+}
+
+/// Recipe step `step` by `user` in this universe, as `craft`, and for
+/// furniture too big for a bag finished as `how` says (`finish_in`): built
+/// there (`how: "place"`) or in their arms (`"carry"`), its id in
+/// `furniture`. Further errors: `place_or_carry` (no `how`), `bad_finish`,
+/// `occupied`, `edge_of_the_world`, `hands_full`, `carried`.
+#[rustler::nif]
+#[allow(clippy::too_many_arguments)]
+fn craft_at<'a>(
+    env: Env<'a>,
+    u: Uni,
+    user: String,
+    step: String,
+    stroke: Term<'a>,
+    stations: Vec<String>,
+    how: Term<'a>,
+    bag: BagTerm,
+) -> NifResult<Term<'a>> {
+    let Some(pts) = stroke_in(stroke) else {
+        return Ok(fail(env, "bad_stroke"));
+    };
+    let finish = match finish_in(how) {
+        Ok(f) => f,
+        Err(e) => return Ok(fail(env, e)),
+    };
+    let near: Vec<&str> = stations.iter().map(String::as_str).collect();
+    let mut b = bag_in(bag);
+    Ok(match lock(&u)?.craft(&user, &step, &pts, &near, finish, &mut b) {
+        Ok(c) => (ok(), crafted_term(env, &c), bag_out(b)).encode(env),
+        Err(e) => fail(env, e),
+    })
+}
+
+/// The station kinds in reach of feet `at` in frame `on`, as the tick
+/// works them out for each player.
+#[rustler::nif]
+fn stations_near(u: Uni, on: u32, at: Feet) -> NifResult<Vec<String>> {
+    Ok(lock(&u)?
+        .stations_near(on, at)
+        .into_iter()
+        .map(String::from)
+        .collect())
+}
+
+/// The station kinds `user` was found in reach of on the last tick.
+#[rustler::nif]
+fn access(u: Uni, user: String) -> NifResult<Vec<String>> {
+    Ok(lock(&u)?.access(&user).into_iter().map(String::from).collect())
+}
+
+/// Where `user` is stuck, overencumbered: nil, or `{on, {x, y, z}}` (feet
+/// in frame `on`). Their moves should be refused while it isn't nil.
+#[rustler::nif]
+fn pinned(u: Uni, user: String) -> NifResult<Option<(u32, Feet)>> {
+    Ok(lock(&u)?.pinned(&user))
+}
+
+/// `user`, at feet `at` in frame `on`, breaks furniture they hold (`target`
+/// nil, or its id), empty furniture in reach, or an unfinished blueprint in
+/// reach: `{:ok, %{returned: [[item, n]], sack: id | nil}, bag}`, the sack
+/// holding what didn't fit the bag, at their feet.
+#[rustler::nif]
+fn break_furniture(
+    env: Env,
+    u: Uni,
+    user: String,
+    on: u32,
+    at: Feet,
+    target: Option<u32>,
+    bag: BagTerm,
+) -> NifResult<Term> {
+    let mut b = bag_in(bag);
+    Ok(match lock(&u)?.break_apart(&user, on, at, target, &mut b) {
+        Ok(Broken { back, sack }) => {
+            let r = map(env, &[("returned", pairs(env, &back)), ("sack", opt(env, sack))]);
+            (ok(), r, bag_out(b)).encode(env)
+        }
+        Err(e) => fail(env, e),
+    })
+}
+
+/// Shear sheep `id` from feet `at` (world): `{:ok, wool, bag}`.
+#[rustler::nif]
+fn shear(env: Env, u: Uni, at: Feet, id: u32, bag: BagTerm) -> NifResult<Term> {
+    let mut b = bag_in(bag);
+    Ok(match lock(&u)?.shear(at, id, &mut b) {
+        Ok(n) => (ok(), n, bag_out(b)).encode(env),
+        Err(e) => fail(env, e),
+    })
 }
 
 /// A new player's bag.

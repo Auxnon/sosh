@@ -15,6 +15,9 @@ defmodule Sosh.Lobby do
   and reports where on it (`local`, the ship's frame), their `v` and `to`
   in that frame too; `at` is only where in the world they were when they
   said so. `frame/2` predicts where they are in whichever frame they're in.
+
+  Someone overencumbered is `pinned: true` and stands still where they're
+  stuck: their moves aren't taken (`move/2`) until they're free.
   """
   use Agent
 
@@ -32,6 +35,21 @@ defmodule Sosh.Lobby do
       case players do
         %{^user_id => player} -> Map.put(players, user_id, Map.merge(player, changes))
         _ -> players
+      end
+    end)
+  end
+
+  @doc """
+  A move they reported: merged in unless they're `pinned` (overencumbered,
+  `Sosh.Sim` holds them still). `{:ok, entry_before}` (nil if they've left)
+  or `:pinned`, nothing changed.
+  """
+  def move(user_id, motion) do
+    Agent.get_and_update(__MODULE__, fn players ->
+      case players do
+        %{^user_id => %{pinned: true}} -> {:pinned, players}
+        %{^user_id => p} -> {{:ok, p}, Map.put(players, user_id, Map.merge(p, motion))}
+        _ -> {{:ok, nil}, players}
       end
     end)
   end

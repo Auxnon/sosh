@@ -14,7 +14,7 @@ config :sosh, Sosh.Repo,
 # Tests make their own universes, tick them by hand (Sosh.Sim.tick/2) and
 # save them when they mean to (Sosh.Sim.save/1).
 config :sosh, Sosh.Universes, boot: false
-config :sosh, Sosh.Sim, tick_ms: nil, stage_ms: 1_000, cows: 0, save_ms: nil
+config :sosh, Sosh.Sim, tick_ms: nil, stage_ms: 1_000, cows: 0, sheep: 0, save_ms: nil
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.

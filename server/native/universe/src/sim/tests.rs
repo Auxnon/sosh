@@ -35,6 +35,33 @@ fn who(id: &str, x: f64, y: f64, z: f64) -> Walker {
     }
 }
 
+/// Furniture `kind` put straight into frame `on` at `p`, turned `rot`.
+fn build(s: &mut Sim, kind: &str, on: u32, p: Pos, rot: u8) -> u32 {
+    let id = s.new_id();
+    let mut f = Furniture::new(id, furniture::kind(kind).unwrap(), p, rot);
+    f.on = on;
+    s.put_furniture(f);
+    id
+}
+
+/// A blueprint laid out before they were retired, with `have` put in.
+fn old_site(s: &mut Sim, kind: &str, p: Pos, have: &[(&str, u16)]) -> u32 {
+    let id = s.new_id();
+    let site = Site {
+        id,
+        kind: kind.into(),
+        on: 0,
+        origin: p,
+        rot: 0,
+        have: have.iter().map(|(i, n)| (i.to_string(), *n)).collect(),
+    };
+    for c in site.cells() {
+        s.set_block(0, c, SCAFFOLD);
+    }
+    s.sites.insert(id, site);
+    id
+}
+
 fn bag_with(stuff: &[(&str, u16)]) -> Bag {
     let mut b = items::empty(items::BAG_SLOTS);
     for (i, n) in stuff {
@@ -107,8 +134,7 @@ fn saved_and_restored_it_wakes_to_the_time_since() {
     s.tick(10_000, &[]);
     s.plant((2, 2, 0)).unwrap();
     let mut bag = starter_bag();
-    let site = s.start_site("chest", 0, (3, 3, 0), 0).unwrap();
-    s.deposit(site, &mut bag).unwrap();
+    build(&mut s, "chest", 0, (3, 3, 0), 0);
     s.place(0, (5, 5, 0), "pot", 0, &mut bag).unwrap();
     let saved = serde_json::to_string(&s.save(10_000)).unwrap();
 
@@ -237,57 +263,23 @@ fn digging_and_building_spend_and_fill_the_bag() {
 }
 
 #[test]
-fn blueprints_build_from_ingredients_put_in() {
+fn taking_old_scaffolding_down_gives_it_all_back() {
     let mut s = flat();
-    let mut bag = bag_with(&[("wood", 5), ("stone", 1)]);
-    assert_eq!(
-        s.start_site("throne", 0, (4, 4, 0), 0),
-        Err("no_such_blueprint")
-    );
-    let id = s.start_site("dresser", 0, (4, 4, 0), 1).unwrap();
-    // turned once: the second cell is north of the first
+    let mut bag = bag_with(&[]);
+    old_site(&mut s, "chest", (4, 4, 0), &[("wood", 3)]);
     assert_eq!(s.terrain.get(4, 4, 0), Some(SCAFFOLD));
-    assert_eq!(s.terrain.get(4, 5, 0), Some(SCAFFOLD));
-    assert_eq!(s.start_site("chest", 0, (4, 5, 0), 0), Err("occupied"));
-    // all five wood go in (it wants six), then the one stone
-    assert_eq!(s.deposit(id, &mut bag), Ok(None));
-    assert_eq!(s.sites[&id].has("wood"), 5);
-    assert_eq!(s.deposit(id, &mut bag), Ok(None));
-    assert_eq!(s.deposit(id, &mut bag), Err("missing_ingredients"));
-    assert!(items::is_empty(&bag));
-    items::add(&mut bag, "wood", 3);
-    items::add(&mut bag, "stone", 2);
-    assert_eq!(s.deposit(id, &mut bag), Ok(None));
-    let fid = s.deposit(id, &mut bag).unwrap().expect("built");
-    assert_eq!(count(&bag, "wood"), 2);
-    assert_eq!(count(&bag, "stone"), 1);
-    assert!(s.sites.is_empty());
-    assert_eq!(s.terrain.get(4, 5, 0), Some(FURNITURE));
-    assert_eq!(s.furniture_at(0, (4, 5, 0)), Some(fid));
-    let f = &s.furniture[&fid];
-    assert_eq!((f.kind.as_str(), f.rot, f.slots.len()), ("dresser", 1, 16));
-}
-
-#[test]
-fn taking_scaffolding_down_gives_it_all_back() {
-    let mut s = flat();
-    let mut bag = bag_with(&[("wood", 3)]);
-    let id = s.start_site("chest", 0, (4, 4, 0), 0).unwrap();
-    s.deposit(id, &mut bag).unwrap();
-    assert_eq!(count(&bag, "wood"), 0);
     assert_eq!(s.dig("p", 0, (4, 4, 0), &mut bag), Ok(()));
     assert_eq!(count(&bag, "wood"), 3);
     assert_eq!(s.terrain.get(4, 4, 0), Some(AIR));
+    assert!(s.sites.is_empty());
 }
 
 #[test]
 fn chests_hold_things_and_breaking_returns_them() {
     let mut s = flat();
-    let mut bag = bag_with(&[("wood", 4), ("stone", 20), ("carrot", 7)]);
-    let site = s.start_site("chest", 0, (4, 4, 0), 0).unwrap();
-    let chest = s.deposit(site, &mut bag).unwrap().unwrap();
+    let mut bag = bag_with(&[("stone", 20), ("carrot", 7)]);
+    let chest = build(&mut s, "chest", 0, (4, 4, 0), 0);
     let at = (4.0, 3.0, 0.0);
-    // stone is in slot 0 now that the wood went in
     let stone = bag
         .iter()
         .position(|x| x.as_ref().is_some_and(|x| x.item == "stone"))
@@ -309,9 +301,9 @@ fn chests_hold_things_and_breaking_returns_them() {
     s.stash(at, chest, &mut bag, stone).unwrap();
     s.drain_events();
 
-    // broken: half the wood back, every stone back
+    // broken: three quarters of its four planks' wood back, every stone back
     assert_eq!(s.dig("p", 0, (4, 4, 0), &mut bag), Ok(()));
-    assert_eq!(count(&bag, "wood"), 2);
+    assert_eq!(count(&bag, "wood"), 3);
     assert_eq!(count(&bag, "stone"), 20);
     assert_eq!(count(&bag, "carrot"), 7);
     assert!(s.furniture.is_empty());
@@ -322,10 +314,7 @@ fn chests_hold_things_and_breaking_returns_them() {
 #[test]
 fn what_does_not_fit_the_bag_is_left_in_a_sack() {
     let mut s = flat();
-    let mut bag = bag_with(&[("wood", 8), ("stone", 1)]);
-    let site = s.start_site("wardrobe", 0, (4, 4, 0), 0).unwrap();
-    s.deposit(site, &mut bag).unwrap();
-    let wardrobe = s.deposit(site, &mut bag).unwrap().unwrap();
+    let wardrobe = build(&mut s, "wardrobe", 0, (4, 4, 0), 0);
     // fill it with 20 slots of dirt, and the bag with carrots but one slot
     {
         let f = s.furniture.get_mut(&wardrobe).unwrap();
@@ -333,14 +322,16 @@ fn what_does_not_fit_the_bag_is_left_in_a_sack() {
     }
     let mut bag = bag_with(&[("carrot", 15 * 64)]);
     s.dig("p", 0, (4, 4, 1), &mut bag).unwrap();
-    // the one free slot took wood; the dirt is in a sack where it stood
-    assert_eq!(count(&bag, "wood"), 4);
+    // the one free slot took wood (seven planks' worth, three quarters of
+    // it); the stone and the dirt are in a sack where it stood
+    assert_eq!(count(&bag, "wood"), 5);
     let sack = s.furniture_at(0, (4, 4, 0)).expect("a sack");
     assert_eq!(s.furniture[&sack].kind, "sack");
     assert_eq!(count(&s.furniture[&sack].slots, "dirt"), 20 * 64);
+    assert_eq!(count(&s.furniture[&sack].slots, "stone"), 1);
     // emptied, it goes
     let mut empty = bag_with(&[]);
-    for slot in 0..20 {
+    for slot in 0..21 {
         assert_eq!(s.take((4.0, 3.0, 0.0), sack, slot, &mut empty), Ok(()));
         if slot == 15 {
             empty = bag_with(&[]);
@@ -416,12 +407,8 @@ fn leaving_lets_go() {
 /// A chest at (4, 4, 0) and a dresser at (8, 4, 0)..(9, 4, 0).
 fn furnished() -> (Sim, u32, u32) {
     let mut s = flat();
-    let mut bag = bag_with(&[("wood", 10), ("stone", 2)]);
-    let a = s.start_site("chest", 0, (4, 4, 0), 0).unwrap();
-    let chest = s.deposit(a, &mut bag).unwrap().unwrap();
-    let b = s.start_site("dresser", 0, (8, 4, 0), 0).unwrap();
-    s.deposit(b, &mut bag).unwrap();
-    let dresser = s.deposit(b, &mut bag).unwrap().unwrap();
+    let chest = build(&mut s, "chest", 0, (4, 4, 0), 0);
+    let dresser = build(&mut s, "dresser", 0, (8, 4, 0), 0);
     s.drain_events();
     (s, chest, dresser)
 }
@@ -446,9 +433,8 @@ fn furniture_is_carried_whole_and_set_down_turned() {
 #[test]
 fn small_empty_furniture_packs_into_the_bag() {
     let mut s = flat();
-    let mut bag = bag_with(&[("wood", 2)]);
-    let site = s.start_site("stool", 0, (4, 4, 0), 0).unwrap();
-    let stool = s.deposit(site, &mut bag).unwrap().unwrap();
+    let mut bag = bag_with(&[]);
+    let stool = build(&mut s, "stool", 0, (4, 4, 0), 0);
     assert_eq!(
         s.grab("p", (4.0, 3.0, 0.0), stool, &mut bag),
         Ok(Grabbed::Pocketed)
@@ -551,9 +537,7 @@ fn a_helper_takes_the_other_end() {
     let mut s = Sim::new(0, 0, 7, 1000);
     s.tick(0, &[]);
     let mut bag = starter_bag();
-    let site = s.start_site("dresser", 0, (3, -3, 0), 0).unwrap();
-    s.deposit(site, &mut bag).unwrap();
-    let dresser = s.deposit(site, &mut bag).unwrap().unwrap();
+    let dresser = build(&mut s, "dresser", 0, (3, -3, 0), 0);
     let helper = s.helpers[0].id;
     let me = |x: f64| who("p", x, -4.0, 0.0);
     assert_eq!(s.call_helper("p", helper), Err("nothing_to_help_with"));
@@ -721,11 +705,10 @@ fn furniture_carried_aboard_moves_with_the_ship() {
     let mut s = Sim::new(0, 0, 7, 1000);
     s.tick(0, &[]);
     let id = s.ships[0].id;
-    let mut bag = bag_with(&[("wood", 4)]);
+    let mut bag = bag_with(&[]);
     let shore = s.ships[0].pose.to_world((0.0, 4.0, 0.0));
     let (sx, sy) = (cell(shore.0), cell(shore.1));
-    let site = s.start_site("chest", 0, (sx, sy, 0), 0).unwrap();
-    s.deposit(site, &mut bag).unwrap();
+    build(&mut s, "chest", 0, (sx, sy, 0), 0);
     let chest = s.furniture_at(0, (sx, sy, 0)).unwrap();
     assert_eq!(
         s.grab("p", shore, chest, &mut bag),
@@ -1133,4 +1116,413 @@ fn a_dropped_stack_falls_into_a_sack_and_marbles_drop_as_themselves() {
     s.take((4.0, 3.0, 0.0), id, 0, &mut bag).unwrap();
     assert_eq!(count(&bag, "wood"), 30);
     assert!(!s.furniture.contains_key(&id));
+}
+
+// -- crafting
+
+/// A straight cut square across the saw's plank.
+fn clean_cut() -> Vec<(f64, f64)> {
+    (0..=10).map(|i| (0.5, i as f64 / 10.0)).collect()
+}
+
+/// The `Stations` events among `ev`.
+fn station_events(ev: &[Event]) -> Vec<(String, Vec<&'static str>)> {
+    ev.iter()
+        .filter_map(|e| match e {
+            Event::Stations(u, k) => Some((u.clone(), k.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn stations_in_reach_are_noted_on_tick_and_only_when_they_change() {
+    let mut s = flat();
+    build(&mut s, "bench", 0, (4, 4, 0), 0);
+    build(&mut s, "veneer", 0, (12, 12, 0), 0);
+    assert_eq!(s.stations_near(0, (4.0, 3.0, 0.0)), vec!["bench"]);
+    assert_eq!(s.stations_near(0, (8.0, 8.0, 0.0)), vec!["veneer", "bench"]);
+    assert!(s.stations_near(0, (0.0, 15.0, 0.0)).is_empty());
+    // in another frame, it isn't near
+    assert!(s.stations_near(7, (4.0, 3.0, 0.0)).is_empty());
+    s.drain_events();
+
+    s.tick(100, &[p(4.0, 3.0, 0.0)]);
+    let ev = s.drain_events();
+    assert_eq!(station_events(&ev), vec![("p".to_string(), vec!["bench"])]);
+    assert_eq!(s.access("p"), vec!["bench"]);
+    s.tick(200, &[p(4.5, 3.0, 0.0)]);
+    assert!(station_events(&s.drain_events()).is_empty(), "nothing changed");
+    s.tick(300, &[p(0.0, 15.0, 0.0)]);
+    assert_eq!(
+        station_events(&s.drain_events()),
+        vec![("p".to_string(), vec![])]
+    );
+    s.tick(400, &[p(0.0, 15.0, 0.0)]);
+    assert!(station_events(&s.drain_events()).is_empty());
+    // gone from the universe: near nothing
+    s.tick(500, &[p(4.0, 3.0, 0.0)]);
+    s.drain_events();
+    s.tick(600, &[]);
+    assert_eq!(
+        station_events(&s.drain_events()),
+        vec![("p".to_string(), vec![])]
+    );
+    s.tick(700, &[p(4.0, 3.0, 0.0)]);
+    s.drain_events();
+    s.release("p");
+    assert_eq!(
+        station_events(&s.drain_events()),
+        vec![("p".to_string(), vec![])]
+    );
+    assert!(s.access("p").is_empty());
+}
+
+#[test]
+fn out_of_range_a_station_step_is_refused() {
+    let mut s = flat();
+    build(&mut s, "bench", 0, (4, 4, 0), 0);
+    let mut bag = bag_with(&[("plank", 2)]);
+    s.tick(100, &[p(14.0, 14.0, 0.0)]);
+    let near = s.access("p");
+    assert_eq!(
+        s.craft("p", "post", &clean_cut(), &near, None, &mut bag),
+        Err("no_station_near")
+    );
+    assert_eq!(count(&bag, "plank"), 2, "nothing taken");
+    s.tick(200, &[p(4.0, 3.0, 0.0)]);
+    let near = s.access("p");
+    let c = s.craft("p", "post", &clean_cut(), &near, None, &mut bag).unwrap();
+    assert_eq!((c.made.item, c.made.n, c.furniture), ("post", 2, None));
+    assert_eq!(count(&bag, "post"), 2);
+    // a stroke along the plank rather than across it still cuts, wastefully
+    let along: Vec<(f64, f64)> = (0..=10).map(|i| (i as f64 / 10.0, 0.5)).collect();
+    let c = s.craft("p", "post", &along, &near, None, &mut bag).unwrap();
+    assert_eq!((c.made.n, c.made.score), (1, 0.0));
+    assert_eq!(count(&bag, "post"), 3);
+    assert_eq!(count(&bag, "plank"), 0);
+    assert_eq!(
+        s.craft("p", "post", &clean_cut(), &near, None, &mut bag),
+        Err("missing_ingredients")
+    );
+}
+
+#[test]
+fn a_pocket_room_doubles_station_reach() {
+    let mut s = flat();
+    let mut bag = bag_with(&[("hyperdoor", 1)]);
+    s.place(0, (4, 4, 0), "hyperdoor", 0, &mut bag).unwrap();
+    let door = s.furniture_at(0, (4, 4, 0)).unwrap();
+    let room = through(&mut s, "p", "ann", door).on;
+    build(&mut s, "bench", room, (3, 3, 0), 0);
+    // 9.6 from its middle: past REACH, within twice it
+    let at = (-4.0, -3.0, 0.0);
+    assert!(dist(at, (3.5, 3.0, 0.0)) > REACH);
+    assert_eq!(s.stations_near(room, at), vec!["bench"]);
+    s.tick(100, &[aboard(room, at)]);
+    assert_eq!(s.access("p"), vec!["bench"]);
+    // the same distance in the world is too far
+    build(&mut s, "bench", 0, (10, 10, 0), 0);
+    assert!(s.stations_near(0, (3.0, 4.0, 0.0)).is_empty());
+}
+
+#[test]
+fn heavy_furniture_is_built_where_chosen_or_carried() {
+    let mut s = flat();
+    build(&mut s, "bench", 0, (4, 4, 0), 0);
+    let near = vec!["bench"];
+    let parts: &[(&str, u16)] = &[("plank", 2), ("post", 8), ("cloth", 6)];
+    let mut bag = bag_with(parts);
+    // it doesn't fit a bag: place or carry
+    assert_eq!(
+        s.craft("p", "bed", &[], &near, None, &mut bag),
+        Err("place_or_carry")
+    );
+    // somewhere taken: refused, and nothing used up
+    assert_eq!(
+        s.craft("p", "bed", &[], &near, Some(Finish::Place(0, (4, 4, 0), 0)), &mut bag),
+        Err("occupied")
+    );
+    assert_eq!(
+        s.craft("p", "bed", &[], &near, Some(Finish::Place(0, (4, 4, 90), 0)), &mut bag),
+        Err("edge_of_the_world")
+    );
+    assert_eq!(count(&bag, "cloth"), 6);
+    let c = s
+        .craft("p", "bed", &[], &near, Some(Finish::Place(0, (8, 8, 0), 1)), &mut bag)
+        .unwrap();
+    let bed = c.furniture.expect("built");
+    assert!(!c.carried);
+    assert_eq!(s.furniture_at(0, (8, 9, 0)), None, "turned: along -x");
+    assert_eq!(s.furniture_at(0, (7, 8, 0)), Some(bed));
+    assert_eq!(s.furniture[&bed].rot, 1);
+    assert_eq!(count(&bag, "cloth"), 3);
+    assert_eq!(count(&bag, "post"), 4);
+
+    // carried: not with full hands, and nothing's used up trying
+    s.terrain.set(6, 6, 0, POT);
+    s.pick_block("p", (6.0, 5.0, 0.0), 0, (6, 6, 0)).unwrap();
+    let carry = Some(Finish::Carry((0, (6.0, 5.0, 0.0))));
+    assert_eq!(s.craft("p", "bed", &[], &near, carry, &mut bag), Err("hands_full"));
+    assert_eq!(count(&bag, "cloth"), 3);
+    s.put_down("p", 0, (6, 6, 0), 0).unwrap();
+    let c = s.craft("p", "bed", &[], &near, carry, &mut bag).unwrap();
+    let bed = c.furniture.unwrap();
+    assert!(c.carried);
+    assert_eq!(s.held("p"), Some(Held::Furniture(bed)));
+    let f = &s.furniture[&bed];
+    assert!(f.lifted);
+    assert_eq!(f.grips, vec![Grip::Player("p".into())]);
+    assert!(items::is_empty(&bag));
+    // a chest takes one: carried off at once, nobody pinned
+    let mut planks = bag_with(&[("plank", 4)]);
+    let c = s
+        .craft("q", "chest", &[], &near, Some(Finish::Carry((0, (3.0, 3.0, 0.0)))), &mut planks)
+        .unwrap();
+    assert!(c.carried);
+    assert_eq!(s.pinned("q"), None);
+    // a stool packs into the bag even when asked to carry it
+    let mut b = bag_with(&[("plank", 1), ("post", 2)]);
+    let c = s.craft("r", "stool", &[], &near, carry, &mut b).unwrap();
+    assert_eq!(c.furniture, None);
+    assert_eq!(count(&b, "stool"), 1);
+}
+
+#[test]
+fn overencumbered_until_someone_takes_the_other_end() {
+    let mut s = flat();
+    build(&mut s, "bench", 0, (4, 4, 0), 0);
+    let mut bag = bag_with(&[("plank", 1), ("post", 4), ("cloth", 3)]);
+    let spot = (0, (6.0, 6.0, 0.0));
+    let c = s
+        .craft("p", "bed", &[], &["bench"], Some(Finish::Carry(spot)), &mut bag)
+        .unwrap();
+    let bed = c.furniture.unwrap();
+    assert_eq!(s.pinned("p"), Some(spot));
+    let ev = s.drain_events();
+    assert!(ev.contains(&Event::Encumbered("p".into(), Some(spot))));
+    // walking off: it stays where they're stuck, and they're told once
+    s.tick(100, &[p(6.0, 6.2, 0.0)]);
+    let ev = s.drain_events();
+    assert!(!ev.iter().any(|e| matches!(e, Event::Encumbered(..))), "within the slack");
+    s.tick(200, &[p(9.0, 6.0, 0.0)]);
+    let ev = s.drain_events();
+    assert_eq!(
+        ev.iter().filter(|e| matches!(e, Event::Encumbered(..))).count(),
+        1
+    );
+    assert!(ev.contains(&Event::Encumbered("p".into(), Some(spot))));
+    s.tick(300, &[p(10.0, 6.0, 0.0)]);
+    assert!(!s.drain_events().iter().any(|e| matches!(e, Event::Encumbered(..))));
+    assert_eq!(s.furniture[&bed].at, (6.0, 6.0, 0.0));
+    assert_eq!(s.held("p"), Some(Held::Furniture(bed)));
+    // nobody carries them off, and they go through no doors
+    assert_eq!(
+        s.pick_player("q", (6.0, 5.0, 0.0), "p", (6.0, 6.0, 0.0)),
+        Err("cannot_carry")
+    );
+    // too far to take the other end
+    let mut none = bag_with(&[]);
+    assert_eq!(s.grab("q", (6.0, 14.0, 0.0), bed, &mut none), Err("out_of_reach"));
+    // a second carrier frees them
+    assert_eq!(s.grab("q", (7.0, 6.0, 0.0), bed, &mut none), Ok(Grabbed::Lifted));
+    assert_eq!(s.pinned("p"), None);
+    assert!(s.drain_events().contains(&Event::Encumbered("p".into(), None)));
+    assert_eq!(s.grab("r", (7.0, 6.0, 0.0), bed, &mut none), Err("already_carried"));
+    // and off they go together
+    s.tick(400, &[p(6.0, 8.0, 0.0), who("q", 7.0, 8.0, 0.0)]);
+    assert_eq!(s.furniture[&bed].at, (6.5, 8.0, 0.0));
+    assert_eq!(s.put_down("q", 0, (6, 10, 0), 0), Ok(Held::Furniture(bed)));
+    assert!(!s.drain_events().iter().any(|e| matches!(e, Event::Encumbered(..))));
+}
+
+#[test]
+fn a_helper_frees_someone_overencumbered() {
+    let mut s = Sim::new(0, 0, 7, 1000);
+    s.tick(0, &[]);
+    let mut bag = bag_with(&[("plank", 4), ("post", 2), ("stone", 2)]);
+    let h = (s.helpers[0].x, s.helpers[0].y, s.helpers[0].z);
+    let spot = (0, (h.0 + 2.0, h.1, h.2));
+    s.craft("p", "dresser", &[], &["bench"], Some(Finish::Carry(spot)), &mut bag)
+        .unwrap();
+    assert!(s.pinned("p").is_some());
+    s.call_helper("p", s.helpers[0].id).unwrap();
+    let mut t = 0;
+    while s.pinned("p").is_some() {
+        t += 100;
+        s.tick(t, &[who("p", spot.1 .0, spot.1 .1, spot.1 .2)]);
+        assert!(t < 10_000, "the helper never came");
+    }
+    assert!(s.drain_events().contains(&Event::Encumbered("p".into(), None)));
+}
+
+#[test]
+fn breaking_gives_back_three_quarters_and_the_rest_goes_in_a_sack() {
+    let mut s = flat();
+    let mut bag = bag_with(&[("plank", 1), ("post", 4), ("cloth", 3)]);
+    let spot = (0, (6.0, 6.0, 0.0));
+    let bed = s
+        .craft("p", "bed", &[], &["bench"], Some(Finish::Carry(spot)), &mut bag)
+        .unwrap()
+        .furniture
+        .unwrap();
+    // in their arms, too heavy: broken where they stand
+    let b = s.break_apart("p", 0, spot.1, None, &mut bag).unwrap();
+    // a bed is 3 wood and 12 wool, all the way down
+    assert_eq!(b.back, vec![("wood".to_string(), 2), ("wool".to_string(), 9)]);
+    assert_eq!(b.sack, None);
+    assert_eq!((count(&bag, "wood"), count(&bag, "wool")), (2, 9));
+    assert!(!s.furniture.contains_key(&bed));
+    assert_eq!(s.held("p"), None);
+    assert_eq!(s.pinned("p"), None);
+    let ev = s.drain_events();
+    assert!(ev.contains(&Event::FurnitureGone(bed)));
+    assert!(ev.contains(&Event::Carry("p".into(), None)));
+    assert!(ev.contains(&Event::Encumbered("p".into(), None)));
+    assert_eq!(s.break_apart("p", 0, spot.1, None, &mut bag), Err("nothing_to_break"));
+
+    // empty furniture in reach; a full bag sends it to a sack at their feet
+    let table = build(&mut s, "table", 0, (4, 4, 0), 0);
+    let chest = build(&mut s, "chest", 0, (8, 4, 0), 0);
+    items::add(&mut s.furniture.get_mut(&chest).unwrap().slots, "dirt", 3);
+    let feet = (4.0, 2.0, 0.0);
+    assert_eq!(
+        s.break_apart("p", 0, (4.0, 14.0, 0.0), Some(table), &mut bag),
+        Err("out_of_reach")
+    );
+    assert_eq!(s.break_apart("p", 0, feet, Some(chest), &mut bag), Err("not_empty"));
+    assert_eq!(s.break_apart("p", 0, feet, Some(999), &mut bag), Err("no_such_furniture"));
+    let mut full = bag_with(&[]);
+    for slot in full.iter_mut() {
+        *slot = Some(items::Stack {
+            item: "stone".into(),
+            n: 64,
+        });
+    }
+    let b = s.break_apart("p", 0, feet, Some(table), &mut full).unwrap();
+    // two planks and four posts: four wood's worth, three of it back
+    assert_eq!(b.back, vec![("wood".to_string(), 3)]);
+    let sack = b.sack.expect("a sack");
+    let f = &s.furniture[&sack];
+    assert_eq!((f.kind.as_str(), f.origin), ("sack", (4, 2, 0)));
+    assert_eq!(count(&f.slots, "wood"), 3);
+    assert!(!s.furniture.contains_key(&table));
+    assert_eq!(s.terrain.get(4, 4, 0), Some(AIR));
+    // someone else's in their hands is in use
+    let mut none = bag_with(&[]);
+    s.grab("q", (8.0, 3.0, 0.0), chest, &mut none).unwrap();
+    assert_eq!(s.break_apart("p", 0, (8.0, 3.0, 0.0), Some(chest), &mut bag), Err("in_use"));
+}
+
+#[test]
+fn an_old_blueprint_breaks_for_everything_put_in() {
+    let mut s = flat();
+    let site = old_site(&mut s, "dresser", (4, 4, 0), &[("wood", 5), ("stone", 1)]);
+    let mut bag = bag_with(&[]);
+    assert_eq!(
+        s.break_apart("p", 0, (4.0, 14.0, 0.0), Some(site), &mut bag),
+        Err("out_of_reach")
+    );
+    let b = s.break_apart("p", 0, (4.0, 3.0, 0.0), Some(site), &mut bag).unwrap();
+    assert_eq!(b.back, vec![("wood".to_string(), 5), ("stone".to_string(), 1)]);
+    assert_eq!((count(&bag, "wood"), count(&bag, "stone")), (5, 1));
+    assert!(s.sites.is_empty());
+    assert_eq!(s.terrain.get(4, 4, 0), Some(AIR));
+    assert_eq!(s.terrain.get(5, 4, 0), Some(AIR));
+    assert!(s.drain_events().contains(&Event::SiteGone(site)));
+}
+
+#[test]
+fn an_old_save_with_blueprints_and_no_sheep_still_loads() {
+    // from before recipes: two blueprints (one in a shape that no longer
+    // reads) and a chest, and no sheep anywhere
+    let saved = r#"{"world_tick":50,"at_ms":1000,"crops":[],
+        "furniture":[{"id":3,"kind":"chest","origin":[8,8,0],"rot":0,
+                      "slots":[null,null,null,null,null,null,null,null,null,null,null,null]}],
+        "sites":[{"id":4,"kind":"bed","on":0,"origin":[3,3,0],"rot":0,"have":[["wood",5]]},
+                 {"id":"five","kind":"chest"}],
+        "ships":[],"next_id":9}"#;
+    let mut s = flat();
+    s.restore(serde_json::from_str(saved).unwrap());
+    assert_eq!(s.sites.len(), 1);
+    assert_eq!(s.terrain.get(3, 3, 0), Some(SCAFFOLD));
+    assert_eq!(s.terrain.get(3, 4, 0), Some(SCAFFOLD));
+    assert_eq!(s.furniture[&3].kind, "chest");
+    assert!(s.sheep.is_empty());
+    // saved again, it still has its blueprint
+    let json = serde_json::to_string(&s.save(2000)).unwrap();
+    let mut t = flat();
+    t.restore(serde_json::from_str(&json).unwrap());
+    assert_eq!(t.site_at(0, (3, 4, 0)), Some(4));
+    let mut bag = bag_with(&[]);
+    t.break_apart("p", 0, (3.0, 2.0, 0.0), Some(4), &mut bag).unwrap();
+    assert_eq!(count(&bag, "wood"), 5);
+}
+
+// -- sheep
+
+#[test]
+fn sheep_are_shorn_and_regrow_on_world_ticks_even_asleep() {
+    let mut s = flat();
+    let id = s.spawn_sheep_at(8.0, 8.0);
+    s.sheep[0].body.idle_until_ms = i64::MAX;
+    s.tick(100, &[]);
+    s.drain_events();
+    let mut bag = bag_with(&[]);
+    assert_eq!(s.shear((1.0, 1.0, 0.0), id, &mut bag), Err("out_of_reach"));
+    assert_eq!(s.shear((8.0, 7.0, 0.0), 99, &mut bag), Err("no_such_sheep"));
+    assert_eq!(s.shear((8.0, 7.0, 0.0), id, &mut bag), Ok(SHEAR_WOOL));
+    assert_eq!(count(&bag, "wool"), SHEAR_WOOL as u32);
+    assert_eq!(s.drain_events(), vec![Event::Sheep(id)]);
+    assert_eq!(s.shear((8.0, 7.0, 0.0), id, &mut bag), Err("already_shorn"));
+    // not yet
+    s.tick(100 + (WOOL_REGROW_TICKS - 10) * TICK_MS, &[]);
+    assert!(!s.sheep[0].woolly);
+    assert!(!s.drain_events().contains(&Event::Sheep(id)));
+    // shorn again later, then everyone leaves: it grows back while asleep,
+    // caught up on waking
+    s.tick(100 + WOOL_REGROW_TICKS * TICK_MS, &[]);
+    assert!(s.sheep[0].woolly);
+    assert!(s.drain_events().contains(&Event::Sheep(id)));
+    let t0 = 200 + WOOL_REGROW_TICKS * TICK_MS;
+    s.tick(t0, &[]);
+    s.shear((8.0, 7.0, 0.0), id, &mut bag).unwrap();
+    s.drain_events();
+    s.sleep(t0);
+    s.ambient(t0 + 60_000);
+    assert!(!s.sheep[0].woolly, "asleep, the clock stands still");
+    s.wake(t0 + WOOL_REGROW_TICKS * TICK_MS + 1000);
+    assert!(s.sheep[0].woolly);
+    assert_eq!(s.drain_events(), vec![Event::Sheep(id)]);
+    // a full bag takes no wool
+    s.sheep[0].woolly = true;
+    let mut full = bag_with(&[]);
+    for slot in full.iter_mut() {
+        *slot = Some(items::Stack {
+            item: "stone".into(),
+            n: 64,
+        });
+    }
+    assert_eq!(s.shear((8.0, 7.0, 0.0), id, &mut full), Err("bag_full"));
+    assert!(s.sheep[0].woolly);
+}
+
+#[test]
+fn sheep_spawn_on_the_home_island_and_wander_it() {
+    let mut s = Sim::new(0, 0, 7, 1000);
+    s.spawn_sheep(4);
+    assert_eq!(s.sheep.len(), 4);
+    assert!(s.sheep.iter().all(|sh| sh.woolly));
+    let mut t = 0;
+    let mut moved = false;
+    for _ in 0..600 {
+        t += 100;
+        let out = s.tick(t, &[]);
+        moved |= !out.sheep.is_empty();
+    }
+    assert!(moved);
+    for sh in &s.sheep {
+        let b = &sh.body;
+        assert!(s.terrain.walkable(b.x, b.y, b.z), "sheep {} off the island", b.id);
+    }
 }

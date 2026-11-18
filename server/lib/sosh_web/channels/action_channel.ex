@@ -5,7 +5,9 @@ defmodule SoshWeb.ActionChannel do
 
   The join replies with the universe as `Sosh.Sim.snapshot/1` gives it,
   plus the player's `bag` (`[[item, count] | []]`, `[]` an empty slot) and the `catalog` of
-  items and furniture kinds. Updates then arrive as `Sosh.Sim`'s broadcasts.
+  items, furniture kinds, recipe steps, station kinds and gestures. Updates
+  then arrive as `Sosh.Sim`'s broadcasts. Anything else asked (the retired
+  `build_action` and `deposit_action` among them) is `bad_request`.
 
   Positions are integer block coordinates (Z-up, a block at z spans
   [z, z+1]; see `Sosh.World`): in the world, or with `on` a ship's id, in
@@ -172,29 +174,41 @@ defmodule SoshWeb.ActionChannel do
     |> answer(socket)
   end
 
-  # Lay out the blueprint `kind` with its origin at `position`, turned `rot`.
-  def handle_in("build_action", %{"kind" => kind, "position" => pos} = params, socket)
-      when is_binary(kind) do
-    on = on(params)
-
-    with {:ok, p} <- cell(pos),
-         :ok <- within_reach(socket, on, p),
-         {:ok, site} <- Sim.build(u(socket), kind, on, p, rot(params)) do
-      {:reply, {:ok, %{site: site}}, socket}
+  # Do recipe step `step` (`catalog.recipes`) at the stations the server
+  # has us in reach of (never the client's say), with `stroke` the points
+  # drawn ([[x, y]], 0..1 each way; a better stroke yields more). Furniture
+  # too big for a bag finishes as `how` says: "place" builds it with its
+  # origin at `position` (and `on`), turned `rot`, within reach; "carry"
+  # puts it in our arms where we stand. Replies {step, item, n, score, how
+  # ("bag", "place" or "carry"), furniture (its id, or nil), bag}.
+  def handle_in("craft_action", %{"step" => step} = params, socket)
+      when is_binary(step) and byte_size(step) <= 64 do
+    with {:ok, how} <- finish(socket, params),
+         {:ok, made, bag} <-
+           Sim.craft(u(socket), user(socket), name(socket), step, stroke(params), how) do
+      {:reply, {:ok, Map.put(made, :bag, bag)}, socket}
     end
     |> answer(socket)
   end
 
-  # Put ingredients from the bag into the blueprint at `position`: as much
-  # as it needs of the first missing one we have. `built` is the furniture
-  # once the last goes in.
-  def handle_in("deposit_action", %{"position" => pos} = params, socket) do
-    on = on(params)
+  # Break furniture `furniture` (empty, in reach, or ours in our arms) or
+  # an old blueprint (its id, as `furniture` or `site`), or with neither
+  # what we hold. Three quarters of its raw materials come back (an old
+  # blueprint: everything put in it); what doesn't fit the bag is left in a
+  # sack at our feet. Replies {returned: [[item, n]], sack (id or nil), bag}.
+  def handle_in("break_action", params, socket) do
+    with {:ok, target} <- break_target(params),
+         {:ok, broken, bag} <- Sim.break_apart(u(socket), user(socket), name(socket), target) do
+      {:reply, {:ok, Map.put(broken, :bag, bag)}, socket}
+    end
+    |> answer(socket)
+  end
 
-    with {:ok, p} <- cell(pos),
-         :ok <- within_reach(socket, on, p),
-         {:ok, built, bag} <- Sim.deposit(u(socket), name(socket), on, p) do
-      {:reply, {:ok, %{built: built, bag: bag}}, socket}
+  # Shear the sheep `sheep`, within reach: its wool into the bag (it grows
+  # back). Replies {wool: how much, bag}.
+  def handle_in("shear_action", %{"sheep" => id}, socket) when is_integer(id) and id >= 0 do
+    with {:ok, n, bag} <- Sim.shear(u(socket), user(socket), name(socket), id) do
+      {:reply, {:ok, %{wool: n, bag: bag}}, socket}
     end
     |> answer(socket)
   end
@@ -303,6 +317,33 @@ defmodule SoshWeb.ActionChannel do
   end
 
   defp pick_target(_), do: {:error, "invalid_target"}
+
+  defp break_target(%{"furniture" => id}) when is_integer(id) and id >= 0, do: {:ok, id}
+  defp break_target(%{"site" => id}) when is_integer(id) and id >= 0, do: {:ok, id}
+
+  defp break_target(params) when not is_map_key(params, "furniture") and not is_map_key(params, "site"),
+    do: {:ok, nil}
+
+  defp break_target(_), do: {:error, "invalid_target"}
+
+  @max_points 1024
+
+  defp stroke(%{"stroke" => pts}) when is_list(pts), do: Enum.take(pts, @max_points)
+  defp stroke(%{"stroke" => _}), do: :bad
+  defp stroke(_), do: []
+
+  # How heavy furniture is finished: built at a cell in reach, or carried.
+  defp finish(socket, %{"how" => "place", "position" => pos} = params) do
+    on = on(params)
+
+    with {:ok, p} <- cell(pos),
+         :ok <- within_reach(socket, on, p),
+         do: {:ok, {:place, on, p, rot(params)}}
+  end
+
+  defp finish(_socket, %{"how" => "carry"}), do: {:ok, :carry}
+  defp finish(_socket, %{"how" => how}) when how != nil, do: {:error, "bad_finish"}
+  defp finish(_socket, _), do: {:ok, nil}
 
   # Cows and furniture are reached for by the universe itself.
   defp reach_target(socket, {:cell, on, p}), do: within_reach(socket, on, p)

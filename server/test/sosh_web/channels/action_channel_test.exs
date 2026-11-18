@@ -28,6 +28,32 @@ defmodule SoshWeb.ActionChannelTest do
 
   defp stand(actions, at), do: Lobby.update(actions.assigns.user_id, %{at: at})
 
+  # Make furniture `kind` as its recipe says, at a bench (the server's
+  # record says one's near): heavy furniture is built at `pos`, turned
+  # `rot`; anything that packs into a bag is made into it and placed from
+  # there. Its id.
+  defp make(actions, kind, pos, rot \\ 0) do
+    Players.set_stations("builder", ["bench"])
+    %{inputs: inputs} = Enum.find(Sosh.Universe.catalog().recipes, &(&1.id == kind))
+
+    for [item, n] <- inputs,
+        do: {:ok, _} = Players.update_bag("builder", &Sosh.Universe.bag_give(&1, item, n))
+
+    ref =
+      push(actions, "craft_action", %{"step" => kind, "how" => "place", "position" => pos, "rot" => rot})
+
+    assert_reply(ref, :ok, %{how: how, furniture: id})
+
+    if how == "place" do
+      id
+    else
+      ref = push(actions, "place_action", %{"position" => pos, "item" => kind, "rot" => rot})
+      assert_reply(ref, :ok, _)
+      assert_broadcast("furniture", %{id: placed, kind: ^kind})
+      placed
+    end
+  end
+
   # Stand on `ship` at `local` in its frame.
   defp aboard(actions, ship, local),
     do: Lobby.update(actions.assigns.user_id, %{on: ship.id, local: local, v: [0, 0]})
@@ -52,8 +78,15 @@ defmodule SoshWeb.ActionChannelTest do
     assert [%{pilot: nil, blocks: [[_, _, _, _] | _]}] = reply.ships
     assert %{kinds: kinds, items: _, bag_slots: 16} = reply.catalog
 
-    assert %{size: [2, 1, 1], carriers: 2, recipe: [["wood", 6], ["stone", 2]]} =
+    assert %{size: [2, 1, 1], carriers: 2, station: false, recipe: recipe} =
              Enum.find(kinds, &(&1.name == "dresser"))
+
+    assert recipe == [["plank", 4], ["post", 2], ["stone", 2]]
+    assert %{station: true, itemizable: true} = Enum.find(kinds, &(&1.name == "bench"))
+    assert "loom" in reply.catalog.stations
+
+    assert %{inputs: [["wool", 2]], outputs: [["yarn", 1]], station: "spinning_wheel", gesture: "spin"} =
+             Enum.find(reply.catalog.recipes, &(&1.id == "yarn"))
 
     assert {:error, %{reason: "elsewhere", universe: [0, 0]}} =
              subscribe_and_join(socket, SoshWeb.ActionChannel, "actions:1,0", %{
@@ -180,10 +213,8 @@ defmodule SoshWeb.ActionChannelTest do
   test "edits and furniture survive a save and a restart", %{actions: actions, socket: socket} do
     ref = push(actions, "place_action", %{"position" => [0, 1, 0], "item" => "stone"})
     assert_reply(ref, :ok, _)
-    ref = push(actions, "build_action", %{"kind" => "chest", "position" => [2, 1, 0]})
-    assert_reply(ref, :ok, _)
-    ref = push(actions, "deposit_action", %{"position" => [2, 1, 0]})
-    assert_reply(ref, :ok, %{built: chest})
+    chest = make(actions, "chest", [2, 1, 0])
+    bag = Players.bag_json(Players.bag("builder"))
 
     :ok = Sim.save(@plaza)
     assert Sosh.Repo.aggregate(Sosh.Chunk, :count) == 1
@@ -193,7 +224,8 @@ defmodule SoshWeb.ActionChannelTest do
     assert Sim.block(@plaza, {0, 1, 0}) == World.block_ids()["stone"]
     assert [%{id: ^chest, kind: "chest", origin: [2, 1, 0]}] = reply.furniture
     # and the bag kept what was spent
-    assert count(reply.bag, "wood") == 20
+    assert reply.bag == bag
+    assert count(bag, "plank") == 0
   end
 
   describe "farming" do
@@ -354,44 +386,17 @@ defmodule SoshWeb.ActionChannelTest do
   end
 
   describe "furniture" do
-    test "a blueprint is built from what's put into it", %{actions: actions} do
-      ref =
-        push(actions, "build_action", %{"kind" => "dresser", "position" => [2, 2, 0], "rot" => 1})
-
-      assert_reply(ref, :ok, %{site: site})
-
-      assert_broadcast("site", %{
-        id: ^site,
-        kind: "dresser",
-        have: [],
-        need: [["wood", 6], ["stone", 2]]
-      })
-
-      assert_broadcast("block_changed", %{position: [2, 3, 0], block_type: "scaffold"})
-
-      # all the wood, then the stone
-      ref = push(actions, "deposit_action", %{"position" => [2, 3, 0]})
-      assert_reply(ref, :ok, %{built: nil, bag: bag})
-      assert count(bag, "wood") == 18
-      assert_broadcast("site", %{id: ^site, have: [["wood", 6]]})
+    test "the retired blueprint actions are refused cleanly", %{actions: actions} do
+      ref = push(actions, "build_action", %{"kind" => "chest", "position" => [2, 2, 0]})
+      assert_reply(ref, :error, %{reason: "bad_request"})
       ref = push(actions, "deposit_action", %{"position" => [2, 2, 0]})
-      assert_reply(ref, :ok, %{built: id, bag: bag})
-      assert count(bag, "stone") == 10
-      assert_broadcast("site_gone", %{id: ^site})
-      assert_broadcast("furniture", %{id: ^id, kind: "dresser", rot: 1, slots: slots})
-      assert length(slots) == 16
-
-      ref = push(actions, "deposit_action", %{"position" => [4, 4, 0]})
-      assert_reply(ref, :error, %{reason: "no_blueprint_there"})
-      ref = push(actions, "build_action", %{"kind" => "throne", "position" => [4, 4, 0]})
-      assert_reply(ref, :error, %{reason: "no_such_blueprint"})
+      assert_reply(ref, :error, %{reason: "bad_request"})
+      assert Sim.block(@plaza, {2, 2, 0}) == 0
     end
 
     test "a chest holds things; breaking it gives everything back", %{actions: actions} do
-      ref = push(actions, "build_action", %{"kind" => "chest", "position" => [2, 2, 0]})
-      assert_reply(ref, :ok, _)
-      ref = push(actions, "deposit_action", %{"position" => [2, 2, 0]})
-      assert_reply(ref, :ok, %{built: chest, bag: bag})
+      chest = make(actions, "chest", [2, 2, 0])
+      bag = Players.bag_json(Players.bag("builder"))
 
       slot = Enum.find_index(bag, &match?(["stone", _], &1))
       ref = push(actions, "stash_action", %{"furniture" => chest, "slot" => slot})
@@ -406,26 +411,18 @@ defmodule SoshWeb.ActionChannelTest do
       ref = push(actions, "stash_action", %{"furniture" => chest, "slot" => slot})
       assert_reply(ref, :ok, _)
 
-      # broken: half its wood back, and the stone that was in it
+      # broken: three quarters of its wood (four planks' worth) back, and
+      # the stone that was in it
       ref = push(actions, "dig_action", %{"position" => [2, 2, 0]})
       assert_reply(ref, :ok, %{bag: bag})
-      assert count(bag, "wood") == 22
+      assert count(bag, "wood") == 27
       assert count(bag, "stone") == 12
       assert_broadcast("furniture_gone", %{id: ^chest})
       assert Players.bag("builder") |> Enum.find(&match?({"stone", _}, &1))
     end
 
     test "heavy furniture takes two; a helper can be one", %{actions: actions} do
-      ref = push(actions, "build_action", %{"kind" => "dresser", "position" => [2, -2, 0]})
-      assert_reply(ref, :ok, _)
-
-      for _ <- 1..2 do
-        ref = push(actions, "deposit_action", %{"position" => [2, -2, 0]})
-        assert_reply(ref, :ok, %{built: built})
-        if built, do: send(self(), {:built, built})
-      end
-
-      assert_received {:built, dresser}
+      dresser = make(actions, "dresser", [2, -2, 0])
 
       ref = push(actions, "pick_up_action", %{"furniture" => dresser})
       assert_reply(ref, :ok, %{how: "gripped"})
@@ -463,10 +460,7 @@ defmodule SoshWeb.ActionChannelTest do
     end
 
     test "small empty furniture packs into the bag and back out", %{actions: actions} do
-      ref = push(actions, "build_action", %{"kind" => "stool", "position" => [2, 2, 0]})
-      assert_reply(ref, :ok, _)
-      ref = push(actions, "deposit_action", %{"position" => [2, 2, 0]})
-      assert_reply(ref, :ok, %{built: stool})
+      stool = make(actions, "stool", [2, 2, 0])
       ref = push(actions, "pick_up_action", %{"furniture" => stool})
       assert_reply(ref, :ok, %{how: "pocketed", bag: bag})
       assert count(bag, "stool") == 1
@@ -480,16 +474,7 @@ defmodule SoshWeb.ActionChannelTest do
     end
 
     test "a hyperdoor leads into a room of its own and back out", %{actions: actions} do
-      ref = push(actions, "build_action", %{"kind" => "hyperdoor", "position" => [2, 2, 0]})
-      assert_reply(ref, :ok, _)
-
-      for _ <- 1..2 do
-        ref = push(actions, "deposit_action", %{"position" => [2, 2, 0]})
-        assert_reply(ref, :ok, %{built: built})
-        if built, do: send(self(), {:built, built})
-      end
-
-      assert_received {:built, door}
+      door = make(actions, "hyperdoor", [2, 2, 0])
 
       stand(actions, [2.0, 1.0, 0])
       ref = push(actions, "door_action", %{"furniture" => door})

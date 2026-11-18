@@ -1,8 +1,9 @@
 defmodule Sosh.Sim do
   @moduledoc """
   Runs one universe of the grid (`Sosh.Universes`) in a `Sosh.Universe`
-  (Rust): its blocks, crops, cows, furniture and blueprints, airships,
-  helpers and what everyone holds. One process per universe, registered
+  (Rust): its blocks, crops, cows and sheep, furniture (and blueprints
+  left from before recipes), crafting, airships, helpers and what everyone
+  holds. One process per universe, registered
   under `{gx, gy}`; every call names the universe.
 
   **Awake and asleep.** While anyone is in the universe it ticks every
@@ -20,7 +21,8 @@ defmodule Sosh.Sim do
 
   Broadcasts:
 
-    * `cows`, `helpers` `%{rows: [[id, x, y, z, heading]]}` - what moved
+    * `cows`, `sheep`, `helpers` `%{rows: [[id, x, y, z, heading]]}` - what moved
+    * `wool` `%{id, woolly}` - a sheep was shorn, or its wool grew back
     * `ships` `%{rows: [[id, x, y, z, heading, vx, vy, vz, spin]]}` - ships
       that moved, and how fast they're going (spin: radians a second)
     * `ship` - a ship arrived or changed pilots: `%{id, x, y, z, heading, v,
@@ -29,12 +31,17 @@ defmodule Sosh.Sim do
     * `moo` `%{ids: [id]}` - cows that were just shoved or lifted
     * `crop` `%{position, stage}` - a crop grew (3 is ripe; nil: gone)
     * `block_changed` `%{position, block, block_type}`
-    * `carry` `%{user_id, block, cow, furniture}` - what someone holds now
+    * `carry` `%{user_id, block, cow, furniture, player, pinned}` - what
+      someone holds now, and whether it pins them (too heavy alone)
+    * `encumbered` `%{user_id, pinned, on, at}` - someone is stuck where
+      they stand (`on`, `at` their feet in that frame) under furniture too
+      heavy for them alone, or free again (`pinned` false, `on` and `at`
+      nil). Their moves aren't taken meanwhile (`Sosh.Lobby.move/2`)
     * `furniture` - a piece changed: `%{id, kind, on, origin, rot, lifted,
       carriers, helpers, slots, sign}` (`sign` nil, or what a sign says:
       `Sosh.Signs`); `furniture_gone` `%{id}`
-    * `site` - a blueprint changed: `%{id, kind, on, origin, rot, have,
-      need}`; `site_gone` `%{id}`
+    * `site` - an old blueprint arrived (by airship): `%{id, kind, on,
+      origin, rot, have, need: []}`; `site_gone` `%{id}`, broken
     * `travel` `%{ship, users, to: [gx, gy]}` - a ship flew into the
       neighbouring universe with them aboard: it's gone from here (with
       everything on it), and they're in that one now
@@ -42,9 +49,16 @@ defmodule Sosh.Sim do
   Bags belong to `Sosh.Players`; calls that change one take the player's
   name, save the new bag and reply with it as JSON wants it.
 
+  **Stations.** Each tick the universe works out which station kinds
+  each player is in reach of; when that changes it's recorded on the
+  player (`Sosh.Players.set_stations/3`, which tells their clients), and
+  again on the first tick after they (re)join, so a player back from a
+  moment away has the right ones. Crafting goes by that record.
+
   What the universe keeps (`Sosh.Universe.save/2`, plus its changed chunks
   through `Sosh.World`) is saved on going to sleep, every `save_ms` while
-  awake and on shutdown. Cows aren't kept: they respawn on every start.
+  awake and on shutdown. Cows and sheep aren't kept: they respawn on every
+  start.
   """
   use GenServer
   require Logger
@@ -147,11 +161,26 @@ defmodule Sosh.Sim do
   @doc "Place one `item` from the bag at `pos` of frame `on`, turned `rot`."
   def place(u, name, on, pos, item, rot), do: call(u, {:bag, name, :place, [on, pos, item, rot]})
 
-  @doc "Lay out blueprint `kind` at `pos` of frame `on`, turned `rot`. `{:ok, site_id}`."
-  def build(u, kind, on, pos, rot), do: call(u, {:build, kind, on, pos, rot})
+  @doc """
+  `user` (named `name`) does recipe step `step` with `stroke` drawn (points
+  0..1 each way), at the stations recorded for them (`Sosh.Players.stations/1`).
+  Heavy furniture finishes as `how` says: nil, `{:place, on, pos, rot}`
+  (built at cell `pos` of frame `on`) or `:carry` (in their arms, where they
+  stand). `{:ok, %{step, item, n, score, how, furniture}, bag}`.
+  """
+  def craft(u, user, name, step, stroke, how),
+    do: call(u, {:craft, user, name, step, stroke, how})
 
-  @doc "Put ingredients from the bag into the blueprint at `pos` of frame `on`. `{:ok, built_id | nil, bag}`."
-  def deposit(u, name, on, pos), do: call(u, {:deposit, name, on, pos})
+  @doc """
+  `user` breaks furniture `target` (in reach and empty, or theirs in their
+  arms), an old blueprint `target`, or (nil) what they hold. Three quarters
+  of its raw materials come back (a blueprint: all put in it), into the bag
+  or a sack at their feet. `{:ok, %{returned, sack}, bag}`.
+  """
+  def break_apart(u, user, name, target), do: call(u, {:break, user, name, target})
+
+  @doc "`user` shears sheep `id` into the bag. `{:ok, wool, bag}`."
+  def shear(u, user, name, id), do: call(u, {:shear, user, name, id})
 
   def stash(u, name, at, id, slot), do: call(u, {:bag, name, :stash, [at, id], [slot]})
 
@@ -213,7 +242,7 @@ defmodule Sosh.Sim do
   @doc "Draw the universe's map now and keep it (`Sosh.Maps`): `{:ok, {png, drawn_at}}`."
   def map(u), do: call(u, :map)
 
-  @doc "Start over from the database: terrain, state, fresh cows. For tests."
+  @doc "Start over from the database: terrain, state, fresh cows and sheep (`cows:`, `sheep:`). For tests."
   def reset(u, opts \\ []), do: call(u, {:reset, opts})
 
   # -- server
@@ -231,12 +260,16 @@ defmodule Sosh.Sim do
       tick_ms: config[:tick_ms],
       stage_ms: config[:stage_ms] || 60_000,
       cows: config[:cows] || 0,
+      sheep: config[:sheep] || 0,
       idle_ms: config[:idle_ms] || 2_000,
       sleep_after_ms: config[:sleep_after_ms] || 10_000,
       save_ms: config[:save_ms],
       empty_since: nil,
       last_ambient: 0,
-      last_save: now_ms()
+      last_save: now_ms(),
+      # who (re)joined since the last tick: their stations are recorded
+      # on the next one whether they changed or not
+      fresh: MapSet.new()
     }
 
     state = build(state)
@@ -273,7 +306,7 @@ defmodule Sosh.Sim do
   end
 
   defp act({:spawn, user, at}, state),
-    do: {Universe.spawn(state.uni, user, floats(at)), state}
+    do: {Universe.spawn(state.uni, user, floats(at)), %{state | fresh: MapSet.put(state.fresh, user)}}
 
   defp act({:chunks, keys}, state) do
     chunks =
@@ -332,15 +365,29 @@ defmodule Sosh.Sim do
     reply(state, result)
   end
 
-  defp act({:build, kind, on, pos, rot}, state),
-    do: reply(state, Universe.start_site(state.uni, kind, on, pos, rot))
+  defp act({:craft, user, name, step, stroke, how}, state) do
+    # the server's record of where they are, never the client's say
+    stations = Players.stations(name)
 
-  defp act({:deposit, name, on, pos}, state) do
     result =
-      case Universe.site_at(state.uni, on, pos) do
-        nil -> {:error, "no_blueprint_there"}
-        site -> with_bag(name, &Universe.deposit(state.uni, site, &1))
-      end
+      with {:ok, how} <- finish(state, user, how),
+           do: with_bag(name, &Universe.craft_at(state.uni, user, step, stroke, stations, how, &1))
+
+    reply(state, result)
+  end
+
+  defp act({:break, user, name, target}, state) do
+    result =
+      with {:ok, on, at} <- frame_of(state, user),
+           do: with_bag(name, &Universe.break_furniture(state.uni, user, on, at, target, &1))
+
+    reply(state, result)
+  end
+
+  defp act({:shear, user, name, id}, state) do
+    result =
+      with {:ok, at} <- feet_of(state, user),
+           do: with_bag(name, &Universe.shear(state.uni, at, id, &1))
 
     reply(state, result)
   end
@@ -410,10 +457,7 @@ defmodule Sosh.Sim do
   defp act({:call_helper, user, id}, state),
     do: reply(state, Universe.call_helper(state.uni, user, id))
 
-  defp act({:tick, now}, state) do
-    step(state, now)
-    {:ok, state}
-  end
+  defp act({:tick, now}, state), do: {:ok, step(state, now)}
 
   defp act({:ambient, now}, state) do
     Universe.ambient(state.uni, now)
@@ -426,7 +470,13 @@ defmodule Sosh.Sim do
   defp act(:map, state), do: {{:ok, Maps.draw(state.uni, state.u)}, state}
 
   defp act({:reset, opts}, state) do
-    state = build(%{state | cows: Keyword.get(opts, :cows, state.cows)})
+    state =
+      build(%{
+        state
+        | cows: Keyword.get(opts, :cows, state.cows),
+          sheep: Keyword.get(opts, :sheep, state.sheep)
+      })
+
     {:ok, state}
   end
 
@@ -485,8 +535,11 @@ defmodule Sosh.Sim do
     # a new universe's clock starts now; a saved one sleeps until visited
     if rec.state == nil, do: Universe.wake(uni, now_ms())
     Universe.spawn_cows(uni, state.cows)
+    Universe.spawn_sheep(uni, state.sheep)
     Universe.set_open(uni, Universes.open(u))
     Universe.drain(uni)
+    # a fresh universe holds nobody down
+    for %{pinned: true, user_id: id} <- Lobby.list(u), do: Lobby.update(id, %{pinned: false})
     %{state | uni: uni, kind: rec.kind, empty_since: nil}
   end
 
@@ -498,8 +551,7 @@ defmodule Sosh.Sim do
     state =
       cond do
         here != [] ->
-          step(state, now, here)
-          %{state | empty_since: nil}
+          %{step(state, now, here) | empty_since: nil}
 
         Universe.asleep(state.uni) ->
           if now - state.last_ambient >= state.idle_ms do
@@ -511,16 +563,14 @@ defmodule Sosh.Sim do
           end
 
         state.empty_since == nil ->
-          step(state, now, here)
-          %{state | empty_since: now}
+          %{step(state, now, here) | empty_since: now}
 
         now - state.empty_since >= state.sleep_after_ms ->
           Universe.sleep(state.uni, now)
-          persist(state)
+          persist(%{state | fresh: MapSet.new()})
 
         true ->
           step(state, now, here)
-          state
       end
 
     awake = not Universe.asleep(state.uni)
@@ -539,6 +589,28 @@ defmodule Sosh.Sim do
         do: {p.user_id, on, {x * 1.0, y * 1.0, z * 1.0}}
   end
 
+  # Where a player stands, as Sosh.Lobby predicts: `{:ok, on, {x, y, z}}`,
+  # feet in frame `on`.
+  defp frame_of(state, user) do
+    case Lobby.get(user) do
+      %{universe: u} = p when u == state.u ->
+        {on, [x, y, z]} = Lobby.frame(p, Lobby.now())
+        {:ok, on, {x * 1.0, y * 1.0, z * 1.0}}
+
+      _ ->
+        {:error, "not_in_world"}
+    end
+  end
+
+  # How heavy furniture a craft makes finishes, for the NIF: `:carry` is
+  # where the player stands.
+  defp finish(_state, _user, nil), do: {:ok, nil}
+  defp finish(_state, _user, {:place, on, pos, rot}), do: {:ok, {:place, on, pos, rot}}
+
+  defp finish(state, user, :carry) do
+    with {:ok, on, at} <- frame_of(state, user), do: {:ok, {:carry, on, at}}
+  end
+
   # A player's feet in the world, where Sosh.Lobby predicts them.
   defp feet_of(state, user) do
     here = state.u
@@ -555,12 +627,42 @@ defmodule Sosh.Sim do
   defp step(state, now), do: step(state, now, players(state))
 
   defp step(state, now, players) do
-    {cows, moos, ships, helpers} = Universe.tick(state.uni, now, players)
+    {cows, moos, ships, helpers, sheep} = Universe.tick(state.uni, now, players)
     if cows != [], do: broadcast(state, "cows", %{rows: Enum.map(cows, &row/1)})
+    if sheep != [], do: broadcast(state, "sheep", %{rows: Enum.map(sheep, &row/1)})
     if moos != [], do: broadcast(state, "moo", %{ids: moos})
     if ships != [], do: broadcast(state, "ships", %{rows: Enum.map(ships, &ship_row/1)})
     if helpers != [], do: broadcast(state, "helpers", %{rows: Enum.map(helpers, &row/1)})
     flush(state)
+    welcome(state, players)
+  end
+
+  # Whoever (re)joined since the last tick has their stations recorded now,
+  # changed or not: leaving emptied the record (`Sosh.Players.left/3`), and
+  # a connection back before the universe noticed it gone would otherwise
+  # keep it empty.
+  defp welcome(%{fresh: fresh} = state, players) do
+    if MapSet.size(fresh) == 0 do
+      state
+    else
+      here = for {id, _, _} <- players, MapSet.member?(fresh, id), do: id
+
+      for id <- here, %{universe: u, name: name} <- [Lobby.get(id)], u == state.u,
+          do: record_stations(state, name)
+
+      %{state | fresh: MapSet.difference(fresh, MapSet.new(here))}
+    end
+  end
+
+  # The stations `name` is in reach of: all their connections here put
+  # together (the same account can be in twice).
+  defp record_stations(state, name) do
+    kinds =
+      for %{name: ^name, user_id: id} <- Lobby.list(state.u),
+          kind <- Universe.access(state.uni, id),
+          do: kind
+
+    Players.set_stations(name, kinds, state.u)
   end
 
   defp persist(state) do
@@ -646,10 +748,51 @@ defmodule Sosh.Sim do
   end
 
   defp emit(state, :furniture, f), do: broadcast(state, "furniture", Sosh.Signs.dress(f))
+
+  # Stations are the player's own business: recorded on them, pushed on
+  # their user:<id>, never broadcast. Someone who's gone is near nothing;
+  # anyone else of theirs still here is recounted.
+  defp emit(state, :stations, %{user_id: user}) do
+    case Lobby.get(user) do
+      %{universe: u, name: name} when u == state.u ->
+        record_stations(state, name)
+
+      _ ->
+        Lobby.list(state.u) |> Enum.map(& &1.name) |> Enum.uniq() |> Enum.each(&record_stations(state, &1))
+    end
+  end
+
+  # Overencumbered: they stand still where they're stuck until freed.
+  defp emit(state, :encumbered, %{user_id: user, pinned: pinned, on: on, at: at} = p) do
+    if pinned, do: hold_still(state, user, on, at), else: Lobby.update(user, %{pinned: false})
+    broadcast(state, "encumbered", p)
+  end
+
+  # A sheep's wool: `sheep` is their positions.
+  defp emit(state, :sheep, p), do: broadcast(state, "wool", p)
   defp emit(state, event, payload), do: broadcast(state, to_string(event), payload)
 
   defp broadcast(state, event, payload),
     do: SoshWeb.Endpoint.broadcast("actions:" <> Universes.key(state.u), event, payload)
+
+  # Stop `user` at `local` in frame `on` (their feet there) and tell the
+  # room, as a move of theirs would.
+  defp hold_still(state, user, on, [x, y, z] = local) do
+    with %{universe: u} when u == state.u <- Lobby.get(user) do
+      {wx, wy, wz} = Universe.world_of(state.uni, on, {x * 1.0, y * 1.0, z * 1.0}) || {x, y, z}
+      {at, local} = if on == 0, do: {local, nil}, else: {[wx, wy, wz], local}
+      motion = %{at: at, v: [0, 0], to: nil, on: on, local: local}
+      Lobby.update(user, Map.merge(motion, %{t: Lobby.now(), pinned: true}))
+
+      SoshWeb.Endpoint.broadcast(
+        "room:" <> Universes.key(state.u),
+        "move",
+        Map.put(motion, :user_id, user)
+      )
+    end
+
+    :ok
+  end
 
   defp row({id, x, y, z, h}),
     do: [id, Float.round(x, 3), Float.round(y, 3), Float.round(z, 3), Float.round(h, 3)]

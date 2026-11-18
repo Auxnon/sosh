@@ -29,7 +29,9 @@ defmodule SoshWeb.UserChannel do
   {item} (an item name or nil; not kept, only passed on), `crafting` ->
   {crafting, stations}, `set_crafting` {crafting} (a map of recipe =>
   {step, at}; see `Sosh.Players.clean_crafting/1`) -> {crafting} as saved,
-  `logout`.
+  `craft` {step} (a hand step, or one at a station they're in reach of in
+  a world, no stroke; `Sosh.Me.craft/2`) -> {step, item, n, score, how,
+  furniture, bag}, `logout`.
   """
   use Phoenix.Channel
 
@@ -153,6 +155,8 @@ defmodule SoshWeb.UserChannel do
 
   defp answer("set_crafting", %{"crafting" => c}, me, _) when is_map(c),
     do: wrap(Sosh.Players.set_crafting(me.handle, c), &%{crafting: &1})
+
+  defp answer("craft", %{"step" => step}, me, _), do: wrap(Me.craft(me, step), & &1)
 
   defp answer("hold", %{"item" => item}, _, socket) when is_nil(item) or (is_binary(item) and byte_size(item) <= 32) do
     broadcast!(socket, "hold", %{item: item})

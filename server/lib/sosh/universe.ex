@@ -1,9 +1,10 @@
 defmodule Sosh.Universe do
   @moduledoc """
   NIFs over one Rust universe (`native/universe`): its blocks and floating
-  islands, crops that grow on world ticks, cows, furniture and blueprints,
+  islands, crops that grow on world ticks, cows and sheep, furniture (and
+  the blueprints left from before recipes), crafting and stations,
   airships, helpers, and what players hold. `Sosh.Sim` owns each universe
-  and is the only caller.
+  and is the only caller of what takes one.
 
   Positions are `{x, y, z}` tuples in block coordinates (see `Sosh.World`),
   in a frame: `on` is 0 for the world, or a ship's id for that ship's own;
@@ -29,14 +30,13 @@ defmodule Sosh.Universe do
   def ambient(_u, _now_ms), do: err()
   def spawn(_u, _user, _at), do: err()
   def spawn_cows(_u, _n), do: err()
+  def spawn_sheep(_u, _n), do: err()
   def plant_aged(_u, _pos, _ago_ms), do: err()
   def plant(_u, _pos), do: err()
   def harvest(_u, _pos, _bag), do: err()
   def crop_at(_u, _pos), do: err()
   def dig(_u, _user, _on, _pos, _bag), do: err()
   def place(_u, _on, _pos, _item, _rot, _bag), do: err()
-  def start_site(_u, _kind, _on, _pos, _rot), do: err()
-  def deposit(_u, _site, _bag), do: err()
   def site_at(_u, _on, _pos), do: err()
   def furniture_at(_u, _on, _pos), do: err()
   def stash(_u, _at, _id, _bag, _slot), do: err()
@@ -66,6 +66,18 @@ defmodule Sosh.Universe do
   def bag_arrange(_bag, _from, _to), do: err()
   def bag_split(_bag, _slot, _n, _to), do: err()
   def drop_stack(_u, _on, _pos, _bag, _slot), do: err()
+
+  # Crafting (`native/universe/src/recipes.rs`): `craft` needs no universe
+  # (hand steps, or station steps with the stations given); `craft_at`
+  # finishes heavy furniture in the world, `how` nil, `{:place, on, {x, y,
+  # z}, rot}` or `{:carry, on, {x, y, z}}`.
+  def craft(_step, _stroke, _stations, _bag), do: err()
+  def craft_at(_u, _user, _step, _stroke, _stations, _how, _bag), do: err()
+  def stations_near(_u, _on, _at), do: err()
+  def access(_u, _user), do: err()
+  def pinned(_u, _user), do: err()
+  def break_furniture(_u, _user, _on, _at, _target, _bag), do: err()
+  def shear(_u, _at, _sheep, _bag), do: err()
 
   # Passwords (Argon2id, on dirty CPU schedulers): see `Sosh.Accounts`.
   def hash_password(_password), do: err()

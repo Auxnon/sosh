@@ -16,14 +16,15 @@ config :sosh,
 config :sosh, Sosh.Universes, boot: true
 
 # Each universe: ticks every tick_ms while anyone is in it; a crop growth
-# stage takes stage_ms of world time (three stages to ripe); cows roam its
-# home island. Empty for sleep_after_ms, it saves and sleeps, running
+# stage takes stage_ms of world time (three stages to ripe); cows and sheep
+# roam its home island. Empty for sleep_after_ms, it saves and sleeps, running
 # ambient systems every idle_ms. Awake, it saves every save_ms (nil: only
 # on sleep and shutdown).
 config :sosh, Sosh.Sim,
   tick_ms: 100,
   stage_ms: 60_000,
   cows: 5,
+  sheep: 3,
   idle_ms: 2_000,
   sleep_after_ms: 10_000,
   save_ms: 30_000
