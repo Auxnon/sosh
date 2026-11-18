@@ -54,10 +54,29 @@ itself and moves on to the next step.
    do any step that needs no station. Steps that need a station still wait
    for one in a world.
 
-Not yet decided, and following from answer 3:
-- Furniture that needs two carriers (the dresser, `carriers: 2` in
-  `furniture.rs`) can't be carried off by one player. Suggested: those are
-  only assembled in the world.
+Added by the user after those answers (2026-11-17):
+
+5. **Too heavy means overencumbered.** Someone holding furniture that needs
+   more carriers than it has (the dresser, `carriers: 2` in `furniture.rs`)
+   can't move. They can put it down, wait for a second carrier, or break it.
+6. **Carried furniture can be broken.** So nobody is stuck when there's
+   nowhere to put it down. Breaking gives back most of the raw parts, not all.
+7. **The standalone book knows the player's state:** their bag, their recipe
+   history and which stations they can use.
+8. **Station access is state on the player, kept by the server.** The sim
+   works out which station kinds each player is in range of and records it on
+   the player. Crafting checks that record; the client never claims to be
+   near a station.
+9. **Pocket rooms have double station range,** as a convenience.
+10. **Unfinished blueprints can be broken for their raw materials.** This
+    settles what the saved scaffolds turn into when the system is retired.
+
+Not yet decided:
+- Whether station access lasts once the player has left the world. Suggested:
+  it is cleared when they leave, so the standalone book shows station steps as
+  waiting and does only hand steps.
+- How much "most" is when furniture is broken. Suggested: three quarters of
+  each raw material, rounded down, at least one.
 - Which recipe steps are hand steps. None of the example steps are; a hand
   step would be a recipe step with no station kind.
 
@@ -159,10 +178,17 @@ Smaller points to settle while building:
     `plank 1 + post 4 + sheet 3 → bed` (bench, assemble).
 - **Stations:** new furniture kinds (bench, veneer, spinning wheel, loom).
   Each has its own recipe, so it can be made from simple parts.
-- **The crafting action:** `Sim::craft(station_id, step, bag)` checks that the
-  station is that kind and within reach, then takes the inputs and adds the
-  outputs in one `change_bag`. Errors: `missing_ingredients`,
-  `no_station_near`, `bag_full`.
+- **Station access:** each tick the sim works out, for every player, the
+  station kinds within `REACH` of them (twice `REACH` inside a pocket room,
+  `Ship::pocket`), in the same frame as the player. When the set changes,
+  `Sosh.Sim` records it on the player (`Sosh.Players`, a `stations` list of
+  kind names; a list reads better than a bitmask and costs nothing at this
+  size) and pushes it on `user:<id>`. It is emptied when they leave the
+  universe.
+- **The crafting action:** `craft(step)` checks the step's station kind
+  against the player's recorded access, then takes the inputs and adds the
+  outputs in one `change_bag`. No station id is sent. Errors:
+  `missing_ingredients`, `no_station_near`, `bag_full`.
 - **The last step of a furniture recipe:**
   - A kind that packs into a bag (`itemizable`) is added to the bag like any
     other output.
@@ -170,14 +196,25 @@ Smaller points to settle while building:
     chose: `place` with a spot and turn (the furniture appears there, with the
     checks placing has today), or `carry` (it appears in their arms as
     `Held::Furniture`, refused if they're already holding something).
+  - **Overencumbered:** held furniture with fewer carriers than its kind
+    needs pins its holder. The sim refuses their moves (the same way a
+    carried player's are) and says so in their state, so the game can show
+    it. A second carrier taking hold frees them both.
+  - **Breaking:** a `break` action on furniture you hold, or on empty
+    furniture in reach, removes it and gives back most of its raw parts: the
+    recipe expanded down to raw materials. They go to the bag, and what
+    doesn't fit drops as a sack at the player's feet (`Sim::drop_stack`).
   - The inputs are taken only if the furniture could be made.
 - **Hand steps:** a step with no station can also be done over `user:<id>`,
   outside a world, through the same `change_bag`.
-- **Retired:** the scaffold blueprints (`Kind::recipe`, `Sim::start_site`,
-  `deposit`, their channel events and saved `blueprints` state). Saved
-  blueprints still have to load without dropping the rest of a universe's
-  state (`readable` in `sim.rs`); decide what an unfinished one turns into
-  (suggested: its deposited blocks go back as a sack on the spot).
+- **Player state for the book:** `user:<id>` gives the bag, `crafting`
+  history and `stations`, and pushes each when it changes, so the standalone
+  book shows the same as the one in the world.
+- **Retired:** starting scaffold blueprints (`Kind::recipe`,
+  `Sim::start_site`, `deposit` and their channel events). Unfinished ones
+  already in a universe still load and stay where they are. Breaking one
+  removes it and gives back every block deposited in it; that is all that
+  can be done with them.
 - **Channel event:** `craft_action` on `actions:gx,gy`, replying with `{bag}`.
 - **Catalog:** recipes are added to it, so the game and both apps can show
   them. The book itself never decides whether a step worked; the server does.
@@ -220,7 +257,14 @@ Smaller points to settle while building:
   steps.
 - **Finishing heavy furniture:** the last step asks "build it here" or "carry
   it". Building uses the aim and turn the furniture placing already has.
-- **Removed:** the craft tool and scaffolding (`tools.lua`).
+- **Overencumbered:** the player can't walk and is shown straining, with the
+  choices put down and break.
+- **Breaking:** a break choice on held furniture, on empty furniture in reach
+  and on unfinished blueprints; the parts fly to the bag like a station's
+  result.
+- **Stations in the book:** steps are marked ready or waiting from the
+  player's `stations`, not from the client's own distance check.
+- **Removed:** the craft tool and laying out scaffolding (`tools.lua`).
 
 ### 4. Desktop app
 - **A `Screen::Book` page:**
