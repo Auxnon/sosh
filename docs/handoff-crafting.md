@@ -3,6 +3,30 @@
 For the agent building the crafting system. Written 2026-11-17 against `main`
 @ `4114258`; line numbers are as of that commit. Nothing here is built yet.
 
+## Update, 2026-11-18: what's built so far
+
+- **Engine hook API:** on Petrichor64 `feat/hook` (264e480), pushed, not yet
+  merged; sosh is not pinned to it yet. As built:
+  - Lua: a cart's global `hook(key, value)` is called once per event, in
+    order, before the next `loop()`; `host.hook(key, value?)` sends one out.
+    Values are always strings (`""` when there's none).
+  - Rust: `Instance::hook(key, value) -> bool` and `Instance::hooks() ->
+    Vec<(String, String)>`.
+  - Web: `Engine.hook`, `el.hook(key, value)` and a `"hook"` event with
+    `{key, value}` in its detail. This compiles for wasm but has never run in
+    a browser.
+  - Keys up to 256 bytes, values up to 64 KiB, 1024 events queued each way
+    (the 1024 below is a queue length too, not a message size). Off in the
+    sandbox.
+  - The first of the branch's two commits doesn't build alone in debug (its
+    guide page comes in the second): squash on merge.
+- **Player crafting state:** on sosh main (f17a4f6). `players.crafting` and
+  `players.stations`, `Sosh.Players.crafting/1`, `set_crafting/2`,
+  `stations/1`, `set_stations/2`, and `crafting` / `set_crafting` plus the
+  `crafting` and `stations` pushes on `user:<id>` (`client/README.md`).
+- **Still to do:** the sim's crafting rules (in progress), wiring them into
+  `Sosh.Sim` and the action channel, the game client, both apps, the models.
+
 ## Context
 
 The user wants a crafting system built around a **blueprints book**: a 3D book
