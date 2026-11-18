@@ -136,8 +136,11 @@ function Account.bind_user(ch)
 		if APP.me ~= nil then
 			APP.me:set_character(r.user.character)
 		end
-		-- the app asked for a server: straight in
-		if APP.enter_id ~= nil and APP.screen == "home" then
+		-- the recipes we're partway through, and the stations near us
+		Recipes.fetch()
+		-- the app asked for a server: straight in (not in book mode, which
+		-- never joins a universe)
+		if APP.enter_id ~= nil and APP.screen == "home" and not APP.book_mode then
 			local want = APP.enter_id
 			APP.enter_id = nil
 			for i = 1, #APP.servers do
@@ -165,6 +168,8 @@ function Account.bind_user(ch)
 	ch.on["wallet"] = function(p)
 		Bag.wallet = p.wallet
 	end
+	ch.on["crafting"] = on_crafting
+	ch.on["stations"] = on_stations
 	-- the item in hand, chosen in another of our clients (the app's pockets)
 	ch.on["hold"] = function(p)
 		APP.held_sent = p.item
@@ -200,6 +205,15 @@ function Account.bind_user(ch)
 		end
 		Account.refresh("servers")
 	end
+end
+
+-- `crafting` and `stations` pushes (recipes.lua).
+function on_crafting(p)
+	Recipes.got_crafting(p.crafting)
+end
+
+function on_stations(p)
+	Recipes.got_stations(p.stations)
 end
 
 -- Ask again for a list that changed.
@@ -709,6 +723,9 @@ function Account.leave_world()
 		SERVER = nil
 	end
 	clear_world()
+	if not APP.book_mode then
+		Book.close()
+	end
 	if APP.me ~= nil then
 		APP.me:remove()
 		APP.me = nil
@@ -872,6 +889,22 @@ function Account.command(text)
 	end
 	if cmd == "/home" then
 		Account.leave_world()
+		return true
+	end
+	-- the hooks an app hosting us would send (book.lua), typed: /hook open,
+	-- /hook search be, /hook show bed, /hook mode book
+	if cmd == "/hook" then
+		if words[2] == nil then
+			add_chat(nil, "/hook open | close | search <text> | show <item> | mode book", C_DIM)
+			return true
+		end
+		local value = text:match("^%S+%s+%S+%s+(.+)$") or ""
+		Book.on_hook(words[2], value)
+		return true
+	end
+	-- the book itself
+	if cmd == "/book" then
+		Book.toggle()
 		return true
 	end
 	if cmd == "/edit" or cmd == "/delete" then
@@ -1040,6 +1073,6 @@ function Account.command(text)
 		end
 		return true
 	end
-	add_chat(nil, "commands: /dm /give /open /unsend /edit /delete /react /pin /share /friend /accept /unfriend /friends /home", C_DIM)
+	add_chat(nil, "commands: /dm /give /open /unsend /edit /delete /react /pin /share /friend /accept /unfriend /friends /book /home", C_DIM)
 	return true
 end

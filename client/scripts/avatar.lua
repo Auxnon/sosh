@@ -892,6 +892,16 @@ function Avatar:pose()
 		fl = -AV_HOLD_ARMS
 		fr = AV_HOLD_ARMS
 	end
+	-- pinned under something too heavy alone: knees bent and shaking
+	if Carry.is_pinned(self.id) then
+		local shake = sin(t * 1.9) * 0.02
+		bob = -0.09 + shake
+		legl = -0.45
+		legr = 0.45
+		twist = sin(t * 0.7) * 0.06
+		fl = -AV_HOLD_ARMS + shake * 3
+		fr = AV_HOLD_ARMS - shake * 3
+	end
 
 	local e = self.emote
 	if e ~= nil and not holding then

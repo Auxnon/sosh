@@ -75,8 +75,8 @@ where the rail is open. Anyone at the helm steers it. It only turns about
 the vertical, and it can't fly through islands or other ships. Everyone on
 deck moves with it. A ship is built like anything else: put blocks on it
 (deck, hull, balloon, rail and helm blocks come from digging one, and new
-players start with some deck), set chests and furniture down on it, lay
-out blueprints on it. Whatever's aboard flies with it. Fly one off the edge
+players start with some deck), set chests and furniture down on it.
+Whatever's aboard flies with it. Fly one off the edge
 of the universe and it crosses into the neighbour on that side, everyone
 and everything aboard, if the grid has one; if not, the ship stops there.
 
@@ -84,22 +84,49 @@ Your **bag** goes by your name and follows you between universes. Digging
 fills it and building spends from it. New players start with wood, stone,
 path, deck and two pots.
 
-**Furniture** (chest, drawer, dresser, table, stool, wardrobe) is built
-from blueprints. Lay one out with the craft tool and scaffolding fills its
-footprint. Then click the scaffolding to put in the ingredients until the
-recipe is met. Chests, drawers, dressers and wardrobes hold things. Most
+**Things are made from recipes**, in **the book** (O, or the book button
+on the right): an index you can search by typing, and for each thing its
+steps, one a spread, what you need first coming first (anything your bag
+already has enough of is skipped). Each step says what goes in, where it's
+done, the gesture and what comes out, and whether it's ready: the bag has
+it and you're near the station (the server says which you're near). "Do
+it" does a hand step there and then; a station step opens the station,
+and when it's made the book comes back on the next step. The book opens
+again where you left off (your recipes in progress follow you between
+devices). **Stations** (veneer, bench, spinning wheel, loom) are furniture:
+click one in reach to open its screen. Pick a tool along the top (the
+bench saws and assembles), drag what goes in from the bag (or tap a slot),
+then draw the gesture on the work: a long stroke along the block at the
+veneer, a cut square across the plank at the bench, once round the
+spinning wheel, back and forth across the loom. A cleaner stroke makes
+more. What's made flies to the bag. Furniture too big for a bag asks
+whether to build it there (aim it like placing, R turns it) or carry it.
+
+**Furniture**: chests, drawers, dressers, table, stool, wardrobe, bed,
+doors, the stations. Chests, drawers, dressers and wardrobes hold things. Most
 furniture stays whole: carry it (one thing at a time) to move it. Drawers
 and stools pack into the bag when empty. Dressers and wardrobes are heavy
 and take two to lift: another player, or a helper (Porter and Hob on the
 plaza; one on every home island). Digging furniture breaks it: half of
 what it was made of comes back, and everything it held. Whatever doesn't
-fit in your bag is left in a sack.
+fit in your bag is left in a sack. Clicking empty furniture with the walk
+tool offers to **break** it for three quarters of its parts (the button
+on the right does it for what you hold). Blueprints laid out before
+recipes still stand as scaffolding: click one to take it down and get
+back what was put in. Holding something heavy alone pins you where you
+stand until a second carrier takes hold: put it down or break it.
+
+**Sheep** wander the islands. Click one in reach with the walk tool to
+shear it for wool (it grows back); spin the wool into yarn, weave the yarn
+into cloth.
 
 ## Controls
 
-- **1–6**: tool. **Walk** clicks a block to walk onto it (a dashed ring
+- **1–5**: tool. **Walk** clicks a block to walk onto it (a dashed ring
   shows where under the pointer; a click drops a ring that stays until you
-  get there), furniture to open it, and a ship's helm to take it. **Dig**
+  get there), furniture to open it (a station's screen, or an offer to
+  break empty furniture), a sheep to shear it, and a ship's helm to take
+  it. **Dig**
   queues blocks (up to 10, outlined; click one again to take it off): you
   walk over beside each in turn and dig it into your bag. It breaks
   furniture and takes scaffolding down (everything put in comes back).
@@ -107,11 +134,13 @@ fit in your bag is left in a sack.
   **Build** places what's picked from the bag on the outlined face.
   **Plant** plants carrots on grass or dirt, or picks them once ripe.
   **Carry** lifts a pot, a cow or furniture over your head and puts it
-  down on a face. **Craft** lays out a blueprint, then puts in its
-  ingredients. The toolbar at the bottom does the same.
-- **Z / X**: what the tool uses: the item to build, or the blueprint.
-  **R** turns furniture and blueprints. A green outline shows where they'll
+  down on a face. The toolbar at the bottom does the same.
+- **Z / X**: what the build tool uses.
+  **R** turns furniture. A green outline shows where they'll
   go.
+- **O**: the book (type to search, left/right turn the pages, Esc closes
+  it). `/book` in chat does the same, and `/hook <key> <value>` feeds the
+  hooks an app sends (`open`, `close`, `search`, `show`, `mode book`).
 - **I**: the bag. With furniture open, click a bag slot to put that stack
   in and a furniture slot to take it out. Otherwise clicking a slot picks
   it to build with. **Esc** closes it.

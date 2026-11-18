@@ -63,13 +63,13 @@ function main()
 	APP.sent_to = nil
 	-- whether the press now down began on the world (not the HUD)
 	APP.press_world = false
-	-- "walk", "dig", "build", "plant", "carry" or "craft"
+	-- "walk", "dig", "build", "plant" or "carry"
 	APP.tool = "walk"
-	-- what the build tool places (an item in the bag), and the blueprint
-	-- the craft tool lays out (an index into Furn.order)
+	-- what the build tool places (an item in the bag)
 	APP.build_item = nil
-	APP.craft_i = 1
-	-- quarter turns for furniture and blueprints (R)
+	-- the book alone on the screen, never in a universe (hook "mode")
+	APP.book_mode = false
+	-- quarter turns for furniture (R)
 	APP.rot = 0
 	APP.cursor = nil
 	APP.target = nil
@@ -84,11 +84,15 @@ function main()
 	Blocks.init()
 	Farm.init()
 	Herd.init()
+	Flock.init()
 	Carry.init()
 	Furn.init()
 	Ships.init()
 	Helpers.init()
 	Bag.init()
+	Recipes.init()
+	Book.init()
+	Station.init()
 	world_below("sea")
 	Account.init()
 	-- on the web the page's own server is ours: straight to signing in
@@ -118,7 +122,9 @@ function loop()
 	Hosted.update()
 	UI.begin()
 	tell_hold()
-	if APP.screen == "connect" then
+	if APP.book_mode then
+		book_screen()
+	elseif APP.screen == "connect" then
 		connect_screen()
 	elseif APP.screen == "auth" then
 		auth_screen()
@@ -242,10 +248,12 @@ function clear_world()
 	Dig.clear()
 	Farm.init()
 	Herd.init()
+	Flock.init()
 	Carry.init()
 	Furn.init()
 	Ships.init()
 	Helpers.init()
+	Station.reset()
 	Bag.box = nil
 	while #APP.order > 0 do
 		remove_player(APP.order[1])
@@ -414,6 +422,7 @@ function bind_actions(ch)
 		-- blueprints, ships and helpers
 		Farm.sync(reply.crops or {})
 		Herd.sync(reply.cows or {})
+		Flock.sync(reply.sheep or {})
 		Furn.sync(reply.furniture or {}, reply.sites or {})
 		Ships.sync(reply.ships or {})
 		Helpers.sync(reply.helpers or {})
@@ -437,6 +446,9 @@ function bind_actions(ch)
 	ch.on["moo"] = function(p)
 		Herd.moo(p.ids)
 	end
+	ch.on["sheep"] = on_sheep
+	ch.on["wool"] = Flock.wool
+	ch.on["encumbered"] = Carry.encumbered
 	ch.on["carry"] = function(p)
 		Carry.set(p)
 	end
@@ -502,6 +514,14 @@ function bind_actions(ch)
 				return
 			end
 		end
+	end
+end
+
+-- `sheep`: rows like the cows'.
+function on_sheep(p)
+	local rows = p.rows
+	for i = 1, #rows do
+		Flock.put(rows[i])
 	end
 end
 
@@ -697,6 +717,12 @@ function world_frame()
 			if me:driven() then
 				me:stop() -- the keys are for typing now
 			end
+		elseif Book.is_up() then
+			-- the keys search and turn the pages
+			Book.keys()
+			if me:driven() then
+				me:stop()
+			end
 		elseif Bag.amount ~= nil then
 			Bag.amount_keys()
 			if me:driven() then
@@ -739,6 +765,7 @@ function world_frame()
 	end
 	Helpers.update(U.dt)
 	Herd.update(me)
+	Flock.update()
 	Carry.update()
 	Dust.update(U.dt)
 	Chips.update(U.dt)
@@ -754,6 +781,10 @@ function world_frame()
 		CAM.az = CAM.az + 0.0015
 		place_camera(0, 0, GROUND_Z)
 	end
+	-- after the camera: the book sits in front of it, and things made fly
+	-- toward the bag button
+	Book.frame()
+	Fly.update(U.dt)
 
 	draw_hud()
 end

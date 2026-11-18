@@ -280,6 +280,43 @@ function UI.project(px, py, pz)
 	return out
 end
 
+-- The camera's axes, as UI.project uses them: forward, right and up.
+function UI.cam_axes()
+	local ca = cos(CAM.az)
+	local sa = sin(CAM.az)
+	local cl = cos(CAM.alt)
+	local fx = ca * cl
+	local fy = sa * cl
+	local fz = sin(CAM.alt)
+	local rl = sqrt(fx * fx + fy * fy)
+	local rx = fy / rl
+	local ry = -fx / rl
+	local A = {}
+	A.fx = fx
+	A.fy = fy
+	A.fz = fz
+	A.rx = rx
+	A.ry = ry
+	A.ux = ry * fz
+	A.uy = -rx * fz
+	A.uz = rx * fy - ry * fx
+	return A
+end
+
+-- The world point `depth` ahead of the camera that shows at gui pixel
+-- (sx, sy): UI.project undone.
+function UI.unproject(sx, sy, depth)
+	local A = UI.cam_axes()
+	local th = 0.41421356
+	local aspect = gui.w / gui.h
+	local xc = (sx / gui.w - 0.5) * 2 * depth * th * aspect
+	local yc = (0.5 - sy / gui.h) * 2 * depth * th
+	local x = CAM.x + A.fx * depth + A.rx * xc + A.ux * yc
+	local y = CAM.y + A.fy * depth + A.ry * xc + A.uy * yc
+	local z = CAM.z + A.fz * depth + A.uz * yc
+	return x, y, z
+end
+
 -- Name tag and stacked speech bubbles over one avatar, at its projected
 -- head point `p` (UI.project of av:top()).
 function UI.avatar_overlay(av, is_me, p)

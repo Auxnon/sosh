@@ -45,7 +45,53 @@ ITEM_COLORS = {
 	stool = "C4966A",
 	sign = "E8D8A8",
 	marbles = "5C8EE0",
+	plank = "C4966A",
+	post = "A87848",
+	wool = "F4F0E6",
+	yarn = "D696BE",
+	cloth = "E4DAF0",
+	veneer = "965A3C",
+	bench = "A87848",
+	spinning_wheel = "B07850",
+	loom = "8A5A3C",
 }
+
+-- Item icons: 8 units square at (x, y) on image `im` (the gui, or a page
+-- of the book), `u` pixels a unit. Most things are their swatch; what
+-- crafting makes is drawn.
+Icons = {}
+
+function Icons.draw(im, item, x, y, u)
+	local name = item:match("^(%a+):%d+$") or item
+	local c = ITEM_COLORS[name] or "DDDDDD"
+	if name == "plank" then
+		im:rect(x, y + 2 * u, 8 * u, 4 * u, c)
+		im:rect(x, y + 3 * u, 8 * u, u, "96643C")
+		im:rect(x + 5 * u, y + 2 * u, u, u, "96643C")
+	elseif name == "post" then
+		im:rect(x + 3 * u, y, 2 * u, 8 * u, c)
+		im:rect(x + 4 * u, y + u, u, 6 * u, "78542F")
+	elseif name == "wool" then
+		im:rrect(x, y + 2 * u, 8 * u, 5 * u, 2 * u, "D8D0C0")
+		im:rrect(x + u, y + u, 6 * u, 5 * u, 2 * u, c)
+		im:rect(x + 2 * u, y + 3 * u, u, u, "D8D0C0")
+		im:rect(x + 5 * u, y + 2 * u, u, u, "D8D0C0")
+	elseif name == "yarn" then
+		im:rrect(x + u, y + u, 6 * u, 6 * u, 3 * u, c)
+		im:rect(x + 2 * u, y + 3 * u, 4 * u, u, "B0709A")
+		im:rect(x + 3 * u, y + 5 * u, 3 * u, u, "B0709A")
+		im:rect(x + 6 * u, y + 6 * u, 2 * u, u, c)
+	elseif name == "cloth" then
+		im:rect(x, y + u, 8 * u, 6 * u, c)
+		for i = 0, 3 do
+			local gx = x + (i * 2 + 1) * u
+			im:rect(gx, y + u, u, 6 * u, "C4B4DC")
+		end
+		im:rect(x, y + 6 * u, 8 * u, u, "C4B4DC")
+	else
+		im:rrect(x, y, 8 * u, 8 * u, u, c)
+	end
+end
 
 LONG_PRESS = 0.45 -- seconds held still before a slot's menu opens
 PULL_MAX = 7 -- gui pixels a pressed slot tugs toward the pointer, at most
@@ -73,6 +119,8 @@ end
 function Bag.set(slots)
 	if slots ~= nil then
 		Bag.slots = slots
+		-- the book's ready and waiting go by it
+		Book.changed()
 	end
 end
 
@@ -275,9 +323,7 @@ end
 
 -- A stack's swatch and count, in a slot-sized box at (sx, sy).
 function Bag.draw_stack(s, sx, sy)
-	local name = s[1]:match("^(%a+):%d+$") or s[1]
-	local c = ITEM_COLORS[name] or "DDDDDD"
-	gui:rrect(sx + 3, sy + 3, 8, 8, 1, c)
+	Icons.draw(gui, s[1], sx + 3, sy + 3, 1)
 	local n = Bag.count_text(s)
 	-- calls hoisted out of argument lists (petrichor64 SILT-BUGS.md #1)
 	local nw = UI.text_w(n)
@@ -335,6 +381,16 @@ function Bag.slot_of(src, i)
 		return nil
 	end
 	return f.slots[i]
+end
+
+-- Whether furniture `f` holds nothing.
+function Bag.box_empty(f)
+	for i = 1, #f.slots do
+		if f.slots[i][1] ~= nil then
+			return false
+		end
+	end
+	return true
 end
 
 function Bag.filled(src, i)
@@ -445,6 +501,11 @@ end
 -- otherwise pick a bag item to build with.
 function Bag.tap(src, i, L)
 	local s = Bag.slot_of(src, i)
+	-- a station open: in onto its work, as if dragged there
+	if src == "bag" and Station.cur ~= nil then
+		Station.add_item(s[1])
+		return
+	end
 	if src == "box" then
 		box_action("take_action", L.box.id, i - 1)
 	elseif L.box ~= nil then
@@ -466,6 +527,12 @@ function Bag.drop_drag(L, d, hover)
 		elseif d.src == "box" and hover.src == "bag" then
 			box_action("take_action", L.box.id, d.i - 1)
 		end
+		return
+	end
+	-- onto an open station's work
+	if d.src == "bag" and Station.over(UI.mx, UI.my) then
+		local s = Bag.slots[d.i]
+		Station.add_item(s[1])
 		return
 	end
 	-- out over the world (not the HUD): set it down
@@ -741,6 +808,13 @@ function Bag.draw(bottom)
 			hover = {}
 			hover.src = "box"
 			hover.i = bi
+		end
+		-- empty, and made from a recipe: it can be broken for its parts
+		if Bag.box_empty(L.box) and Recipes.making[L.box.kind] ~= nil then
+			local bx = L.x + L.w - PAD - 44
+			if UI.button("break", bx, L.box_y + PAD - 1, 44, 12) then
+				ask_break(L.box)
+			end
 		end
 	end
 	-- before the menu's buttons, so a click on one isn't also a press on

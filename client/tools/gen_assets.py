@@ -14,6 +14,7 @@ World axes are Z-up (petrichor convention) and an avatar faces +X at rz=0.
 
 import io
 import json
+import math
 import struct
 from pathlib import Path
 
@@ -90,6 +91,103 @@ def write_glb(path, positions, uvs, indices, png):
             },
             {"bufferView": 1, "componentType": 5126, "count": len(uvs), "type": "VEC2"},
             {"bufferView": 2, "componentType": 5123, "count": len(indices), "type": "SCALAR"},
+        ],
+    }
+    js = json.dumps(gltf, separators=(",", ":")).encode()
+    js += b" " * (-len(js) % 4)
+    out = struct.pack("<III", 0x46546C67, 2, 12 + 8 + len(js) + 8 + len(binary))
+    out += struct.pack("<II", len(js), 0x4E4F534A) + js
+    out += struct.pack("<II", len(binary), 0x004E4942) + binary
+    path.write_bytes(out)
+
+
+def write_skinned_glb(path, positions, uvs, indices, joints, bones, png):
+    """One skinned mesh, one texture: `joints` gives each vertex its bone
+    (an index into `bones`, weight 1), and `bones` is [(name, parent index
+    or None, (x, y, z) translation from the parent)], parents first. The
+    rig has no clips: the game turns the bones itself (`ent:bone`)."""
+    pos_b = b"".join(struct.pack("<3f", *p) for p in positions)
+    uv_b = b"".join(struct.pack("<2f", *t) for t in uvs)
+    idx_b = b"".join(struct.pack("<H", i) for i in indices)
+    jnt_b = b"".join(struct.pack("<4H", j, 0, 0, 0) for j in joints)
+    wgt_b = b"".join(struct.pack("<4f", 1.0, 0.0, 0.0, 0.0) for _ in joints)
+    # each bone's rest position in the model, for its inverse bind matrix
+    # (bones only translate at rest, so it's the translation undone)
+    world = []
+    for name, parent, t in bones:
+        base = world[parent] if parent is not None else (0.0, 0.0, 0.0)
+        world.append(tuple(base[k] + t[k] for k in range(3)))
+    ibm_b = b"".join(
+        struct.pack("<16f", 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -w[0], -w[1], -w[2], 1) for w in world
+    )
+
+    def pad(b):
+        return b + b"\0" * (-len(b) % 4)
+
+    parts = [pad(pos_b), pad(uv_b), pad(idx_b), pad(jnt_b), pad(wgt_b), pad(ibm_b), pad(png)]
+    offsets, o = [], 0
+    for p in parts:
+        offsets.append(o)
+        o += len(p)
+    binary = b"".join(parts)
+    raw = [pos_b, uv_b, idx_b, jnt_b, wgt_b, ibm_b, png]
+
+    # node 0 the mesh, nodes 1.. the bones
+    nodes = [{"mesh": 0, "skin": 0}]
+    for i, (name, parent, t) in enumerate(bones):
+        nodes.append({"name": name, "translation": list(t)})
+    for i, (name, parent, t) in enumerate(bones):
+        if parent is not None:
+            nodes[parent + 1].setdefault("children", []).append(i + 1)
+    roots = [i + 1 for i, b in enumerate(bones) if b[1] is None]
+
+    xs, ys, zs = zip(*positions)
+    views = []
+    for k, b in enumerate(raw):
+        v = {"buffer": 0, "byteOffset": offsets[k], "byteLength": len(b)}
+        if k in (0, 1, 3, 4):
+            v["target"] = 34962
+        elif k == 2:
+            v["target"] = 34963
+        views.append(v)
+    gltf = {
+        "asset": {"version": "2.0", "generator": "sosh gen_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0] + roots}],
+        "nodes": nodes,
+        "skins": [{"joints": [i + 1 for i in range(len(bones))], "inverseBindMatrices": 5}],
+        "meshes": [
+            {
+                "name": path.stem,
+                "primitives": [
+                    {
+                        "attributes": {"POSITION": 0, "TEXCOORD_0": 1, "JOINTS_0": 3, "WEIGHTS_0": 4},
+                        "indices": 2,
+                        "material": 0,
+                    }
+                ],
+            }
+        ],
+        "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+        "textures": [{"source": 0, "sampler": 0}],
+        "samplers": [{"magFilter": 9728, "minFilter": 9728}],
+        "images": [{"bufferView": 6, "mimeType": "image/png"}],
+        "buffers": [{"byteLength": len(binary)}],
+        "bufferViews": views,
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": 5126,
+                "count": len(positions),
+                "type": "VEC3",
+                "min": [min(xs), min(ys), min(zs)],
+                "max": [max(xs), max(ys), max(zs)],
+            },
+            {"bufferView": 1, "componentType": 5126, "count": len(uvs), "type": "VEC2"},
+            {"bufferView": 2, "componentType": 5123, "count": len(indices), "type": "SCALAR"},
+            {"bufferView": 3, "componentType": 5123, "count": len(joints), "type": "VEC4"},
+            {"bufferView": 4, "componentType": 5126, "count": len(joints), "type": "VEC4"},
+            {"bufferView": 5, "componentType": 5126, "count": len(bones), "type": "MAT4"},
         ],
     }
     js = json.dumps(gltf, separators=(",", ":")).encode()
@@ -374,6 +472,10 @@ def furniture_models():
         swatch("burlap", (176, 112, 240, 255), (120, 72, 200, 255)),  # 11 hyper
         swatch("plank", (232, 196, 96, 255), (184, 148, 60, 255)),  # 12 brass
         swatch("burlap", (96, 220, 200, 255), (56, 168, 156, 255)),  # 13 way out
+        swatch("speckle", (150, 156, 168, 255), (118, 124, 138, 255)),  # 14 steel
+        swatch("burlap", (214, 150, 190, 255), (184, 116, 158, 255)),  # 15 yarn
+        swatch("burlap", (228, 218, 240, 255), (200, 186, 224, 255)),  # 16 cloth
+        swatch("burlap", (244, 240, 230, 255), (218, 212, 198, 255)),  # 17 wool
     )
     png = png_bytes(im)
     s = 1 / 16
@@ -463,6 +565,69 @@ def furniture_models():
             box(0, 0, 4 * s, 4 * s, 6 * s, 9 * s, uv(6), top=(1.5 * s, 1.5 * s)),
             box(0, 0, 2 * s, 2 * s, 9 * s, 10 * s, uv(6)),
         ),
+        # -- the crafting stations
+        # the veneer: a stout block with a blade over it, a fresh sheet of
+        # plank coming off
+        "veneer": merge(
+            box(0, 0, 6 * s, 5 * s, 0.0, 7 * s, faced(uv(4), uv(3))),
+            box(0, 0, 5 * s, 4 * s, 7 * s, 8 * s, uv(7)),
+            box(-5 * s, 0, 1 * s, 1 * s, 7 * s, 12 * s, uv(14)),
+            box(5 * s, 0, 1 * s, 1 * s, 7 * s, 12 * s, uv(14)),
+            box(0, 0, 6 * s, 1 * s, 11 * s, 12 * s, uv(14)),
+            box(0, -1 * s, 5 * s, 1 * s, 9 * s, 10 * s, uv(14)),
+        ),
+        # the bench: two cells long, a vice at its right end, a saw on top
+        # and a rack of tools along the back
+        "bench": merge(
+            box(0.5, 0, 15.5 * s, 6 * s, 11 * s, 13 * s, uv(0)),
+            *legs(-6 * s, 1 + 6 * s, -5 * s, 5 * s, 11 * s, 1 * s),
+            box(0.5, 0, 14 * s, 5 * s, 3 * s, 4 * s, uv(3)),
+            box(1 + 4 * s, -7 * s, 2 * s, 1 * s, 9 * s, 14 * s, uv(14)),
+            box(0.1, 1 * s, 4 * s, 2 * s, 13 * s, 14 * s, uv(14)),
+            box(0.1 + 5 * s, 1 * s, 1 * s, 1 * s, 13 * s, 15 * s, uv(3)),
+            box(0.5, 6 * s, 12 * s, 1 * s, 13 * s, 17 * s, uv(3)),
+        ),
+        # the spinning wheel: a wheel on an upright, the yarn on a bobbin
+        "spinning_wheel": merge(
+            box(0, 0, 6 * s, 3 * s, 2 * s, 4 * s, uv(3)),
+            *legs(-5 * s, 5 * s, -2 * s, 2 * s, 2 * s, 1 * s),
+            box(1 * s, 0, 1 * s, 1 * s, 4 * s, 10 * s, uv(0)),
+            *[
+                box(1 * s + 5 * s * c, 0, 1 * s, 1 * s, 10 * s + 5 * s * n - 1 * s, 10 * s + 5 * s * n + 1 * s, uv(0))
+                for c, n in [(math.cos(a * math.pi / 5), math.sin(a * math.pi / 5)) for a in range(10)]
+            ],
+            box(1 * s, 0, 1 * s, 2 * s, 9 * s, 11 * s, uv(12)),
+            box(-4 * s, 0, 1 * s, 1 * s, 4 * s, 9 * s, uv(0)),
+            box(-4 * s, 0, 2 * s, 2 * s, 8 * s, 11 * s, uv(15)),
+        ),
+        # the loom: two cells wide and two high, cloth growing on its warp
+        "loom": merge(
+            *[box(x, y, 1 * s, 1 * s, 0.0, 30 * s, uv(0)) for x in (-6 * s, 1 + 6 * s) for y in (-5 * s, 5 * s)],
+            box(0.5, -5 * s, 14 * s, 1 * s, 28 * s, 30 * s, uv(3)),
+            box(0.5, 5 * s, 14 * s, 1 * s, 28 * s, 30 * s, uv(3)),
+            box(0.5, -5 * s, 14 * s, 1 * s, 10 * s, 12 * s, uv(3)),
+            box(0.5, -2 * s, 12 * s, 1 * s, 12 * s, 18 * s, uv(16)),
+            *[box(x, -2 * s, 0.5 * s, 1 * s, 18 * s, 28 * s, uv(17)) for x in (-3 * s, 2 * s, 7 * s, 12 * s, 1 + 1 * s)],
+            box(0.5, -3 * s, 13 * s, 1 * s, 20 * s, 21 * s, uv(14)),
+            box(0.5, 6 * s, 10 * s, 3 * s, 6 * s, 8 * s, uv(0)),
+        ),
+        # -- things made, for the game to throw into the bag (item_*)
+        "item_plank": box(0, 0, 6 * s, 2 * s, 0.0, 1 * s, uv(7)),
+        "item_post": box(0, 0, 1 * s, 1 * s, 0.0, 8 * s, uv(0)),
+        "item_wool": merge(
+            box(0, 0, 3 * s, 3 * s, 0.0, 4 * s, uv(17), top=(2 * s, 2 * s)),
+            box(2 * s, 1 * s, 2 * s, 2 * s, 0.0, 3 * s, uv(17), top=(1 * s, 1 * s)),
+            box(-2 * s, -1 * s, 2 * s, 2 * s, 0.0, 3 * s, uv(17), top=(1 * s, 1 * s)),
+        ),
+        "item_yarn": merge(
+            box(0, 0, 2 * s, 2 * s, 0.0, 1 * s, uv(15), top=(3 * s, 3 * s)),
+            box(0, 0, 3 * s, 3 * s, 1 * s, 4 * s, uv(15)),
+            box(0, 0, 3 * s, 3 * s, 4 * s, 5 * s, uv(15), top=(2 * s, 2 * s)),
+        ),
+        "item_cloth": merge(
+            box(0, 0, 4 * s, 4 * s, 0.0, 1 * s, uv(16)),
+            box(0, 1 * s, 4 * s, 3 * s, 1 * s, 2 * s, uv(16)),
+        ),
     }
     for name, (pos, uvs, idx) in models.items():
         write_glb(ASSETS / f"{name}.glb", pos, uvs, idx, png)
@@ -483,6 +648,181 @@ def scaffold_model():
             parts.append(box(x, 0, t, 0.5, z0, z0 + 2 * t, uv(0)))
     pos, uvs, idx = merge(*parts)
     write_glb(ASSETS / "scaffold.glb", pos, uvs, idx, png_bytes(im))
+
+
+# -- the crafting book (scripts/book.lua draws its pages)
+
+# Its one texture, which the game redraws whole with tex("book", ...): four
+# pages side by side (the left page, the right, and the two faces of the
+# leaf that turns), then the leather and the page edges. Keep in step with
+# BOOK_* in scripts/book.lua.
+BOOK_TEX = (768, 240)
+BOOK_PAGE = (176, 220)
+BOOK_LEATHER = (704, 0, 736, 32)
+BOOK_EDGE = (736, 0, 768, 32)
+
+
+def book_texture():
+    im = Image.new("RGBA", BOOK_TEX, (0, 0, 0, 255))
+    pw, ph = BOOK_PAGE
+    for i in range(4):
+        for y in range(ph):
+            for x in range(pw):
+                c = (255, 244, 214, 255)
+                if x in (0, pw - 1) or y in (0, ph - 1):
+                    c = (201, 168, 106, 255)
+                im.putpixel((i * pw + x, y), c)
+    x0, y0, x1, y1 = BOOK_LEATHER
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            dark = (x * 7 + y * 3) % 11 == 0
+            im.putpixel((x, y), (96, 46, 32, 255) if dark else (122, 62, 42, 255))
+    x0, y0, x1, y1 = BOOK_EDGE
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            im.putpixel((x, y), (226, 212, 180, 255) if y % 3 == 0 else (246, 236, 210, 255))
+    return im
+
+
+def book_model():
+    """An open book, lying flat at rest, its spine along y at x = 0 and its
+    pages facing +z (the top of each page toward +y). Four bones:
+    `spine`; `cover_l` and `cover_r`, hinged at the spine level with the
+    pages, each carrying its cover and block of pages (`cover_r` turned
+    -pi about y lays the right half over the left: shut); and `leaf`, a
+    page with a face on each side that turns from the right (0) to the
+    left (-pi). All on sixteenths, as the engine stores vertices."""
+    s = 1 / 16
+    tw, th = BOOK_TEX
+    pw, ph = BOOK_PAGE
+    W = 24 * s  # a page's width
+    HH = 15 * s  # half a page's height
+    T = 3 * s  # the pages' top
+    inset = 0.5
+
+    def region(x0, y0, x1, y1):
+        return ((x0 + inset) / tw, (y0 + inset) / th, (x1 - inset) / tw, (y1 - inset) / th)
+
+    leather = region(*BOOK_LEATHER)
+    edge = region(*BOOK_EDGE)
+
+    def page(i):
+        return region(i * pw, 0, (i + 1) * pw, ph)
+
+    pos, uv, idx, jnt = [], [], [], []
+
+    def quad(corners, uvs, bone):
+        n = len(pos)
+        pos.extend(corners)
+        uv.extend(uvs)
+        jnt.extend([bone] * 4)
+        idx.extend([n, n + 1, n + 2, n, n + 2, n + 3])
+
+    def slab(x0, x1, y0, y1, z0, z1, side, bone, top=None, mirror=False):
+        """A box; its top face shows `top` (u0, v0, u1, v1) the right way
+        up seen from above (x right, +y up the page), mirrored in x if
+        asked; every other face `side`."""
+        u0, v0, u1, v1 = side
+
+        def flat(c):
+            quad(c, [(u0, v0), (u1, v0), (u1, v1), (u0, v1)], bone)
+
+        if top is None:
+            flat([(x0, y1, z1), (x1, y1, z1), (x1, y0, z1), (x0, y0, z1)])
+        else:
+            a0, b0, a1, b1 = top
+            if mirror:
+                a0, a1 = a1, a0
+            quad([(x0, y1, z1), (x1, y1, z1), (x1, y0, z1), (x0, y0, z1)], [(a0, b0), (a1, b0), (a1, b1), (a0, b1)], bone)
+        flat([(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0)])
+        flat([(x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0)])
+        flat([(x1, y1, z1), (x0, y1, z1), (x0, y1, z0), (x1, y1, z0)])
+        flat([(x0, y1, z1), (x0, y0, z1), (x0, y0, z0), (x0, y1, z0)])
+        flat([(x1, y0, z1), (x1, y1, z1), (x1, y1, z0), (x1, y0, z0)])
+
+    SPINE, LEFT, RIGHT, LEAF = 0, 1, 2, 3
+    # the covers, a sixteenth bigger than the pages all round
+    slab(-W - s, 0.0, -HH - s, HH + s, 0.0, s, leather, LEFT)
+    slab(0.0, W + s, -HH - s, HH + s, 0.0, s, leather, RIGHT)
+    # the blocks of pages, the left and right pages on top
+    slab(-W, 0.0, -HH, HH, s, T, edge, LEFT, top=page(0))
+    slab(0.0, W, -HH, HH, s, T, edge, RIGHT, top=page(1))
+    # the spine's back, under the hinge
+    slab(-s, s, -HH - s, HH + s, -s, 0.0, leather, SPINE)
+    # the leaf: its front a sixteenth over the right page, its back on it
+    # (the back reads mirrored, so turned over it reads as a left page)
+    a0, b0, a1, b1 = page(2)
+    quad([(0.0, HH, T + s), (W, HH, T + s), (W, -HH, T + s), (0.0, -HH, T + s)], [(a0, b0), (a1, b0), (a1, b1), (a0, b1)], LEAF)
+    a0, b0, a1, b1 = page(3)
+    quad([(0.0, HH, T), (W, HH, T), (W, -HH, T), (0.0, -HH, T)], [(a1, b0), (a0, b0), (a0, b1), (a1, b1)], LEAF)
+
+    bones = [
+        ("spine", None, (0.0, 0.0, 0.0)),
+        ("cover_l", 0, (0.0, 0.0, T)),
+        ("cover_r", 0, (0.0, 0.0, T)),
+        ("leaf", 0, (0.0, 0.0, T + s / 2)),
+    ]
+    write_skinned_glb(ASSETS / "book.glb", pos, uv, idx, jnt, bones, png_bytes(book_texture()))
+
+
+# -- sheep: woolly, and shorn
+
+SHEEP_WOOL = (244, 240, 230, 255)
+SHEEP_CURL = (218, 210, 194, 255)
+SHEEP_FACE = (64, 58, 62, 255)
+SHEEP_SKIN = (232, 196, 178, 255)
+SHEEP_SKIN_DK = (206, 168, 150, 255)
+
+
+def sheep_texture():
+    """32x16: wool with curls (0-15), the dark face and legs (16-23, top),
+    shorn skin (24-31, top), and the face (16-31, bottom)."""
+    im = Image.new("RGBA", (32, 16), SHEEP_WOOL)
+    for x in range(16):
+        for y in range(16):
+            if (x * 3 + y * 5) % 6 == 0 or (x + y * 2) % 7 == 0:
+                im.putpixel((x, y), SHEEP_CURL)
+    for x in range(16, 32):
+        for y in range(16):
+            im.putpixel((x, y), SHEEP_FACE)
+    for x in range(24, 32):
+        for y in range(8):
+            im.putpixel((x, y), SHEEP_SKIN_DK if (x + y) % 4 == 0 else SHEEP_SKIN)
+    # face: white eyes with dark pupils, a pale muzzle
+    for px in (18, 19, 28, 29):
+        im.putpixel((px, 10), (240, 236, 228, 255))
+    for px in (19, 28):
+        im.putpixel((px, 11), (20, 18, 20, 255))
+    for px in range(21, 27):
+        for py in (13, 14):
+            im.putpixel((px, py), (120, 108, 110, 255))
+    return im
+
+
+def sheep_mesh(woolly):
+    """Faces +X, feet at z = 0, a bit smaller than a cow. Woolly, the body is
+    a fat fleece over the legs; shorn, it's a thin pink body, plainly bare."""
+    W, H = 32, 16
+    wool = rect(0, 0, 16, 16, W, H)
+    dark = rect(16, 0, 24, 8, W, H)
+    skin = rect(24, 0, 32, 8, W, H)
+    face = rect(16, 8, 32, 16, W, H)
+    head_uv = lambda n: face(n) if n == "front" else dark(n)
+    parts = []
+    for lx in (-0.24, 0.22):
+        for ly in (-0.12, 0.12):
+            parts.append(box(lx, ly, 0.05, 0.05, 0.0, 0.42, dark))
+    if woolly:
+        parts.append(box(-0.04, 0.0, 0.4, 0.3, 0.32, 0.86, wool, top=(0.34, 0.24)))
+        parts.append(box(-0.04, 0.0, 0.3, 0.22, 0.86, 0.94, wool))
+        parts.append(box(0.44, 0.0, 0.12, 0.12, 0.86, 0.98, wool))  # a tuft over the brow
+    else:
+        parts.append(box(-0.04, 0.0, 0.3, 0.15, 0.4, 0.7, skin, top=(0.27, 0.13)))
+    parts.append(box(0.46, 0.0, 0.12, 0.12, 0.6, 0.9, head_uv))
+    for ey in (-0.17, 0.17):
+        parts.append(box(0.42, ey, 0.04, 0.06, 0.8, 0.86, dark))
+    parts.append(box(-0.44, 0.0, 0.04, 0.04, 0.6, 0.76, wool if woolly else skin))
+    return merge(*parts)
 
 
 def below_model(name, base, speckle, seed):
@@ -771,6 +1111,11 @@ def main():
 
     pos, uvs, idx = cow_mesh()
     write_glb(ASSETS / "cow.glb", pos, uvs, idx, png_bytes(cow_texture()))
+    pos, uvs, idx = sheep_mesh(True)
+    write_glb(ASSETS / "sheep.glb", pos, uvs, idx, png_bytes(sheep_texture()))
+    pos, uvs, idx = sheep_mesh(False)
+    write_glb(ASSETS / "sheep_shorn.glb", pos, uvs, idx, png_bytes(sheep_texture()))
+    book_model()
     for stage in range(4):
         pos, uvs, idx = carrot_mesh(stage)
         write_glb(ASSETS / f"carrot{stage}.glb", pos, uvs, idx, png_bytes(crop_texture()))
@@ -788,7 +1133,8 @@ def main():
     icon.save(ROOT / "icon.png")
 
     print(
-        f"wrote the player, {count} faces, cow, carrots, pots, furniture, ship tiles,"
+        f"wrote the player, {count} faces, cow, sheep, the book, carrots, pots, furniture"
+        f" and stations, ship tiles,"
         f" sea, land and ground tiles to {ASSETS}"
     )
 

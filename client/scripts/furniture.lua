@@ -3,10 +3,10 @@
 --
 -- The universe (Sosh.Sim) owns all of it. A piece of furniture fills its
 -- footprint with FURNITURE cells in the block world (solid, not drawn as
--- tiles) and is drawn here as its model. A blueprint being built fills its
--- footprint with SCAFFOLD cells, drawn as scaffolding, until the
--- ingredients put into it (`deposit_action`) meet its recipe; then it turns
--- into the furniture.
+-- tiles) and is drawn here as its model. Things are made from recipes now
+-- (recipes.lua, the book, the stations); blueprints laid out before that
+-- (`sites`) still stand, their footprint SCAFFOLD cells drawn as
+-- scaffolding, until someone breaks them for what was put in.
 --
 -- Footprints run from the origin cell along +x (width), +y (depth) and +z,
 -- turned `rot` quarter turns counter-clockwise about the origin cell, as on
@@ -69,12 +69,13 @@ function Furn.init()
 	end
 end
 
--- What there is (the join reply's `catalog`): furniture kinds, buildable
--- ones in order for the craft tool, and items.
+-- What there is (the join reply's `catalog`): furniture kinds, those with
+-- a recipe in order, and items; its recipe steps go to recipes.lua.
 function Furn.set_catalog(c)
 	if c == nil then
 		return
 	end
+	Recipes.set_catalog(c)
 	Furn.kinds = {}
 	Furn.order = {}
 	for i = 1, #c.kinds do
@@ -598,7 +599,8 @@ function Furn.sign_text(s)
 	return t
 end
 
--- Labels over blueprints nearby: what they still need. {p, text} each.
+-- Labels over old blueprints nearby: they can only be broken now. {p,
+-- text} each.
 function Furn.site_labels(me)
 	local out = {}
 	if me == nil then
@@ -619,7 +621,7 @@ function Furn.site_labels(me)
 			if p ~= nil then
 				local l = {}
 				l.p = p
-				l.text = s.kind .. ": " .. Furn.site_progress(s)
+				l.text = "old " .. s.kind .. " blueprint: click to break it"
 				table.insert(out, l)
 			end
 		end

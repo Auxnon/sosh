@@ -10,6 +10,9 @@
 --     nobody's signed in yet: only the sea and the sky, slowly turning,
 --     for the app's sign-in page to sit on
 --
+-- In book mode (the hook "mode" "book", book.lua) a session signs in the
+-- same way but never goes into a server: the book is the whole screen.
+--
 -- `host` is nil where nothing hosts us (chor, the web), and quiet when the
 -- host never writes: the game runs as ever.
 
@@ -43,6 +46,9 @@ function Hosted.session(url, token, user_id, server_id)
 	APP.embedded = true
 	APP.url = url
 	APP.enter_id = server_id
+	if APP.book_mode then
+		APP.enter_id = nil
+	end
 	Account.signed_in({ token = token, user = { id = user_id } })
 end
 
@@ -54,7 +60,7 @@ function Hosted.backdrop()
 end
 
 function Hosted.enter(id)
-	if id == nil then
+	if id == nil or APP.book_mode then
 		return
 	end
 	if APP.server ~= nil and APP.server.id == id then

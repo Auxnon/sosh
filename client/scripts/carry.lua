@@ -12,6 +12,13 @@
 -- furniture is only gripped, waiting for a second carrier. Helpers hold
 -- furniture too (Furn.helper_holds). A player (`player`, their user id) is
 -- their own avatar, laid flat overhead (avatar.lua); they can wiggle free.
+--
+-- Holding furniture that takes more carriers than it has (a dresser, alone)
+-- pins its holder: `carry` and the snapshot's `held` say `pinned`, and
+-- `encumbered` {user_id, pinned, on, at} says where they're stuck. The
+-- server stands them still there until a second carrier takes hold, or
+-- they put it down or break it; we don't try to walk meanwhile, and look
+-- strained (avatar.lua).
 
 Carry = {}
 
@@ -32,6 +39,8 @@ function Carry.init()
 	Carry.cows = {}
 	-- carried player's user id -> carrier's
 	Carry.carried = {}
+	-- user id -> true: pinned under something too heavy for them alone
+	Carry.pinned = {}
 	if Carry.blocks == nil then
 		Carry.blocks = {}
 	end
@@ -59,6 +68,7 @@ end
 
 -- One `carry` event.
 function Carry.set(p)
+	Carry.pinned[p.user_id] = p.pinned == true
 	local old = Carry.by[p.user_id]
 	if old ~= nil then
 		Carry.let_go(old)
@@ -110,6 +120,39 @@ function Carry.let_go(h)
 	if h.player ~= nil then
 		Carry.carried[h.player] = nil
 	end
+end
+
+-- `encumbered`: stuck (or free again). Stuck, we stand where the server
+-- says (frame `on`, 0 the world).
+function Carry.encumbered(p)
+	Carry.pinned[p.user_id] = p.pinned == true
+	if not p.pinned or p.user_id ~= APP.my_id or APP.me == nil or p.at == nil then
+		return
+	end
+	local me = APP.me
+	me:stop()
+	Dig.clear()
+	local at = p.at
+	local on = Furn.frame(p.on)
+	if on == nil then
+		me:teleport(at[1], at[2], at[3])
+		me.on = nil
+		return
+	end
+	local s = Ships.get(on)
+	if s ~= nil then
+		local x, y, z = Ships.to_world(s, at[1], at[2], at[3])
+		me:teleport(x, y, z)
+		me.on = on
+	end
+end
+
+-- Whether `user_id` is pinned under what they hold.
+function Carry.is_pinned(user_id)
+	if user_id == nil or Carry.pinned == nil then
+		return false
+	end
+	return Carry.pinned[user_id] == true
 end
 
 -- Who's carrying player `user_id`, or nil.

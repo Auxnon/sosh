@@ -112,6 +112,22 @@ function U.trim(s)
 	return s:sub(a, b)
 end
 
+-- Whether `s` has `part` in it, as plain text (no patterns).
+function U.has(s, part)
+	local n = #part
+	if n == 0 then
+		return true
+	end
+	local last = #s - n + 1
+	for i = 1, last do
+		local piece = s:sub(i, i + n - 1)
+		if piece == part then
+			return true
+		end
+	end
+	return false
+end
+
 -- Word-wrap into lines of at most `width` characters. Words longer than a
 -- line are hard-split.
 -- A deep copy of a table of plain values.

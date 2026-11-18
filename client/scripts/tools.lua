@@ -3,7 +3,9 @@
 -- The tool decides what a click on the block under the pointer does:
 --
 --   walk   walk onto it; furniture that holds things, open it (bag.lua);
---          a ship's helm, take it
+--          a crafting station, open its screen (stations.lua); a sheep,
+--          shear it; other furniture, or an old blueprint's scaffolding,
+--          offer to break it for its parts; a ship's helm, take it
 --   dig    queue it to dig into the bag (up to 10; dig.lua walks over to
 --          each and digs it); furniture breaks (some of what it was made
 --          of and all it held come back); scaffolding comes down
@@ -14,8 +16,9 @@
 --   carry  lift a pot, a cow or furniture over your head, and put it down
 --          on a face; heavy furniture needs a second carrier: another
 --          player, or a helper (click one, or press H)
---   craft  lay out a blueprint (Z/X picks it, R turns it), then click its
---          scaffolding to put in the ingredients from the bag
+--
+-- Things are made with the book (O, book.lua) and at stations; furniture
+-- too big for a bag is aimed like the build tool's (Station.placing).
 --
 -- Airships are blocks like any other: walk aboard, build on them, set
 -- furniture down on deck. Every cell a tool aims at is in the world or in a
@@ -23,7 +26,7 @@
 -- ship's helm (B) W/S drive it ahead and astern, A/D turn it, space/C climb
 -- and sink.
 
-TOOLS = { "walk", "dig", "build", "plant", "carry", "craft" }
+TOOLS = { "walk", "dig", "build", "plant", "carry" }
 EMOTE_KEYS = { "7", "8", "9", "0" }
 STEER_HEARTBEAT = 1 -- seconds; restate the wanted velocity this often
 CAM_TURN = 1.8 -- radians a second, Q/E
@@ -31,8 +34,9 @@ DRAG_TURN = 4 -- radians for a drag across the whole screen
 DRAG_TILT = 2
 
 -- WASD / arrows walk relative to the camera (or, at a helm, steer); Q/E
--- turn it; F/G cycle face and pose (G puts down what we carry); 1-6 pick
--- the tool, Z/X what it uses, R turns it; 7-0 emote; I opens the bag; H
+-- turn it; F/G cycle face and pose (G puts down what we carry); 1-5 pick
+-- the tool, Z/X what it uses, R turns it; 7-0 emote; I opens the bag; O
+-- the book; H
 -- asks a helper for a hand; B takes the helm we stand at, or lets go;
 -- Enter opens chat.
 function world_keys(me)
@@ -66,6 +70,10 @@ function world_keys(me)
 	end
 	if key("escape", true) then
 		Bag.close()
+		Station.cancel_placing()
+	end
+	if key("o", true) then
+		Book.toggle()
 	end
 	if key("h", true) then
 		call_nearest_helper(me)
@@ -107,6 +115,13 @@ function world_keys(me)
 			wiggle()
 		end
 		APP.wiggling = pressed
+		return
+	end
+	-- too heavy alone: stuck here until it's shared, put down or broken
+	if Carry.is_pinned(APP.my_id) then
+		if me:driven() then
+			me:stop()
+		end
 		return
 	end
 	if dx == 0 and dy == 0 then
@@ -202,13 +217,6 @@ end
 
 -- Z/X: the next or previous thing for the tool in hand.
 function cycle_pick(d)
-	if APP.tool == "craft" then
-		local n = #Furn.order
-		if n > 0 then
-			APP.craft_i = (APP.craft_i - 1 + d) % n + 1
-		end
-		return
-	end
 	local items = Bag.placeable()
 	if #items == 0 then
 		return
@@ -235,17 +243,6 @@ function pick_build_item(item)
 		APP.build_item = item
 		APP.tool = "build"
 	end
-end
-
--- The blueprint the craft tool lays out.
-function craft_kind()
-	if #Furn.order == 0 then
-		return nil
-	end
-	if APP.craft_i > #Furn.order then
-		APP.craft_i = 1
-	end
-	return Furn.order[APP.craft_i]
 end
 
 -- The footprint of something `kind` at `cell`, turned the way R says.
@@ -301,11 +298,23 @@ function world_pointer(me)
 	local helper = nil
 	local person = nil
 	local use = nil
+	local sheep = nil
+	local station = nil
+	local breakable = nil
+	local site = nil
+	-- heavy furniture being finished: aimed as the build tool aims
+	local placing = Station.placing
+	if placing ~= nil then
+		tool = "place"
+	end
 	if not over_hud then
 		hit = Blocks.raycast(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, 64)
 		local d = 64
 		if hit ~= nil then
 			d = hit.dist
+		end
+		if tool == "walk" then
+			sheep = Flock.under_ray(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, d)
 		end
 		if tool == "carry" and holding == nil then
 			cow = Herd.under_ray(CAM.x, CAM.y, CAM.z, m.vx, m.vy, m.vz, d)
@@ -339,6 +348,17 @@ function world_pointer(me)
 			elseif piece ~= nil and (piece.kind == "bed" or PORTALS[piece.kind]) then
 				use = piece
 				cell = hit.hit
+			elseif piece ~= nil and Recipes.is_station(piece.kind) then
+				station = piece
+				cell = hit.hit
+			elseif piece ~= nil and Recipes.making[piece.kind] ~= nil and not piece.lifted then
+				breakable = piece
+				cell = hit.hit
+			elseif hit.id == SCAFFOLD then
+				site = Furn.site_at(on, hit.hit[1], hit.hit[2], hit.hit[3])
+				if site ~= nil then
+					cell = hit.hit
+				end
 			elseif on ~= nil and hit.id == HELM then
 				helm = true
 				cell = hit.hit
@@ -368,15 +388,15 @@ function world_pointer(me)
 			elseif hit.id == FURNITURE or Carry.can_carry(hit.id) then
 				cell = hit.hit
 			end
-		elseif tool == "craft" then
-			if hit.id == SCAFFOLD then
-				cell = hit.hit
-			else
-				cell = hit.before
-				local kind = craft_kind()
-				ghost = footprint(kind, cell)
-			end
+		elseif tool == "place" then
+			cell = hit.before
+			ghost = footprint(placing.kind, cell)
 		end
+	end
+	if sheep ~= nil then
+		local at = { sheep.x, sheep.y, sheep.z }
+		cell = at
+		on = nil
 	end
 	if cow ~= nil then
 		local at = { cow.x, cow.y, cow.z }
@@ -407,6 +427,10 @@ function world_pointer(me)
 		person = nil
 		box = nil
 		use = nil
+		sheep = nil
+		station = nil
+		breakable = nil
+		site = nil
 		helm = false
 	end
 	if ghost ~= nil and not all_in_reach(me, ghost, on) then
@@ -423,7 +447,8 @@ function world_pointer(me)
 		APP.aim = aim
 	end
 	-- hoisted: a call in the first argument miscompiles (SILT-BUGS.md #1)
-	local spot, spot_on = walk_spot(me, tool, hit, on, box or use, helm)
+	local busy = box or use or station or breakable or site or sheep
+	local spot, spot_on = walk_spot(me, tool, hit, on, busy, helm)
 	Marker.hover(spot, spot_on)
 	if ghost ~= nil then
 		show_cursor(nil)
@@ -447,12 +472,37 @@ function world_pointer(me)
 		pick_up_player(person)
 		return
 	end
+	if sheep ~= nil then
+		shear(sheep)
+		return
+	end
 	if hit == nil then
+		return
+	end
+	if tool == "place" then
+		if cell ~= nil and ghost ~= nil then
+			Station.place_at(cell, on)
+		end
 		return
 	end
 	if tool == "walk" then
 		if box ~= nil then
 			Bag.open_box(box)
+			return
+		end
+		if station ~= nil then
+			Station.open_piece(station)
+			return
+		end
+		if breakable ~= nil then
+			ask_break(breakable)
+			return
+		end
+		if site ~= nil then
+			ask_break_site(site)
+			return
+		end
+		if Carry.is_pinned(APP.my_id) then
 			return
 		end
 		if use ~= nil then
@@ -483,8 +533,6 @@ function world_pointer(me)
 		farm_action(cell)
 	elseif tool == "carry" then
 		carry_action(cell, on)
-	elseif tool == "craft" then
-		craft_action(cell, on, hit.id == SCAFFOLD)
 	elseif tool == "build" then
 		place_action(cell, on)
 	elseif tool == "dig" then
@@ -576,6 +624,19 @@ REASONS = {
 	no_room_in_a_room = "a hyperdoor can't lead anywhere from inside a room",
 	others_holding_it = "someone else has the other end",
 	not_a_door = "that isn't a door",
+	no_station_near = "you're not near the right station",
+	place_or_carry = "it's too big for your bag: build it or carry it",
+	occupied = "something's in the way",
+	bad_stroke = "that stroke didn't read",
+	no_such_step = "nothing's made that way",
+	bad_finish = "build it or carry it",
+	overencumbered = "it's too heavy to move alone",
+	not_empty = "empty it first",
+	nothing_to_break = "there's nothing to break",
+	already_shorn = "that one's already shorn",
+	invalid_target = "that can't be broken",
+	nothing_there = "there's nothing there",
+	too_far = "too far away",
 }
 
 function say_reason(r)
@@ -623,26 +684,123 @@ function place_action(cell, on)
 	end)
 end
 
--- Lay out the blueprint at `cell`, or put ingredients into the one there.
-function craft_action(cell, on, scaffold)
-	local payload = cell_payload(cell, on)
-	if scaffold then
-		act("deposit_action", payload, "build it", function(r)
-			if r.built ~= nil then
-				add_chat(nil, "built!", C_OK)
-			end
-		end)
+-- -- breaking things for their parts (`break_action`): furniture in our
+-- arms, empty furniture in reach, old blueprints. Three quarters of what
+-- went into it comes back, into the bag or a sack at our feet.
+
+-- Ask first: furniture piece `f`.
+function ask_break(f)
+	local data = {}
+	data.furniture = f.id
+	local o = f.origin
+	local x, y, z = Ships.frame_pos(f.on, o[1], o[2], o[3])
+	data.at = nil
+	if x ~= nil then
+		local at = { x, y, z + 0.5 }
+		data.at = at
+	end
+	local name = Recipes.pretty(f.kind)
+	local opts = { "break", "cancel" }
+	Choice.ask("break the " .. name .. " for its parts?", opts, "break", data)
+end
+
+-- An old blueprint (from before recipes): everything put in comes back.
+function ask_break_site(id)
+	local s = Furn.sites[id]
+	local data = {}
+	data.site = id
+	local name = "blueprint"
+	if s ~= nil then
+		name = Recipes.pretty(s.kind) .. " blueprint"
+		local t = s.cs[1]
+		local x, y, z = Ships.frame_pos(s.on, t[1], t[2], t[3])
+		if x ~= nil then
+			local at = { x, y, z + 0.5 }
+			data.at = at
+		end
+	end
+	local opts = { "break", "cancel" }
+	Choice.ask("take the old " .. name .. " down?", opts, "break", data)
+end
+
+-- What's in our arms.
+function ask_break_held()
+	local data = {}
+	local fid = Carry.furniture(APP.my_id)
+	local f = Furn.pieces[fid]
+	local name = "it"
+	if f ~= nil then
+		name = "the " .. Recipes.pretty(f.kind)
+	end
+	local opts = { "break", "cancel" }
+	Choice.ask("break " .. name .. " for its parts?", opts, "break", data)
+end
+
+-- `data`: {furniture} or {site} or neither (what we hold), and where it
+-- is (`at`) for the parts to fly from.
+function break_action(data)
+	local payload = {}
+	if data.furniture ~= nil then
+		payload.furniture = data.furniture
+	elseif data.site ~= nil then
+		payload.site = data.site
+	end
+	APP.breaking = data.at
+	if APP.breaking == nil and APP.me ~= nil then
+		local me = APP.me
+		local at = { me.x, me.y, me.z + 1.6 }
+		APP.breaking = at
+	end
+	act("break_action", payload, "break it", broken)
+end
+
+-- Its parts fly into the bag; what didn't fit is in a sack.
+function broken(r)
+	local list = r.returned or {}
+	local at = APP.breaking
+	local text = ""
+	for i = 1, #list do
+		local it = list[i]
+		local name = Recipes.pretty(it[1])
+		local part = tostring(it[2]) .. " " .. name
+		if text == "" then
+			text = part
+		else
+			text = text .. ", " .. part
+		end
+		if at ~= nil then
+			Fly.launch(it[1], it[2], at[1], at[2], at[3])
+		end
+	end
+	if text == "" then
+		text = "nothing"
+	end
+	local msg = "broken: " .. text .. " back"
+	if r.sack ~= nil then
+		msg = msg .. " (what didn't fit is in a sack at your feet)"
+	end
+	add_chat(nil, msg, C_OK)
+end
+
+-- Shear a sheep in reach: its wool into the bag.
+function shear(sh)
+	if not sh.woolly then
+		add_chat(nil, "that one's shorn: its wool grows back after a while", C_DIM)
 		return
 	end
-	local kind = craft_kind()
-	if kind == nil then
-		return
+	local payload = {}
+	payload.sheep = sh.id
+	local at = { sh.x, sh.y, sh.z + 0.8 }
+	APP.shearing = at
+	act("shear_action", payload, "shear it", sheared)
+end
+
+function sheared(r)
+	local n = r.wool or 0
+	local at = APP.shearing
+	if at ~= nil and n > 0 then
+		Fly.launch("wool", n, at[1], at[2], at[3])
 	end
-	payload.kind = kind
-	payload.rot = APP.rot
-	act("build_action", payload, "lay that out", function(r)
-		add_chat(nil, kind .. " laid out: click it to put in " .. Furn.recipe_text(kind), C_DIM)
-	end)
 end
 
 -- Pick up what's in `cell`, or put down what we hold there (furniture

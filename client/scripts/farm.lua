@@ -1,4 +1,4 @@
--- farm — the server's living world (Sosh.Sim): carrots and cows.
+-- farm — the server's living world (Sosh.Sim): carrots, cows and sheep.
 --
 -- Carrots grow on the server's clock: a `crop` event carries each new stage
 -- (0-3, 3 is ripe; nil means it's gone). A crop sits in the air cell above
@@ -218,4 +218,124 @@ function Herd.moo_bubble(p)
 	gui:rrect(x, y, w, LH + PAD, 4, C_BUBBLE)
 	gui:rect(p[1] - 1, y + LH + PAD, 3, 2, C_BUBBLE)
 	UI.text(text, x + PAD, y + 2, C_BUBBLE_TEXT)
+end
+
+-- -- sheep: wander like cows; shear one (walk tool, in reach) for wool,
+-- which grows back after a while. The snapshot's `sheep` are {id, x, y,
+-- z, heading, woolly}; `sheep` broadcasts are rows like the cows', and
+-- `wool` {id, woolly} says one was shorn or has grown back. On the web
+-- only transforms sync after the frame an entity was made in, so shorn
+-- and woolly are two models, swapped.
+
+Flock = {}
+
+function Flock.init()
+	if Flock.sheep ~= nil then
+		for id, sh in pairs(Flock.sheep) do
+			sh.ent:kill()
+		end
+	end
+	Flock.sheep = {}
+end
+
+function Flock.model(woolly)
+	if woolly then
+		return "sheep"
+	end
+	return "sheep_shorn"
+end
+
+-- One sheep at (x, y, z): new, or already here.
+function Flock.add(id, x, y, z, h, woolly)
+	local sh = Flock.sheep[id]
+	if sh == nil then
+		sh = {}
+		sh.id = id
+		sh.x = x
+		sh.y = y
+		sh.z = z
+		sh.h = h
+		sh.woolly = woolly
+		local model = Flock.model(woolly)
+		local ent = make(model, x, y, z, 1)
+		sh.ent = ent
+		Flock.sheep[id] = sh
+	end
+	sh.sx = x
+	sh.sy = y
+	sh.sz = z
+	sh.sh = h
+	return sh
+end
+
+-- The snapshot's list.
+function Flock.sync(list)
+	Flock.init()
+	for i = 1, #list do
+		local s = list[i]
+		Flock.add(s.id, s.x, s.y, s.z, s.heading or 0, s.woolly ~= false)
+	end
+end
+
+-- A broadcast row: {id, x, y, z, heading}. One we've not seen is woolly
+-- until a `wool` says otherwise.
+function Flock.put(row)
+	Flock.add(row[1], row[2], row[3], row[4], row[5], true)
+end
+
+-- `wool`: shorn, or grown back.
+function Flock.wool(p)
+	local sh = Flock.sheep[p.id]
+	if sh == nil then
+		return
+	end
+	local woolly = p.woolly == true
+	if sh.woolly == woolly then
+		return
+	end
+	sh.woolly = woolly
+	sh.ent:kill()
+	local model = Flock.model(woolly)
+	local ent = make(model, sh.x, sh.y, sh.z, 1)
+	sh.ent = ent
+end
+
+function Flock.update()
+	local k = U.rate(COW_EASE, U.dt)
+	for id, sh in pairs(Flock.sheep) do
+		sh.x = U.lerp(sh.x, sh.sx, k)
+		sh.y = U.lerp(sh.y, sh.sy, k)
+		sh.z = U.lerp(sh.z, sh.sz, k)
+		sh.h = sh.h + U.angle_diff(sh.h, sh.sh) * k
+		local e = sh.ent
+		e.x = sh.x
+		e.y = sh.y
+		e.z = sh.z
+		e.rz = sh.h
+	end
+end
+
+-- The nearest sheep the ray passes through within max_dist, or nil.
+function Flock.under_ray(ox, oy, oz, dx, dy, dz, max_dist)
+	local l = sqrt(dx * dx + dy * dy + dz * dz)
+	if l < 0.0001 then
+		return nil
+	end
+	dx = dx / l
+	dy = dy / l
+	dz = dz / l
+	local best = nil
+	local best_t = max_dist
+	for id, sh in pairs(Flock.sheep) do
+		local cx = sh.x - ox
+		local cy = sh.y - oy
+		local cz = sh.z + 0.55 - oz
+		local t = cx * dx + cy * dy + cz * dz
+		local miss = cx * cx + cy * cy + cz * cz - t * t
+		if t > 0 and t < best_t and miss < 0.3 then
+			best = sh
+			best_t = t
+		end
+	end
+	return best
 end

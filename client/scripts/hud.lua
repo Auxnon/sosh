@@ -3,12 +3,12 @@
 
 HUD_BTN_W = 72
 HUD_BTN_H = 18
--- right-hand column: emote (a dropdown of them), look, pose, bag, chat,
--- home (in the app, whose own screens do chat, looks, the bag and going
--- home: emote, pose)
-HUD_ROWS = 6
-HUD_ROWS_APP = 2
-HINT = "enter: chat  wasd: walk  1-6: tool  z/x: pick  r: turn  i: bag  b: helm  h: helper  f: look  g: pose/drop  7-0: emote  q/e: look"
+-- right-hand column: emote (a dropdown of them), the book, look, pose,
+-- bag, chat, home (in the app, whose own screens do chat, looks, the bag
+-- and going home: emote, the book, pose); and holding furniture, break
+HUD_ROWS = 7
+HUD_ROWS_APP = 3
+HINT = "enter: chat  wasd: walk  1-5: tool  z/x: pick  r: turn  i: bag  o: book  b: helm  h: helper  f: look  g: pose/drop  7-0: emote  q/e: look"
 HINT_HELM = "at the helm: w/s ahead/astern  a/d turn  space/c up/down  b: let go"
 TOOL_W = 60
 PICK_W = 72
@@ -29,11 +29,6 @@ function picker_items()
 				chosen = i
 			end
 		end
-	elseif APP.tool == "craft" then
-		for i = 1, #Furn.order do
-			table.insert(out, Furn.order[i])
-		end
-		chosen = APP.craft_i
 	end
 	return out, chosen
 end
@@ -42,8 +37,6 @@ function picker_pick(i)
 	if APP.tool == "build" then
 		local items = Bag.placeable()
 		APP.build_item = items[i]
-	else
-		APP.craft_i = i
 	end
 end
 
@@ -122,6 +115,9 @@ function hud_layout()
 	if APP.embedded then
 		count = HUD_ROWS_APP
 	end
+	if Carry.furniture(APP.my_id) ~= nil then
+		count = count + 1
+	end
 	if rows > count then
 		rows = count
 	end
@@ -156,6 +152,13 @@ function hud_layout()
 end
 
 function hud_hit(x, y)
+	-- the book open over the world has it all
+	if Book.is_up() then
+		return true
+	end
+	if Choice.hit(x, y) or Station.over(x, y) or Heavy.hit(x, y) then
+		return true
+	end
 	local L = hud_layout()
 	if L.pane_w > 0 and x >= VIEW_W then
 		return true
@@ -260,8 +263,10 @@ end
 
 function draw_hud()
 	local L = hud_layout()
-	-- world overlays first so panels sit on top of them
-	draw_world_labels()
+	-- world overlays first so panels sit on top of them (not over the book)
+	if not Book.is_up() then
+		draw_world_labels()
+	end
 
 	-- top strip: connection, which universe, who's here
 	local online = #APP.order
@@ -295,19 +300,37 @@ function draw_hud()
 		UI.text(edge, ex, L.top_h + PAD * 3, C_ACCENT)
 	end
 
-	if L.pane_w > 0 then
+	-- the book open: only the book (and its own buttons, book.lua)
+	local book = Book.is_up()
+	if book then
+		L.pane_w = 0
+	elseif L.pane_w > 0 then
 		Pane.draw(L.pane_w)
 	elseif not APP.embedded then
 		draw_chat(L)
 	end
-	if APP.me ~= nil then
+	if APP.me ~= nil and not book then
 		draw_toolbar(L)
 		draw_buttons(L)
+		Station.draw(L)
 		Bag.draw(L.panel_bottom)
-		if L.hint and not APP.typing then
+		Heavy.draw(L)
+		if Station.placing ~= nil then
+			local kname = Recipes.pretty(Station.placing.kind)
+			local note = "click where to build the " .. kname .. "  (r: turn, esc: never mind)"
+			local nw = UI.text_w(note) + PAD * 2
+			local nx = flr((VIEW_W - nw) / 2)
+			gui:rrect(nx, L.top_h + PAD * 2, nw, LH + PAD, 3, C_GLASS)
+			UI.text(note, nx + PAD, L.top_h + PAD * 3, C_ACCENT)
+		elseif L.hint and not APP.typing then
 			UI.text(L.hint_text, PAD * 2, L.chat_bottom + PAD + 1, "FFFFFF70")
 		end
+		Choice.draw()
+	elseif book then
+		Choice.draw()
 	end
+	Book.draw_overlay()
+	Fly.draw_labels()
 end
 
 -- Flying near the edge of the universe: what's past it.
@@ -386,14 +409,6 @@ function draw_toolbar(L)
 		end
 		x = x + L.pick_bw + PAD
 	end
-	-- what the chosen blueprint takes
-	if APP.tool == "craft" then
-		local kind = craft_kind()
-		if kind ~= nil then
-			local text = kind .. ": " .. Furn.recipe_text(kind) .. "  (r: turn)"
-			UI.text(text, L.pick_x, L.pick_y - LH - 2, C_DIM)
-		end
-	end
 end
 
 -- The next place in the button column: down, then on to the next column.
@@ -424,6 +439,8 @@ function draw_buttons(L)
 		APP.emotes_open = false
 	end
 	hud_next(L, P)
+	draw_book_button(P.x, P.y)
+	hud_next(L, P)
 	if not APP.embedded then
 		if UI.button("look", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 			Creator.open()
@@ -439,12 +456,26 @@ function draw_buttons(L)
 	if UI.button(pose_label, P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
 		pose_pressed()
 	end
+	-- something in our arms that isn't going anywhere: break it for parts
+	if Carry.furniture(APP.my_id) ~= nil then
+		hud_next(L, P)
+		if UI.button("break", P.x, P.y, HUD_BTN_W, HUD_BTN_H) then
+			ask_break_held()
+		end
+	end
+	APP.bag_btn = nil
 	if not APP.embedded then
 		hud_next(L, P)
 		local btone = nil
 		if Bag.open then
 			btone = "on"
 		end
+		local bb = {}
+		bb.x = P.x
+		bb.y = P.y
+		bb.w = HUD_BTN_W
+		bb.h = HUD_BTN_H
+		APP.bag_btn = bb
 		if UI.button("i bag", P.x, P.y, HUD_BTN_W, HUD_BTN_H, btone) then
 			if Bag.open then
 				Bag.close()
@@ -610,5 +641,183 @@ function draw_chat(L)
 			shown = shown .. "_"
 		end
 		UI.text(shown, PAD * 2, y + PAD + 1, C_INK)
+	end
+end
+
+-- The book's button: a plastic button like the rest, with a little open
+-- book drawn on it.
+function draw_book_button(x, y)
+	local tone = nil
+	if Book.is_up() then
+		tone = "on"
+	end
+	local bb = {}
+	bb.x = x
+	bb.y = y
+	bb.w = HUD_BTN_W
+	bb.h = HUD_BTN_H
+	APP.book_btn = bb
+	local hit = UI.button("   book", x, y, HUD_BTN_W, HUD_BTN_H, tone)
+	local dy = 0
+	if UI.inside(x, y, HUD_BTN_W, HUD_BTN_H) and UI.mouse.m1 then
+		dy = 1
+	end
+	local gx = x + 10
+	local gy = y + 4 + dy
+	gui:rect(gx - 1, gy + 1, 15, 10, "7A3E2A")
+	gui:rect(gx, gy, 6, 9, C_PAPER)
+	gui:rect(gx + 7, gy, 6, 9, C_PAPER)
+	gui:rect(gx + 1, gy + 2, 4, 1, C_INK_DIM)
+	gui:rect(gx + 1, gy + 4, 4, 1, C_INK_DIM)
+	gui:rect(gx + 8, gy + 2, 4, 1, C_INK_DIM)
+	gui:rect(gx + 8, gy + 4, 4, 1, C_INK_DIM)
+	if hit then
+		Book.toggle()
+	end
+end
+
+-- -- a question with buttons: how to finish heavy furniture, whether to
+-- break something
+
+Choice = {}
+
+-- Ask `title`, with buttons `opts`; the one pressed goes to choice_made
+-- with `kind` and `data`.
+function Choice.ask(title, opts, kind, data)
+	local c = {}
+	c.title = title
+	c.opts = opts
+	c.kind = kind
+	c.data = data
+	Choice.cur = c
+end
+
+function Choice.box()
+	local c = Choice.cur
+	local w = UI.text_w(c.title) + PAD * 4
+	local bw = 0
+	for i = 1, #c.opts do
+		bw = bw + UI.text_w(c.opts[i]) + PAD * 3
+	end
+	if bw + PAD * 2 > w then
+		w = bw + PAD * 2
+	end
+	if w > VIEW_W - PAD * 4 then
+		w = VIEW_W - PAD * 4
+	end
+	local B = {}
+	B.w = w
+	B.h = LH + 14 + PAD * 4
+	B.x = flr((VIEW_W - w) / 2)
+	B.y = flr(gui.h / 3)
+	return B
+end
+
+function Choice.hit(x, y)
+	if Choice.cur == nil then
+		return false
+	end
+	local B = Choice.box()
+	return x >= B.x and x < B.x + B.w and y >= B.y and y < B.y + B.h
+end
+
+function Choice.draw()
+	local c = Choice.cur
+	if c == nil then
+		return
+	end
+	if key("escape", true) then
+		Choice.cur = nil
+		choice_made(c.kind, "cancel", c.data)
+		return
+	end
+	local B = Choice.box()
+	UI.panel(B.x, B.y, B.w, B.h)
+	UI.text(c.title, B.x + PAD * 2, B.y + PAD * 2, C_TEXT)
+	local bx = B.x + PAD
+	local by = B.y + LH + PAD * 3
+	local chosen = nil
+	for i = 1, #c.opts do
+		local o = c.opts[i]
+		local ow = UI.text_w(o) + PAD * 2
+		local tone = nil
+		if i == 1 then
+			tone = "go"
+		end
+		if UI.button(o, bx, by, ow, 14, tone) then
+			chosen = o
+		end
+		bx = bx + ow + PAD
+	end
+	if chosen ~= nil then
+		Choice.cur = nil
+		choice_made(c.kind, chosen, c.data)
+	end
+end
+
+function choice_made(kind, opt, data)
+	if kind == "finish" then
+		if opt == "cancel" then
+			-- the step from the book: back to it
+			if data.from ~= nil and Station.cur == nil then
+				Book.reopen()
+			end
+			return
+		end
+		Station.finish_choice(opt, data)
+	elseif kind == "break" then
+		if opt == "break" then
+			break_action(data)
+		end
+	end
+end
+
+-- -- overencumbered: holding furniture that takes more carriers than it
+-- has, we're stuck where we stand (`encumbered`, carry.lua)
+
+Heavy = {}
+HEAVY_TITLE = "too heavy to carry alone"
+HEAVY_NOTE = "wait for help, or:"
+
+function Heavy.box(L)
+	local B = {}
+	B.w = UI.text_w(HEAVY_TITLE) + PAD * 4
+	local tw = UI.text_w(HEAVY_NOTE) + PAD * 4
+	if tw > B.w then
+		B.w = tw
+	end
+	if B.w > VIEW_W - PAD * 4 then
+		B.w = VIEW_W - PAD * 4
+	end
+	B.h = LH * 2 + 14 + PAD * 5
+	B.x = flr((VIEW_W - B.w) / 2)
+	B.y = L.top_h + PAD * 2 + LH + PAD * 3
+	return B
+end
+
+function Heavy.hit(x, y)
+	if APP.my_id == nil or not Carry.is_pinned(APP.my_id) then
+		return false
+	end
+	local L = hud_layout()
+	local B = Heavy.box(L)
+	return x >= B.x and x < B.x + B.w and y >= B.y and y < B.y + B.h
+end
+
+function Heavy.draw(L)
+	if APP.my_id == nil or not Carry.is_pinned(APP.my_id) then
+		return
+	end
+	local B = Heavy.box(L)
+	UI.panel(B.x, B.y, B.w, B.h)
+	UI.text(HEAVY_TITLE, B.x + PAD * 2, B.y + PAD * 2, C_ACCENT)
+	UI.text(HEAVY_NOTE, B.x + PAD * 2, B.y + PAD * 2 + LH, C_DIM)
+	local by = B.y + LH * 2 + PAD * 3
+	if UI.button("put down", B.x + PAD * 2, by, 72, 14, "go") then
+		put_down_ahead()
+	end
+	if UI.button("break", B.x + PAD * 3 + 72, by, 56, 14) then
+		local what = {}
+		break_action(what)
 	end
 end
