@@ -71,19 +71,26 @@ Added by the user after those answers (2026-11-17):
 10. **Unfinished blueprints can be broken for their raw materials.** This
     settles what the saved scaffolds turn into when the system is retired.
 
+11. **Stations are still about being near them.** Walk too far from one and
+    its step can't be done; access is cleared on leaving the world, so the
+    standalone book does only hand steps and shows station steps as waiting.
+12. **The server validates every result.** The client can't cheat a step: the
+    server checks the ingredients, the station and the gesture, and decides
+    what comes out.
+13. **Breaking gives back three quarters** of each raw material, rounded
+    down, at least one.
+14. **A good line wastes less.** The client sends the stroke it drew; the
+    server scores it and a better stroke yields more. A gesture never fails
+    outright. Suggested rule: a step's listed output is the best case, a poor
+    stroke gives as little as half of it, and never less than one.
+
 Not yet decided:
-- Whether station access lasts once the player has left the world. Suggested:
-  it is cleared when they leave, so the standalone book shows station steps as
-  waiting and does only hand steps.
-- How much "most" is when furniture is broken. Suggested: three quarters of
-  each raw material, rounded down, at least one.
 - Which recipe steps are hand steps. None of the example steps are; a hand
   step would be a recipe step with no station kind.
 
 Smaller points to settle while building:
 - What the spinning wheel, loom and veneer gestures are. Suggested: circle the
   wheel, alternate swipes across the loom, one long stroke along the block.
-- Whether a gesture can fail, or is only for show.
 - How many history entries to keep.
 - Whether other players see you crafting.
 
@@ -185,10 +192,12 @@ Smaller points to settle while building:
   kind names; a list reads better than a bitmask and costs nothing at this
   size) and pushes it on `user:<id>`. It is emptied when they leave the
   universe.
-- **The crafting action:** `craft(step)` checks the step's station kind
-  against the player's recorded access, then takes the inputs and adds the
-  outputs in one `change_bag`. No station id is sent. Errors:
-  `missing_ingredients`, `no_station_near`, `bag_full`.
+- **The crafting action:** `craft(step, stroke)` checks the step's station
+  kind against the player's recorded access, scores the stroke (a list of
+  points in the station's drawing area, 0..1 each way) against the step's
+  gesture, then takes the inputs and adds the scored outputs in one
+  `change_bag`. No station id is sent. Errors: `missing_ingredients`,
+  `no_station_near`, `bag_full`.
 - **The last step of a furniture recipe:**
   - A kind that packs into a bag (`itemizable`) is added to the bag like any
     other output.
