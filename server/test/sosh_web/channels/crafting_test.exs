@@ -150,4 +150,9 @@ defmodule SoshWeb.CraftingTest do
     assert_push "crafting", _
     refute_push "crafting", _
   end
+  test "the catalog is there outside a world" do
+    {ch, _} = signed_in("cataloguer")
+    ref = push(ch, "catalog", %{})
+    assert_reply ref, :ok, %{catalog: %{recipes: [_ | _], stations: [_ | _]}}
+  end
 end

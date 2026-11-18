@@ -245,6 +245,8 @@ looks, the way home and the bag, which the app has as its own screens). The clie
   (replies `crafting`, the recipes in progress as `{recipe: {step, at}}`, and
   `stations`, the station kinds you're in range of), `set_crafting`
   (`crafting`: that map; replies the cleaned one, at most 20 recipes),
+  `catalog` (replies `catalog`, the same one an `actions:gx,gy` join gives:
+  for the book outside a world),
   `craft` (`step`: a recipe step done outside any world, a hand step or
   one at a station you're in range of in one, with no stroke; replies
   what came of it as `craft_action` does, and your `bag`; heavy furniture

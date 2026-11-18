@@ -223,6 +223,17 @@ function Recipes.fetch()
 		return
 	end
 	PHX:push(USER, "crafting", {}, Recipes.fetched)
+	-- outside a world nothing else brings the catalog (the book on its own)
+	if not Recipes.have_catalog then
+		PHX:push(USER, "catalog", {}, Recipes.fetched_catalog)
+	end
+end
+
+function Recipes.fetched_catalog(status, r)
+	if status ~= "ok" or r == nil or Recipes.have_catalog then
+		return
+	end
+	Recipes.set_catalog(r.catalog)
 end
 
 function Recipes.fetched(status, r)

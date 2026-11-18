@@ -153,6 +153,10 @@ defmodule SoshWeb.UserChannel do
   defp answer("crafting", _, me, _),
     do: {:ok, %{crafting: Sosh.Players.crafting(me.handle), stations: Sosh.Players.stations(me.handle)}}
 
+  # What can be made and how (the catalog an `actions:gx,gy` join gives),
+  # for a client that isn't in a world: the standalone book.
+  defp answer("catalog", _, _, _), do: {:ok, %{catalog: Sosh.Universe.catalog()}}
+
   defp answer("set_crafting", %{"crafting" => c}, me, _) when is_map(c),
     do: wrap(Sosh.Players.set_crafting(me.handle, c), &%{crafting: &1})
 
