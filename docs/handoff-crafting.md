@@ -247,8 +247,9 @@ Smaller points to settle while building:
     opened by hand stays open.
   - Items are dragged in from the bag panel (`bag.lua` already has dragging).
   - The result flies to the bag as a 3D item arcing toward the bag button.
-- **Proximity:** a station only works within `REACH` of its furniture
-  (`Furn.pieces`, `in_reach`).
+- **Proximity:** opening a station by hand needs it within reach
+  (`Furn.pieces`, `in_reach`; twice that in a pocket room), but whether a step
+  can be done is the server's `stations`.
 - **In-engine icon:** a small book button on the HUD (`hud.lua`), drawn in the
   same style, that opens the book over the world.
 - **Book mode:** a `book` screen with no world, entered by `hook("mode",
