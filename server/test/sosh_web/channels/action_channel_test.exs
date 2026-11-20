@@ -85,7 +85,7 @@ defmodule SoshWeb.ActionChannelTest do
     assert %{station: true, itemizable: true} = Enum.find(kinds, &(&1.name == "bench"))
     assert "loom" in reply.catalog.stations
 
-    assert %{inputs: [["wool", 2]], outputs: [["yarn", 1]], station: "spinning_wheel", gesture: "spin"} =
+    assert %{inputs: [["wool", 4]], outputs: [["yarn", 2]], station: "spinning_wheel", gesture: "spin"} =
              Enum.find(reply.catalog.recipes, &(&1.id == "yarn"))
 
     assert {:error, %{reason: "elsewhere", universe: [0, 0]}} =

@@ -70,7 +70,7 @@ defmodule SoshWeb.WorkshopTest do
 
   describe "stations" do
     test "a station step goes by the server's record, never the client's say", %{actions: actions} do
-      give("maker", "plank", 3)
+      give("maker", "plank", 6)
       ref = push(actions, "craft_action", %{"step" => "post", "stroke" => @cut})
       assert_reply(ref, :error, %{reason: "no_station_near"})
 
@@ -94,17 +94,19 @@ defmodule SoshWeb.WorkshopTest do
       refute_received %Broadcast{topic: "actions:0,0", event: "stations"}
 
       ref = push(actions, "craft_action", %{"step" => "post", "stroke" => @cut})
-      assert_reply(ref, :ok, %{step: "post", item: "post", n: 2, how: "bag", furniture: nil, bag: bag})
-      assert count(bag, "post") == 2
-      assert count(bag, "plank") == 2
-
-      # a poor cut wastes some, and no stroke at all is the least, never none
-      ref = push(actions, "craft_action", %{"step" => "post", "stroke" => @poor})
-      assert_reply(ref, :ok, %{n: 1, score: score})
-      assert score < 0.5
-      ref = push(actions, "craft_action", %{"step" => "post"})
-      assert_reply(ref, :ok, %{n: 1, score: +0.0, bag: bag})
+      assert_reply(ref, :ok, %{step: "post", item: "post", n: 4, how: "bag", furniture: nil, bag: bag})
       assert count(bag, "post") == 4
+      assert count(bag, "plank") == 4
+
+      # a poor cut wastes some, and no stroke at all is the least (half of
+      # the batch), never none
+      ref = push(actions, "craft_action", %{"step" => "post", "stroke" => @poor})
+      assert_reply(ref, :ok, %{n: poor_n, score: score})
+      assert score < 0.5
+      assert poor_n in 2..3
+      ref = push(actions, "craft_action", %{"step" => "post"})
+      assert_reply(ref, :ok, %{n: 2, score: +0.0, bag: bag})
+      assert count(bag, "post") == 4 + poor_n + 2
       assert count(bag, "plank") == 0
 
       ref = push(actions, "craft_action", %{"step" => "post", "stroke" => @cut})
@@ -203,7 +205,7 @@ defmodule SoshWeb.WorkshopTest do
       assert_reply(ref, :error, %{reason: "place_or_carry"})
       assert count(Players.bag_json(Players.bag("hander")), "cloth") == 3
       ref = push(ch, "craft", %{"step" => "post"})
-      assert_reply(ref, :ok, %{item: "post", n: 1})
+      assert_reply(ref, :ok, %{item: "post", n: 2})
 
       Players.put_bag("hander", List.duplicate(nil, 16))
       ref = push(ch, "craft", %{"step" => "veneer"})

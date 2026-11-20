@@ -1182,24 +1182,24 @@ fn stations_in_reach_are_noted_on_tick_and_only_when_they_change() {
 fn out_of_range_a_station_step_is_refused() {
     let mut s = flat();
     build(&mut s, "bench", 0, (4, 4, 0), 0);
-    let mut bag = bag_with(&[("plank", 2)]);
+    let mut bag = bag_with(&[("plank", 4)]);
     s.tick(100, &[p(14.0, 14.0, 0.0)]);
     let near = s.access("p");
     assert_eq!(
         s.craft("p", "post", &clean_cut(), &near, None, &mut bag),
         Err("no_station_near")
     );
-    assert_eq!(count(&bag, "plank"), 2, "nothing taken");
+    assert_eq!(count(&bag, "plank"), 4, "nothing taken");
     s.tick(200, &[p(4.0, 3.0, 0.0)]);
     let near = s.access("p");
     let c = s.craft("p", "post", &clean_cut(), &near, None, &mut bag).unwrap();
-    assert_eq!((c.made.item, c.made.n, c.furniture), ("post", 2, None));
-    assert_eq!(count(&bag, "post"), 2);
+    assert_eq!((c.made.item, c.made.n, c.furniture), ("post", 4, None));
+    assert_eq!(count(&bag, "post"), 4);
     // a stroke along the plank rather than across it still cuts, wastefully
     let along: Vec<(f64, f64)> = (0..=10).map(|i| (i as f64 / 10.0, 0.5)).collect();
     let c = s.craft("p", "post", &along, &near, None, &mut bag).unwrap();
-    assert_eq!((c.made.n, c.made.score), (1, 0.0));
-    assert_eq!(count(&bag, "post"), 3);
+    assert_eq!((c.made.n, c.made.score), (2, 0.0));
+    assert_eq!(count(&bag, "post"), 6);
     assert_eq!(count(&bag, "plank"), 0);
     assert_eq!(
         s.craft("p", "post", &clean_cut(), &near, None, &mut bag),

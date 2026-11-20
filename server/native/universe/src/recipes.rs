@@ -4,9 +4,10 @@
 //! furniture the player has to be near) or by hand (no station: it can be
 //! done anywhere, even outside a world). Each step has a gesture: what the
 //! player draws at the station. The stroke they drew is scored here, and a
-//! better stroke yields more: the listed output is the best case, a poor
-//! stroke gives as little as half of it, never less than one. A gesture
-//! never fails outright, and only the server decides what came out.
+//! better stroke yields more: the listed output is the best case (a batch
+//! for the gesture steps, 4 planks or 2 yarn at a time), a poor stroke gives
+//! as little as half of it, never less than one. A gesture never fails
+//! outright, and only the server decides what came out.
 //!
 //! Each item is made by one step at most, named after it; anything no step
 //! makes (blocks, wool, carrots) is a raw material. Breaking something made
@@ -92,10 +93,11 @@ const BENCH: Option<&str> = Some("bench");
 
 pub const STEPS: &[Step] = &[
     // parts
-    step("plank", &[("wood", 1)], 1, Some("veneer"), Veneer),
-    step("post", &[("plank", 1)], 2, BENCH, Saw),
-    step("yarn", &[("wool", 2)], 1, Some("spinning_wheel"), Spin),
-    step("cloth", &[("yarn", 2)], 1, Some("loom"), Weave),
+    // gestures make batches: a poor stroke loses some, a good one nothing
+    step("plank", &[("wood", 4)], 4, Some("veneer"), Veneer),
+    step("post", &[("plank", 2)], 4, BENCH, Saw),
+    step("yarn", &[("wool", 4)], 2, Some("spinning_wheel"), Spin),
+    step("cloth", &[("yarn", 4)], 2, Some("loom"), Weave),
     // stations: the veneer from raw blocks by hand, so anyone can start;
     // then the bench by hand from its planks; the rest at the bench
     step("veneer", &[("wood", 4), ("stone", 2)], 1, None, Assemble),
@@ -388,7 +390,8 @@ pub fn outcome(s: &'static Step, stroke: &[(f64, f64)]) -> Made {
 }
 
 /// The raw materials one `item` comes to, its recipe expanded all the way
-/// down (at the best case's yields); nothing for a raw material itself.
+/// down (per unit at the best case's yields, so a batch's size doesn't
+/// matter, only its ratio); nothing for a raw material itself.
 pub fn raw(item: &str) -> Vec<(&'static str, f64)> {
     let mut out = Vec::new();
     if let Some(s) = making(item) {
@@ -457,6 +460,9 @@ mod tests {
         // half a plank of wood is still one back
         assert_eq!(salvage("stool"), vec![("wood", 1)]);
         assert!(salvage("sack").is_empty());
+        // per unit at the best case, whatever the batch: a post is half a plank
+        assert_eq!(raw("post"), vec![("wood", 0.5)]);
+        assert_eq!(raw("cloth"), vec![("wool", 4.0)]);
         assert!(raw("wood").is_empty());
     }
 
@@ -470,6 +476,41 @@ mod tests {
         assert_eq!(yield_of(10, 0.0), 5);
         assert_eq!(yield_of(10, 1.0), 10);
         assert_eq!(yield_of(10, 7.0), 10);
+    }
+
+    #[test]
+    fn a_batch_step_gives_its_whole_batch_on_a_clean_stroke_and_less_on_a_bad_one() {
+        let clean_line = line_of((0.5, 0.0), (0.5, 1.0), 20);
+        let veneer_line = line_of((0.05, 0.5), (0.95, 0.5), 20);
+        let circle: Vec<(f64, f64)> = (0..=48)
+            .map(|i| {
+                let a = i as f64 / 48.0 * std::f64::consts::TAU;
+                (0.5 + 0.3 * a.cos(), 0.5 + 0.3 * a.sin())
+            })
+            .collect();
+        let mut four = Vec::new();
+        for k in 0..4 {
+            let (a, b) = if k % 2 == 0 { (0.1, 0.9) } else { (0.9, 0.1) };
+            four.extend(line_of((a, 0.2 + k as f64 * 0.2), (b, 0.2 + k as f64 * 0.2), 10));
+        }
+        let scribble = line_of((0.5, 0.5), (0.52, 0.5), 5);
+        let cases: [(&str, u16, &[(f64, f64)]); 4] = [
+            ("plank", 4, &veneer_line),
+            ("post", 4, &clean_line),
+            ("yarn", 2, &circle),
+            ("cloth", 2, &four),
+        ];
+        for (id, n, clean) in cases {
+            let s = find(id).unwrap();
+            assert_eq!(s.output.1, n, "{id}");
+            let good = outcome(s, clean);
+            assert_eq!(good.n, n, "{id} clean: {}", good.score);
+            let bad = outcome(s, &scribble);
+            assert!(bad.n < n && bad.n >= n.div_ceil(2) && bad.n >= 1, "{id} bad: {}", bad.n);
+        }
+        // a middling stroke of four still gives three
+        assert_eq!(yield_of(4, 0.5), 3);
+        assert_eq!(yield_of(4, 0.2), 2);
     }
 
     fn line_of(a: (f64, f64), b: (f64, f64), n: usize) -> Vec<(f64, f64)> {
@@ -568,19 +609,19 @@ mod tests {
 
     #[test]
     fn a_station_step_needs_its_station() {
-        let mut b = bag(&[("plank", 3)]);
+        let mut b = bag(&[("plank", 6)]);
         let cut = line_of((0.5, 0.0), (0.5, 1.0), 10);
         assert_eq!(craft("post", &cut, &[], &mut b), Err("no_station_near"));
         assert_eq!(craft("post", &cut, &["veneer"], &mut b), Err("no_station_near"));
         let made = craft("post", &cut, &["bench"], &mut b).unwrap();
-        assert_eq!(made.n, 2);
-        assert_eq!(items::count(&b, "post"), 2);
+        assert_eq!(made.n, 4);
+        assert_eq!(items::count(&b, "post"), 4);
         // a poor cut wastes some
         let poor = line_of((0.1, 0.4), (0.9, 0.6), 10);
         let made = craft("post", &poor, &["bench"], &mut b).unwrap();
-        assert_eq!(made.n, 1);
-        assert_eq!(items::count(&b, "post"), 3);
-        assert_eq!(items::count(&b, "plank"), 1);
+        assert_eq!(made.n, 2);
+        assert_eq!(items::count(&b, "post"), 6);
+        assert_eq!(items::count(&b, "plank"), 2);
     }
 
     #[test]
@@ -595,13 +636,13 @@ mod tests {
 
     #[test]
     fn a_full_bag_takes_nothing() {
-        let mut b = bag(&[("wool", 2)]);
+        let mut b = bag(&[("wool", 4)]);
         for s in b.iter_mut().skip(1) {
             *s = Some(items::Stack { item: "dirt".into(), n: 64 });
         }
         // the wool's slot frees up for the yarn
         assert!(craft("yarn", &[], &["spinning_wheel"], &mut b).is_ok());
-        let mut b = bag(&[("wool", 4)]);
+        let mut b = bag(&[("wool", 8)]);
         for s in b.iter_mut().skip(1) {
             *s = Some(items::Stack { item: "dirt".into(), n: 64 });
         }

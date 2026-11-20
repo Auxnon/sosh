@@ -107,6 +107,14 @@ Added by the user after those answers (2026-11-17):
     server scores it and a better stroke yields more. A gesture never fails
     outright. Suggested rule: a step's listed output is the best case, a poor
     stroke gives as little as half of it, and never less than one.
+    **Update, 2026-11-20:** the gesture steps now make batches, so a poor
+    stroke loses some but the system stays forgiving, and a good line
+    wastes less: `wood 4 → plank 4`, `plank 2 → post 4`, `wool 4 → yarn 2`,
+    `yarn 4 → cloth 2` (the per-unit ratios are unchanged). With
+    `round(n * (0.5 + 0.5 * score))` a batch of 4 gives 4 for a good stroke
+    (score 0.75 up), 3 for a middling one and 2 at worst; a batch of 2
+    loses one only below 0.5. Breaking still works per unit at the best
+    case, so a bed is still 3 wood and 12 wool raw.
 
 Not yet decided:
 - Which recipe steps are hand steps. None of the example steps are; a hand
@@ -204,8 +212,8 @@ Smaller points to settle while building:
 - **Items:** a new `recipes.rs` with the new items: plank, post, wool, yarn,
   cloth sheet. Each recipe step has inputs, outputs, the station kind it needs
   (none for a hand step), and the tool or gesture name.
-  - Example steps: `wood 1 → plank 1` (veneer), `plank 1 → post 2` (bench,
-    saw), `wool 2 → yarn 1` (spinning wheel), `yarn 2 → sheet 1` (loom),
+  - Example steps: `wood 4 → plank 4` (veneer), `plank 2 → post 4` (bench,
+    saw), `wool 4 → yarn 2` (spinning wheel), `yarn 4 → sheet 2` (loom),
     `plank 1 + post 4 + sheet 3 → bed` (bench, assemble).
 - **Stations:** new furniture kinds (bench, veneer, spinning wheel, loom).
   Each has its own recipe, so it can be made from simple parts.
