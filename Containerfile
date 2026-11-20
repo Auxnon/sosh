@@ -9,7 +9,7 @@
 # with .github/workflows/release.yml.
 
 ARG P64_REPO=https://github.com/Auxnon/Petrichor64.git
-ARG P64_REF=db2792e6ca73b92f8a0d6e1990916bf9a6809201
+ARG P64_REF=18cf4938b42c6b836df6ca3a3f56f2699e73f38a
 
 # --- 1. web engine + game.game.png ------------------------------------------
 # trixie: trunk's prebuilt arm64 wasm-bindgen needs glibc 2.38+ (bookworm has 2.36)
