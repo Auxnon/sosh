@@ -4,10 +4,7 @@ import android.annotation.SuppressLint
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.ViewGroup
-import android.webkit.WebChromeClient
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +39,9 @@ import kotlinx.coroutines.delay
  * world walks there and dragging it turns the camera; a controller works
  * too (`Gamepad`).
  *
+ * Its page tells the app when the crafting book opens or closes (`SoshHost`,
+ * client/web/bridge.js): `book` says so, and the search field sits over it.
+ *
  * It stays loaded while it's slid away (`shown` false), only paused, so
  * sliding it back is instant.
  *
@@ -58,7 +58,7 @@ import kotlinx.coroutines.delay
  */
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
-fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier = Modifier) {
+fun WorldPane(app: AppState, serverId: Long, shown: Boolean, book: BookState, modifier: Modifier = Modifier) {
     val token = app.token ?: return
     var web by remember { mutableStateOf<WebView?>(null) }
     var size by remember { mutableStateOf(IntSize.Zero) }
@@ -104,6 +104,7 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier 
     DisposableEffect(Unit) {
         onDispose {
             web?.let { w ->
+                if (book.web == w) { book.web = null; book.open = false }
                 if (Gamepad.web == w) Gamepad.web = null
                 w.destroy()
             }
@@ -113,18 +114,7 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier 
     Box(modifier) {
     AndroidView(
         factory = { ctx ->
-            WebView(ctx).apply {
-                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.mediaPlaybackRequiresUserGesture = false
-                settings.userAgentString = settings.userAgentString + " sosh-token/$token sosh-enter/$serverId"
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView, url: String?) {
-                        loaded++
-                    }
-                }
-                webChromeClient = WebChromeClient()
+            gameWebView(ctx, app.serverUrl, "sosh-token/$token sosh-enter/$serverId", SoshHost { book.open = it }, { loaded++ }).apply {
                 // a drag on the world is the world's (turning the camera), not
                 // the drawer's: holding off our parents makes Compose keep the
                 // whole gesture here
@@ -132,8 +122,8 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, modifier: Modifier 
                     if (e.actionMasked == MotionEvent.ACTION_DOWN) v.parent?.requestDisallowInterceptTouchEvent(true)
                     false
                 }
-                loadUrl(app.serverUrl + "/")
                 web = this
+                book.web = this
             }
         },
         modifier = Modifier.fillMaxSize().onSizeChanged { size = it },

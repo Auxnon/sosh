@@ -41,6 +41,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
@@ -112,7 +113,7 @@ import app.sosh.data.Message
 import app.sosh.data.Server
 import kotlinx.coroutines.launch
 
-enum class Screen { Chat, Explore, Friends, Bag, Creator, Members }
+enum class Screen { Chat, Explore, Friends, Bag, Creator, Members, Book }
 
 /**
  * The app once signed in: a drawer with the server rail (Discord style),
@@ -248,6 +249,7 @@ private fun IconPlastic(icon: ImageVector, label: String, tone: Tone = Tone.Plas
 private fun ServerView(app: AppState, serverId: Long, drag: PocketDrag, modifier: Modifier) {
     var started by remember(serverId) { mutableStateOf(false) }
     var pockets by remember(serverId) { mutableStateOf(false) }
+    val book = remember(serverId) { BookState() }
     LaunchedEffect(serverId, app.pane) {
         if (app.pane != Pane.Chat) started = true else pockets = false
     }
@@ -271,12 +273,13 @@ private fun ServerView(app: AppState, serverId: Long, drag: PocketDrag, modifier
             content = {
                 Box((if (shown) Modifier.clip(frame).border(3.dp, Edge, frame) else Modifier).then(if (shown) Modifier.worldTarget(drag) else Modifier)) {
                     if (started) {
-                        key(serverId) { WorldPane(app, serverId, app.pane != Pane.Chat, Modifier.fillMaxSize()) }
+                        key(serverId) { WorldPane(app, serverId, app.pane != Pane.Chat, book, Modifier.fillMaxSize()) }
                         if (shown) {
                             if (app.pane == Pane.World && share == 1f && !pockets) {
                                 Overlay(app, Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 10.dp, end = 76.dp))
                             }
                             BackpackButton(app.bag.count { it != null }, { pockets = true }, Modifier.align(Alignment.BottomEnd).padding(10.dp))
+                            if (book.open) BookSearch(book, Modifier.align(Alignment.TopCenter).padding(8.dp), onClose = { book.close() })
                             PocketsPanel(app, drag, app.held, app::hold, pockets, { pockets = false }, Modifier.align(Alignment.BottomCenter))
                         }
                     }
@@ -405,6 +408,7 @@ private fun Drawer(app: AppState, go: (Screen) -> Unit, close: () -> Unit) {
             }
             RailIcon(Icons.Filled.People, "friends") { go(Screen.Friends); close() }
             RailIcon(Icons.Filled.Backpack, "pockets") { go(Screen.Bag); close() }
+            RailIcon(Icons.AutoMirrored.Filled.MenuBook, "blueprints") { go(Screen.Book); close() }
             RailIcon(Icons.Filled.Face, "your look") { go(Screen.Creator); close() }
         }
         Column(Modifier.width(252.dp).fillMaxHeight().paper(RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp))) {

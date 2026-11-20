@@ -38,6 +38,7 @@ import app.sosh.ui.MembersScreen
 import app.sosh.ui.Screen
 import app.sosh.ui.SoshTheme
 import app.sosh.ui.retro
+import app.sosh.ui.BookScreen
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
@@ -68,6 +69,7 @@ class MainActivity : ComponentActivity() {
                             Screen.Bag -> BagScreen(app, back)
                             Screen.Creator -> CreatorScreen(app, back)
                             Screen.Members -> MembersScreen(app, back)
+                            Screen.Book -> BookScreen(app, back)
                         }
                     }
                     app.notice?.let { n ->
