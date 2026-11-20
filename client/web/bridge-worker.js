@@ -9,8 +9,8 @@
 // what the page posts comes back as messages. Every other address is a real
 // WebSocket, untouched.
 //
-// Without a `?bridge=` (the Android app's world view, a shared cart's page)
-// this does nothing.
+// Without a `?bridge=` (a shared cart's page: /play/worker.js has no bridge.js
+// page around it) this does nothing.
 const bridgeId = new URL(self.location.href).searchParams.get("bridge");
 
 if (bridgeId && typeof self.WebSocket === "function") {

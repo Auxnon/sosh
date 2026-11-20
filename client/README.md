@@ -44,8 +44,37 @@ just web           # build the wasm engine + pack the game into priv/static
 just serve         # open http://localhost:4000
 ```
 
+The page is sosh's own, `client/web/index.html`: one `<petrichor-64>`
+element (the engine's `web/petrichor64-element.js`) filling the window,
+running `/game.game.png` with the `open` policy, plus sosh's scripts beside
+it: `gamepad.js` (controllers, off in the Android app), `recover.js` (a lost
+GPU), `bridge.js` (the page's side of the game: shared carts over the chat,
+pictures into it, the screen name, `soshCall` and the element's `call` and
+`title` events). `just web-engine` (and the root `Containerfile`, the same
+steps) builds the engine with `trunk build --release` in the engine checkout,
+copies its `web/dist/` into `server/priv/static/`, then puts sosh's
+`index.html` over the engine's stock page and copies the scripts in; the one
+patch left is `import "/bridge-worker.js";` at the top of the engine's
+`worker.js`, which gives the game's `conn` its line to the page. The engine
+itself is untouched. A shared cart's page (`/play/<key>`) is separate: the
+server writes it (`SoshWeb.PlayController`) and `play.js` starts the engine
+on it directly.
+
+To try the book in a browser, open http://localhost:4000, sign in, and call
+the game from the console (calls made before the game has loaded wait for
+it):
+
+```js
+soshCall("book_open")            // the book opens; book_close() shuts it
+soshCall("book_search", "cloth") // filter the index ("" clears it)
+soshCall("book_show", "bed")     // that recipe
+soshCall("book_mode", true)      // the book-only screen (leaves the world); false: back
+document.querySelector("petrichor-64").addEventListener("call", (e) => console.log(e.detail))
+                                 // what the game calls back: {name: "book", args: ["open"]}, book_step
+```
+
 After a script or asset change, rerun `just pack` (web) or reload the desktop
-client (Super+R). The client needs the engine's `feat/skinning` branch. The
+client (Super+R). The client needs the engine at the commit pinned in the Containerfile (`feat/call` for now). The
 recipes use the `~/projects/petrichor64-ws` worktree of it if that exists,
 else `~/projects/petrichor64`; set `P64=/path/to/petrichor64` to override.
 

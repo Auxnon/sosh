@@ -23,7 +23,9 @@
   const held = new Set();
 
   function send(key, down) {
-    const target = document.querySelector("canvas") || document.body;
+    // the engine's canvas, inside the page's <petrichor-64> (winit listens there)
+    const target =
+      document.querySelector("petrichor-64 canvas") || document.querySelector("canvas") || document.body;
     const type = down ? "keydown" : "keyup";
     target.dispatchEvent(new KeyboardEvent(type, { key, code: KEYS[key], bubbles: true }));
   }

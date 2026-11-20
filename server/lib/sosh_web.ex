@@ -18,12 +18,13 @@ defmodule SoshWeb do
   """
 
   # The Petrichor64 web build (client/README.md) is served from the root:
-  # the engine's wasm + glue, its VM worker and audio worklet, and the packed
-  # sosh game it fetches at /game.game.png.
+  # the engine's wasm + glue, its <petrichor-64> element, its VM worker and
+  # audio worklet, and the packed sosh game it fetches at /game.game.png.
+  # The page itself (sosh's client/web/index.html) is the catch-all's.
   def static_paths,
     do:
       ~w(assets fonts images favicon.ico robots.txt models
-         Petrichor64.js Petrichor64_bg.wasm worker.js
+         Petrichor64.js Petrichor64_bg.wasm petrichor64-element.js worker.js
          synth-worklet.js worklet-polyfill.js petrichor_synth.js petrichor_synth_bg.wasm
          gamepad.js recover.js latency.js bridge.js bridge-worker.js play.js game.game.png)
 

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>sosh</title>
+    <!-- sosh's web page: the Petrichor64 engine as a <petrichor-64> element
+         (the engine's web/petrichor64-element.js, from its trunk build), so the
+         page holds the engine and can call the game (bridge.js: soshCall).
+         `just web-engine` and the Containerfile install it as /index.html in
+         place of the engine's stock page; the engine itself is untouched.
+         The game's window title (attr{title=...}) comes as the element's
+         `title` event, which bridge.js puts on document.title. -->
+    <script type="module" src="/petrichor64-element.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #111;
+        overflow: hidden;
+      }
+      /* The game fills the window (the layout viewport, so phones and the
+         Android web view too); the engine pins its canvas to fill the element. */
+      petrichor-64 {
+        position: fixed;
+        inset: 0;
+        display: block;
+      }
+      canvas {
+        image-rendering: pixelated; /* keep the low-res console look crisp */
+      }
+      /* the canvas is focusable for the keyboard: no focus ring over the game */
+      canvas:focus,
+      canvas:focus-visible {
+        outline: none;
+      }
+    </style>
+  </head>
+  <body>
+    <petrichor-64 cart="/game.game.png" policy="open"></petrichor-64>
+    <!-- Classic scripts: they run while the page is parsed, before the
+         element's module starts the engine, so their patches (bridge.js's
+         Worker, recover.js's requestDevice) are in place when it does. -->
+    <script src="/gamepad.js"></script>
+    <script src="/recover.js"></script>
+    <script src="/bridge.js"></script>
+  </body>
+</html>

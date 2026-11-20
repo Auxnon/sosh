@@ -22,18 +22,25 @@
 //                             calls a global function of the cart by name
 //                             (`<petrichor-64>`'s `el.call`): book_open(),
 //                             book_close(), book_search(text), book_show(item),
-//                             book_mode(on). Calls made before the element is
-//                             there are kept and sent when it is
+//                             book_mode(on). A global, so it works from the
+//                             browser's console too. Calls made before the
+//                             element is defined are kept here, then the
+//                             element and the engine keep them until the cart
+//                             has loaded
 //   the cart's `call` events  (the cart calling back: `book` with "open" or
 //                             "closed", `book_step` with (recipe, spread)) go
 //                             to `SoshHost.call(name, argsJson)` when the app
 //                             put a `SoshHost` object on window (Android's
 //                             WebView does); in a browser there is none
 //   sosh-book                 in the user agent (the app's book screen) puts
-//                             the game in book mode once it can hear us:
-//                             book_mode(true), book_open(). The marker is read
-//                             here, not in Lua; the socket never needs it, and
-//                             with no `sosh-enter/<id>` no world is entered
+//                             the game in book mode: book_mode(true), once, at
+//                             load. The marker is read here, not in Lua; the
+//                             socket never needs it, and with no
+//                             `sosh-enter/<id>` no world is entered
+//
+// The page is sosh's own (client/web/index.html): one <petrichor-64> filling
+// the window. Its `title` events (the game's attr{title}) become
+// document.title, which the element leaves alone.
 //
 // The cart's own page fences it off from sosh (play.js and its policy); the
 // frame's sandbox adds no popups, no top-level navigation, no forms.
@@ -169,7 +176,7 @@
 
   // right-drag turns the camera (tools.lua), so no menu over the game
   window.addEventListener("contextmenu", (e) => {
-    if (e.target && e.target.tagName === "CANVAS") e.preventDefault();
+    if (e.target && e.target.closest && e.target.closest("petrichor-64, canvas")) e.preventDefault();
   });
   window.addEventListener("paste", (e) => {
     const files = [...(e.clipboardData ? e.clipboardData.files : [])];
@@ -213,53 +220,51 @@
     toast.t = setTimeout(() => (toastEl.style.display = "none"), 3500);
   }
 
-  // -- the book: calls to the cart, and its calls to the app
+  // -- the element: the game's title, the book's calls to the cart and its
+  // calls to the app
 
+  // The page (index.html) has the element from the start; it's defined (has
+  // `call`) once its module has run, which is after this classic script.
+  const host = document.querySelector("petrichor-64");
   const queued = [];
-  let host = null; // the <petrichor-64> element once seen
+  let defined = false;
 
   function soshCall(name, ...args) {
-    if (host && typeof host.call === "function") return host.call(String(name), ...args);
+    if (defined) return host.call(String(name), ...args);
     queued.push([String(name), ...args]);
     if (queued.length > 256) queued.shift();
     return true;
   }
   window.soshCall = soshCall;
 
-  function findHost() {
-    const el = document.querySelector("petrichor-64");
-    if (!el || el === host || typeof el.call !== "function") return;
-    host = el;
-    el.addEventListener("call", (e) => {
+  if (host) {
+    // the element leaves document.title alone
+    host.addEventListener("title", (e) => {
+      if (typeof e.detail === "string" && e.detail) document.title = e.detail;
+    });
+    host.addEventListener("call", (e) => {
       const d = e.detail || {};
-      if (d.name === "book" && d.args && d.args[0] === "open") bookOpen = true;
       const h = window.SoshHost;
       if (!h || typeof h.call !== "function") return;
       try {
         h.call(String(d.name), JSON.stringify(d.args || []));
       } catch (err) {}
     });
-    while (queued.length) el.call(...queued.shift());
+    customElements.whenDefined("petrichor-64").then(() => {
+      defined = true;
+      while (queued.length) host.call(...queued.shift());
+    });
   }
 
-  // The book-only screen. The cart may not have its globals yet when the
-  // element takes calls (one with no such global ignores it), so ask again
-  // until the game says the book is open.
-  let bookOpen = false;
-  if (/\bsosh-book\b/.test(navigator.userAgent)) {
-    let tries = 0;
-    const ask = setInterval(() => {
-      if (bookOpen || ++tries > 90) return clearInterval(ask);
-      if (!host) return;
-      soshCall("book_mode", true);
-      soshCall("book_open");
-    }, 1000);
-  }
+  // The book-only screen. Asked once: the element keeps calls until the
+  // engine is up, and the engine keeps them until the cart has loaded and
+  // run main() (Petrichor64's guide/call.md), so they can't come too early.
+  // book_mode(true) opens the book too.
+  if (/\bsosh-book\b/.test(navigator.userAgent)) soshCall("book_mode", true);
 
-  // the engine adds its canvas after this runs
+  // the engine adds its canvas (inside the element) after this runs
   function scan() {
-    findHost();
-    const c = document.querySelector("canvas");
+    const c = (host && host.querySelector("canvas")) || document.querySelector("canvas");
     if (!c || c === canvas) return;
     canvas = c;
     new ResizeObserver(place).observe(canvas);

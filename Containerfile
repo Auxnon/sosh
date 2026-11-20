@@ -37,9 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && cargo build --release --bin chor
 COPY client /client
 RUN mkdir -p /static && cp web/dist/* /static/ \
- && cp /client/web/gamepad.js /client/web/recover.js /client/web/bridge.js /client/web/bridge-worker.js /client/web/play.js /static/ \
- && perl -0pi -e 's#^#import "/bridge-worker.js";\n#' /static/worker.js \
- && perl -pi -e 's#</body>#  <script src="/gamepad.js"></script>\n  <script src="/recover.js"></script>\n  <script src="/bridge.js"></script>\n  </body>#' /static/index.html \
+ && cp /client/web/index.html /client/web/gamepad.js /client/web/recover.js /client/web/bridge.js /client/web/bridge-worker.js /client/web/play.js /static/ \
+ && perl -0pi -e 's#^#import "/bridge-worker.js";\n# unless /bridge-worker/' /static/worker.js \
  && target/release/chor pack /client /static/game.game.png
 
 # --- 2. the release ----------------------------------------------------------

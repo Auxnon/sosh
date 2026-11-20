@@ -1,7 +1,8 @@
 // A lost GPU, as a last resort. Chrome (and Android's web view) may drop a
 // background tab's WebGL context or WebGPU device. The engine now rebuilds
 // its GPU state itself (petrichor64's src/gpu_loss.rs) and says so with
-// `petrichor-gpu-lost` / `petrichor-gpu-restored` events on window; this
+// `petrichor-gpu-lost` / `petrichor-gpu-restored` events on window (and on
+// the page's <petrichor-64>; one engine, so window is enough); this
 // only steps in if that doesn't happen: an older engine that never says it
 // lost anything (the world stays black or purple, its clear colour), or one
 // that said so but didn't come back within RESTORE_WAIT. Then it reloads,
@@ -84,7 +85,7 @@
     }
   });
 
-  // the engine adds its canvas after this runs
+  // the engine adds its canvas (inside <petrichor-64>) after this runs
   const seen = new WeakSet();
   function scan() {
     for (const c of document.querySelectorAll("canvas")) {
