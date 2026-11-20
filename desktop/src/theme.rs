@@ -302,6 +302,7 @@ pub enum Icon {
     Play,
     Back,
     Close,
+    Book,
 }
 
 impl Icon {
@@ -376,6 +377,24 @@ impl Icon {
             Icon::Close => {
                 p.line_segment([at(4.0, 4.0), at(16.0, 16.0)], s);
                 p.line_segment([at(16.0, 4.0), at(4.0, 16.0)], s);
+            }
+            Icon::Book => {
+                // open, from above: two pages bowed from the spine
+                let pages = vec![
+                    at(10.0, 5.5),
+                    at(6.0, 3.5),
+                    at(2.0, 4.0),
+                    at(2.0, 16.0),
+                    at(6.0, 15.5),
+                    at(10.0, 17.0),
+                    at(14.0, 15.5),
+                    at(18.0, 16.0),
+                    at(18.0, 4.0),
+                    at(14.0, 3.5),
+                    at(10.0, 5.5),
+                ];
+                p.add(Shape::line(pages, s));
+                p.line_segment([at(10.0, 5.5), at(10.0, 17.0)], s);
             }
         }
     }

@@ -3,10 +3,12 @@
 //! shared carts are Petrichor64 instances on the same device, drawn into
 //! the window as egui pictures (`stage.rs`).
 //!
-//! `sosh --snapshot out.png [--size 1280x800] [--secs 6] [--click x,y]...`
-//! draws the app without a window (no display needed) and writes a picture:
-//! for checking layouts. `--click`s land a second apart once it's loaded,
-//! then `--type TEXT` (and Enter).
+//! `sosh --snapshot out.png [--size 1280x800] [--secs 6] [--click x,y]...
+//! [--call name[:arg]]... [--type TEXT]` draws the app without a window (no
+//! display needed) and writes a picture: for checking layouts. `--click`s
+//! and `--call`s (a host call into the world's game, or the book page's on
+//! that page, e.g. `book_open` or `book_search:bed`) take their turns a second apart, in order, once it's
+//! loaded, then `--type TEXT` (and Enter) goes to whatever has the keys.
 
 // a windowed app on Windows: no console window behind it (debug builds keep one for logs)
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -294,10 +296,30 @@ fn snapshot(args: &[String]) {
         .and_then(|s| s.split_once('x').and_then(|(a, b)| Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))))
         .unwrap_or((1280, 800));
     let secs: f32 = arg("--secs").and_then(|s| s.parse().ok()).unwrap_or(6.0);
-    let clicks: Vec<(f32, f32)> = args
+    enum Step {
+        Click(f32, f32),
+        Call(String, Vec<petrichor64::host::Arg>),
+    }
+    let steps: Vec<Step> = args
         .windows(2)
-        .filter(|p| p[0] == "--click")
-        .filter_map(|p| p[1].split_once(',').and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?))))
+        .filter_map(|p| match p[0].as_str() {
+            "--click" => p[1].split_once(',').and_then(|(x, y)| Some(Step::Click(x.parse().ok()?, y.parse().ok()?))),
+            "--call" => {
+                use petrichor64::host::Arg;
+                let (name, arg) = match p[1].split_once(':') {
+                    Some((n, a)) => (n, Some(a)),
+                    None => (p[1].as_str(), None),
+                };
+                let args = match arg {
+                    None => vec![],
+                    Some("true") => vec![Arg::Bool(true)],
+                    Some("false") => vec![Arg::Bool(false)],
+                    Some(a) => vec![Arg::Str(a.to_owned())],
+                };
+                Some(Step::Call(name.to_owned(), args))
+            }
+            _ => None,
+        })
         .collect();
     let ppp: f32 = arg("--scale").and_then(|s| s.parse().ok()).unwrap_or(1.0);
     // typed (then Enter) a second after the last click
@@ -317,24 +339,30 @@ fn snapshot(args: &[String]) {
     let start = Instant::now();
     let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w as f32 / ppp, h as f32 / ppp));
     let mut clicked = 0usize;
-    // clicks (and typing) a second apart, leaving two seconds after for answers
-    let load = secs - clicks.len() as f32 - if arg("--type").is_some() { 3.0 } else { 0.0 };
+    // steps (and typing) a second apart, leaving two seconds after for answers
+    let load = secs - steps.len() as f32 - if arg("--type").is_some() { 3.0 } else { 0.0 };
     let mut last: Option<egui::FullOutput>;
     loop {
         let t = start.elapsed().as_secs_f32();
         let mut events = Vec::new();
         // the pointer waits over the next click, so it's hovering when it lands
-        if let Some(&(x, y)) = clicks.get(clicked) {
+        if let Some(&Step::Click(x, y)) = steps.get(clicked) {
             events.push(egui::Event::PointerMoved(egui::pos2(x, y)));
         }
-        if clicked < clicks.len() && t > load.max(0.5) + clicked as f32 {
-            let (x, y) = clicks[clicked];
-            let pos = egui::pos2(x, y);
-            events.push(egui::Event::PointerMoved(pos));
-            events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
-            events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+        if clicked < steps.len() && t > load.max(0.5) + clicked as f32 {
+            match &steps[clicked] {
+                &Step::Click(x, y) => {
+                    let pos = egui::pos2(x, y);
+                    events.push(egui::Event::PointerMoved(pos));
+                    events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+                    events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+                }
+                // into the book page's game on that page, else the world's
+                Step::Call(name, args) if st.screen == state::Screen::Book => st.book.call(name, args.clone()),
+                Step::Call(name, args) => st.world.call(name, args.clone()),
+            }
             clicked += 1;
-        } else if !typed_done && clicked == clicks.len() && t > load.max(0.5) + clicked as f32 {
+        } else if !typed_done && clicked == steps.len() && t > load.max(0.5) + clicked as f32 {
             let text = typed.clone().unwrap_or_default();
             events.push(egui::Event::Text(text));
             events.push(egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() });

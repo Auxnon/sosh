@@ -4,6 +4,7 @@
 //! server's chat and world, or a conversation.
 
 mod auth;
+mod book;
 mod chat;
 mod drawer;
 mod pages;
@@ -40,6 +41,12 @@ pub struct View {
     pub last_gen: u64,
     /// Our message being edited in place, and its text so far.
     pub editing: Option<(i64, String)>,
+    /// The book page's search, and the one over the world's book.
+    pub book_query: String,
+    pub world_query: String,
+    /// The pass the book page was last drawn in (it takes the keys when it
+    /// comes up).
+    pub book_pass: u64,
 }
 
 /// The server needs a newer app (`Sosh.Clients`): nothing else works until
@@ -74,8 +81,10 @@ pub fn draw(root: &mut Ui, st: &mut State, v: &mut View) {
     // shown this frame only if something puts them somewhere
     st.world.rect = None;
     st.play.rect = None;
+    st.book.rect = None;
     st.world.hover = false;
     st.play.hover = false;
+    st.book.hover = false;
     theme::ground(root.painter(), full);
 
     if let Some(u) = st.update.clone() {
@@ -115,6 +124,7 @@ pub fn draw(root: &mut Ui, st: &mut State, v: &mut View) {
         Screen::Friends => pages::friends(ui, st, v),
         Screen::Bag => pages::bag(ui, st, v),
         Screen::Members => pages::members(ui, st, v),
+        Screen::Book => book::page(ui, st, v),
     });
 
     // narrow: the drawer slides in over everything, the rest dimmed
@@ -161,6 +171,20 @@ fn notice(ctx: &egui::Context, st: &State) {
 /// A page over the chat: plastic bar with back and a title, then paper.
 pub fn page(ui: &mut Ui, st: &mut State, title: &str, body: impl FnOnce(&mut Ui, &mut State)) {
     let r = ui.max_rect();
+    let below = page_bar(ui, st, title);
+    let sheet = Rect::from_min_max(below.min, r.max);
+    paper(ui.painter(), sheet, 24.0);
+    ui.scope_builder(UiBuilder::new().max_rect(sheet.shrink(18.0)), |ui| {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            body(ui, st)
+        });
+    });
+}
+
+/// A page's plastic bar, with back and a title; returns what's below it.
+pub fn page_bar(ui: &mut Ui, st: &mut State, title: &str) -> Rect {
+    let r = ui.max_rect();
     let bar = Rect::from_min_size(r.min, vec2(r.width(), 60.0));
     plastic(ui.painter(), bar, 22.0, PANEL, EDGE, 4.0, 0.2);
     ui.scope_builder(UiBuilder::new().max_rect(bar.shrink2(vec2(8.0, 8.0))), |ui| {
@@ -171,14 +195,7 @@ pub fn page(ui: &mut Ui, st: &mut State, title: &str, body: impl FnOnce(&mut Ui,
             ui.label(RichText::new(title).font(font(EXTRA, 20.0)).color(TEXT));
         });
     });
-    let sheet = Rect::from_min_max(pos2(r.left(), bar.bottom() + 14.0), r.max);
-    paper(ui.painter(), sheet, 24.0);
-    ui.scope_builder(UiBuilder::new().max_rect(sheet.shrink(18.0)), |ui| {
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            body(ui, st)
-        });
-    });
+    Rect::from_min_max(pos2(r.left(), bar.bottom() + 14.0), r.max)
 }
 
 /// A section's heading on paper.

@@ -43,6 +43,8 @@ pub enum Screen {
     Friends,
     Bag,
     Members,
+    /// The blueprints book, outside any world (`ui::book`).
+    Book,
 }
 
 /// The sosh game the world runs: fetched from the server (the same
@@ -121,6 +123,8 @@ pub struct State {
     /// (`stage.rs` runs them).
     pub world: crate::stage::Spot,
     pub play: crate::stage::Spot,
+    /// The book page's game, in book mode (`stage.rs`).
+    pub book: crate::stage::Spot,
     pub game: GameCart,
     pub playing: Option<Playing>,
     /// The last server opened: the world stays in it while a DM is open.
@@ -163,6 +167,7 @@ impl State {
             pics: Pics::default(),
             world: Default::default(),
             play: Default::default(),
+            book: Default::default(),
             game: GameCart::Wanted,
             playing: None,
             world_server: None,
@@ -292,10 +297,27 @@ impl State {
         if matches!(self.game, GameCart::Wanted) {
             self.load_game();
         }
-        // the game adds `&token=` itself
-        let url = self.api.socket_url();
-        let url = url.split("&token=").next().unwrap_or(&url).to_owned();
+        let url = self.game_socket_url();
         Some(WorldSession { key: format!("{url} {token}"), hello: format!("session {url} {token} {} {server}", me), server })
+    }
+
+    /// What the book page's game runs as: our session, in no server (in
+    /// book mode the game never enters one). Asks for the game the first
+    /// time.
+    pub fn book_session(&mut self) -> Option<WorldSession> {
+        let me = self.me.as_ref()?.id;
+        let token = self.api.token.clone()?;
+        if matches!(self.game, GameCart::Wanted) {
+            self.load_game();
+        }
+        let url = self.game_socket_url();
+        Some(WorldSession { key: format!("{url} {token}"), hello: format!("session {url} {token} {me} 0"), server: 0 })
+    }
+
+    /// The socket the game joins (it adds `&token=` itself).
+    fn game_socket_url(&self) -> String {
+        let url = self.api.socket_url();
+        url.split("&token=").next().unwrap_or(&url).to_owned()
     }
 
     /// The game behind the sign-in page: the same one, before anyone's

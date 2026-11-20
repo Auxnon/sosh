@@ -164,7 +164,8 @@ fn world_pane(ui: &mut Ui, st: &mut State, v: &mut View, r: Rect) {
         }
     }
     // all world: the latest lines over it, as the game's own chat log was
-    if st.pane == Pane::World && r.height() > 260.0 {
+    // (not while its book is open: the book's search is there then)
+    if st.pane == Pane::World && r.height() > 260.0 && !st.world.book_open {
         let lines: Vec<Message> = st.messages.iter().rev().take(3).rev().cloned().collect();
         if !lines.is_empty() {
             let box_r =
@@ -189,7 +190,8 @@ fn world_pane(ui: &mut Ui, st: &mut State, v: &mut View, r: Rect) {
             }
         }
     }
-    let _ = v;
+    // the world's book open: the search field over it
+    super::book::over_world(ui, st, v, r);
 }
 
 fn line_text(m: &Message) -> String {

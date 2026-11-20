@@ -27,7 +27,7 @@ fn rail_contents(ui: &mut Ui, st: &mut State, v: &mut View) {
             v.dms = true;
         }
         ui.label(RichText::new("SLOTS").font(font(TECH, 8.0)).color(TEXT_DIM));
-        let bottom = 3.0 * 60.0;
+        let bottom = 4.0 * 60.0;
         let h = (ui.available_height() - bottom).max(60.0);
         egui::ScrollArea::vertical().max_height(h).auto_shrink([false, true]).show(ui, |ui| {
             ui.vertical_centered(|ui| {
@@ -54,7 +54,7 @@ fn rail_contents(ui: &mut Ui, st: &mut State, v: &mut View) {
         });
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing = vec2(0.0, 10.0);
-            for (icon, hint, screen) in [(Icon::Backpack, "pockets", Screen::Bag), (Icon::People, "friends", Screen::Friends)] {
+            for (icon, hint, screen) in [(Icon::Book, "the book", Screen::Book), (Icon::Backpack, "pockets", Screen::Bag), (Icon::People, "friends", Screen::Friends)] {
                 let (r, resp) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::click());
                 if resp.hovered() {
                     ui.painter().rect_filled(r, CornerRadius::same(24), PANEL_HI);

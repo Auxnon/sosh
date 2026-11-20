@@ -14,11 +14,20 @@
 //! sky turning), and the same instance is signed in when we are. A
 //! shared cart is someone else's: `Policy::sandbox()` (no network, files,
 //! clipboard, console, other carts, microphone or host channel).
+//!
+//! The book page runs a third instance: the same game, trusted, signed in
+//! with the same session but put in book mode (`book_mode(true)`), so it
+//! never enters a universe. It's made when the page shows and dropped when
+//! it's left, so it costs nothing the rest of the time, and it never
+//! disturbs the world (which stays in its server, connected). The UI talks
+//! to the game with host calls (`Spot::call`, sent before the instance's
+//! next frame), and what the game calls back (`book`, `book_step`) lands on
+//! the `Spot` (`client/README.md`, "The book's calls").
 
 use std::time::{Duration, Instant};
 
 use petrichor64::Instance;
-use petrichor64::host::{Button, Cart, HostGpu, Input, Options, Policy, Request};
+use petrichor64::host::{Arg, Button, Call, Cart, HostGpu, Input, Options, Policy, Request};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{Key, NamedKey, PhysicalKey};
 
@@ -43,6 +52,38 @@ pub struct Spot {
     pub focus: bool,
     /// Why it isn't running, to say in its place.
     pub status: Option<String>,
+    /// Host calls for its cart (`Instance::call`), sent before its next
+    /// frame; dropped if it isn't running and isn't shown.
+    pub calls: Vec<Call>,
+    /// The game's book is open in it (it called `book("open")`).
+    pub book_open: bool,
+    /// What its book shows (`book_step`): the recipe ("" on the index) and
+    /// the spread.
+    pub book_step: (String, i64),
+}
+
+impl Spot {
+    /// Call the cart's global `name` (one of the book's, `client/README.md`).
+    pub fn call(&mut self, name: &str, args: Vec<Arg>) {
+        self.calls.push((name.to_owned(), args));
+    }
+
+    /// What the game called back: the book's state.
+    fn heard(&mut self, calls: Vec<Call>) {
+        for (name, args) in calls {
+            match (name.as_str(), args.as_slice()) {
+                ("book", [Arg::Str(s), ..]) => self.book_open = s == "open",
+                ("book_step", [Arg::Str(recipe), Arg::Num(spread), ..]) => self.book_step = (recipe.clone(), *spread as i64),
+                _ => log::info!("the game calls {name} {args:?}"),
+            }
+        }
+    }
+
+    /// What the game had said, forgotten (a new instance, or none).
+    fn reset(&mut self) {
+        self.book_open = false;
+        self.book_step = (String::new(), 0);
+    }
 }
 
 struct Slot {
@@ -60,9 +101,11 @@ pub struct Stages {
     start: Instant,
     world: Option<Slot>,
     play: Option<Slot>,
+    book: Option<Slot>,
     /// In the window's physical pixels, last frame.
     world_px: Option<[f32; 4]>,
     play_px: Option<[f32; 4]>,
+    book_px: Option<[f32; 4]>,
     scale: f32,
     /// Where the pointer is, in physical pixels.
     cursor: (f32, f32),
@@ -75,8 +118,10 @@ impl Stages {
             start: Instant::now(),
             world: None,
             play: None,
+            book: None,
             world_px: None,
             play_px: None,
+            book_px: None,
             scale: 1.0,
             cursor: (0.0, 0.0),
         }
@@ -108,8 +153,9 @@ impl Stages {
             }
         }
         if self.world.as_ref().map(|w| &w.key) != want.as_ref() {
-            self.drop_slot(renderer, true);
+            self.drop_slot(renderer, Which::World);
             st.world.tex = None;
+            st.world.reset();
             if let (Some(s), GameCart::Ready(cart), Some(r)) = (&session, &st.game, st.world.rect) {
                 match self.make(renderer, cart.clone(), Policy::open(), px(r, ppp), s.key.clone()) {
                     Ok(mut slot) => {
@@ -142,13 +188,51 @@ impl Stages {
         self.world_px = st.world.rect.map(|r| px(r, ppp));
         if let Some(slot) = self.world.as_mut() {
             st.world.tex = Some(slot.tex);
-            run(slot, renderer, &self.gpu, self.world_px, ppp, now, st, true);
+            send(slot, &mut st.world.calls);
+            let calls = run(slot, renderer, &self.gpu, self.world_px, ppp, now, st, true);
+            st.world.heard(calls);
+        } else if st.world.rect.is_none() {
+            st.world.calls.clear();
+        }
+
+        // the book page's own game, in book mode, while the page shows
+        let want = st.book.rect.and_then(|_| st.book_session()).filter(|_| matches!(st.game, GameCart::Ready(_)));
+        if self.book.as_ref().map(|b| &b.key) != want.as_ref().map(|s| &s.key) {
+            self.drop_slot(renderer, Which::Book);
+            st.book.tex = None;
+            st.book.reset();
+            if let (Some(s), GameCart::Ready(cart), Some(r)) = (&want, &st.game, st.book.rect) {
+                match self.make(renderer, cart.clone(), Policy::open(), px(r, ppp), s.key.clone()) {
+                    Ok(mut slot) => {
+                        // signed in as we are, but never into a server: the
+                        // calls run before the session message is read
+                        slot.inst.post(s.hello.clone());
+                        slot.inst.call("book_mode", [Arg::Bool(true)]);
+                        slot.inst.call("book_open", Vec::<Arg>::new());
+                        self.book = Some(slot);
+                        st.book.status = None;
+                    }
+                    Err(e) => {
+                        log::warn!("book: {e}");
+                        st.book.status = Some(format!("The book didn't open: {e}"));
+                    }
+                }
+            }
+        }
+        self.book_px = st.book.rect.map(|r| px(r, ppp));
+        if let Some(slot) = self.book.as_mut() {
+            st.book.tex = Some(slot.tex);
+            send(slot, &mut st.book.calls);
+            let calls = run(slot, renderer, &self.gpu, self.book_px, ppp, now, st, true);
+            st.book.heard(calls);
+        } else if st.book.rect.is_none() {
+            st.book.calls.clear();
         }
 
         // a shared cart, while it's open
         let want = st.playing.as_ref().and_then(|p| p.bytes.as_ref().map(|_| p.media.key.clone()));
         if self.play.as_ref().map(|p| &p.key) != want.as_ref() {
-            self.drop_slot(renderer, false);
+            self.drop_slot(renderer, Which::Play);
             st.play.tex = None;
             if let (Some(p), Some(r)) = (&st.playing, st.play.rect) {
                 if let Some(bytes) = &p.bytes {
@@ -169,7 +253,8 @@ impl Stages {
         self.play_px = st.play.rect.map(|r| px(r, ppp));
         if let Some(slot) = self.play.as_mut().filter(|_| st.playing.is_some()) {
             st.play.tex = Some(slot.tex);
-            run(slot, renderer, &self.gpu, self.play_px, ppp, now, st, false);
+            // a sandboxed cart has no host channel: nothing to hear
+            let _ = run(slot, renderer, &self.gpu, self.play_px, ppp, now, st, false);
         }
     }
 
@@ -181,8 +266,12 @@ impl Stages {
         Ok(Slot { inst, tex, view, key, entered: None })
     }
 
-    fn drop_slot(&mut self, renderer: &mut egui_wgpu::Renderer, world: bool) {
-        let slot = if world { self.world.take() } else { self.play.take() };
+    fn drop_slot(&mut self, renderer: &mut egui_wgpu::Renderer, which: Which) {
+        let slot = match which {
+            Which::World => self.world.take(),
+            Which::Play => self.play.take(),
+            Which::Book => self.book.take(),
+        };
         if let Some(s) = slot {
             renderer.free_texture(&s.tex);
         }
@@ -190,7 +279,7 @@ impl Stages {
 
     /// When an instance next wants to run, for the event loop.
     pub fn next(&self) -> Option<Instant> {
-        [&self.world, &self.play].iter().filter_map(|s| s.as_ref()?.inst.next_frame()).min().map(|d| self.start + d)
+        [&self.world, &self.play, &self.book].iter().filter_map(|s| s.as_ref()?.inst.next_frame()).min().map(|d| self.start + d)
     }
 
     /// Input from the window, for the instance under the pointer or with the
@@ -200,7 +289,7 @@ impl Stages {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
-                for (slot, r) in [(&mut self.world, self.world_px), (&mut self.play, self.play_px)] {
+                for (slot, r) in [(&mut self.world, self.world_px), (&mut self.play, self.play_px), (&mut self.book, self.book_px)] {
                     if let (Some(slot), Some(r)) = (slot.as_mut(), r) {
                         slot.inst.input(Input::PointerMoved { x: self.cursor.0 - r[0], y: self.cursor.1 - r[1] });
                     }
@@ -218,10 +307,13 @@ impl Stages {
                 // the cart's window sits over the world: it's hit first
                 let on_play = self.play.is_some() && st.play.rect.is_some() && st.play.hover;
                 let on_world = !on_play && self.world.is_some() && st.world.rect.is_some() && st.world.hover;
+                let on_book = !on_play && self.book.is_some() && st.book.rect.is_some() && st.book.hover;
                 if pressed {
-                    self.focus(st, on_world, on_play);
+                    self.focus(st, on_world, on_play, on_book);
                 }
-                for (slot, on, has) in [(&mut self.world, on_world, st.world.focus), (&mut self.play, on_play, st.play.focus)] {
+                for (slot, on, has) in
+                    [(&mut self.world, on_world, st.world.focus), (&mut self.play, on_play, st.play.focus), (&mut self.book, on_book, st.book.focus)]
+                {
                     // a release goes where the press went
                     if let Some(slot) = slot.as_mut().filter(|_| on || (!pressed && has)) {
                         slot.inst.input(Input::Button { button, pressed });
@@ -237,6 +329,8 @@ impl Stages {
                     self.play.as_mut()
                 } else if st.world.hover && st.world.rect.is_some() {
                     self.world.as_mut()
+                } else if st.book.hover && st.book.rect.is_some() {
+                    self.book.as_mut()
                 } else {
                     None
                 };
@@ -264,11 +358,11 @@ impl Stages {
             WindowEvent::ModifiersChanged(m) => {
                 let s = m.state();
                 let ev = Input::Modifiers { alt: s.alt_key(), ctrl: s.control_key(), shift: s.shift_key(), logo: s.super_key() };
-                for slot in [self.world.as_mut(), self.play.as_mut()].into_iter().flatten() {
+                for slot in [self.world.as_mut(), self.play.as_mut(), self.book.as_mut()].into_iter().flatten() {
                     slot.inst.input(ev.clone());
                 }
             }
-            WindowEvent::Focused(false) => self.focus(st, false, false),
+            WindowEvent::Focused(false) => self.focus(st, false, false, false),
             _ => {}
         }
     }
@@ -279,29 +373,45 @@ impl Stages {
             self.play.as_mut()
         } else if st.world.focus && st.world.rect.is_some() {
             self.world.as_mut()
+        } else if st.book.focus && st.book.rect.is_some() {
+            self.book.as_mut()
         } else {
             None
         }
     }
 
-    fn focus(&mut self, st: &mut State, world: bool, play: bool) {
-        if st.world.focus && !world {
-            if let Some(s) = self.world.as_mut() {
-                s.inst.input(Input::FocusLost);
-            }
-        }
-        if st.play.focus && !play {
-            if let Some(s) = self.play.as_mut() {
-                s.inst.input(Input::FocusLost);
+    fn focus(&mut self, st: &mut State, world: bool, play: bool, book: bool) {
+        for (slot, had, has) in [(&mut self.world, st.world.focus, world), (&mut self.play, st.play.focus, play), (&mut self.book, st.book.focus, book)] {
+            if had && !has {
+                if let Some(s) = slot.as_mut() {
+                    s.inst.input(Input::FocusLost);
+                }
             }
         }
         st.world.focus = world;
         st.play.focus = play;
+        st.book.focus = book;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Which {
+    World,
+    Play,
+    Book,
+}
+
+/// The UI's calls for an instance, in the order made.
+fn send(slot: &mut Slot, calls: &mut Vec<Call>) {
+    for (name, args) in calls.drain(..) {
+        if !slot.inst.call(name.clone(), args) {
+            log::warn!("the game didn't take the call {name}");
+        }
     }
 }
 
 /// Tick one instance and draw it if it's shown, follow its size, and deal with
-/// what it asked for.
+/// what it asked for. Returns what it called back (`host.call`).
 #[allow(clippy::too_many_arguments)]
 fn run(
     slot: &mut Slot,
@@ -312,10 +422,14 @@ fn run(
     now: Duration,
     st: &mut State,
     trusted: bool,
-) {
+) -> Vec<Call> {
     // hidden, it keeps running (its socket stays up) but isn't drawn
     let ticked = slot.inst.frame(now);
-    let Some(r) = r else { return };
+    let calls = slot.inst.calls();
+    for msg in slot.inst.messages() {
+        log::info!("the game says: {msg}");
+    }
+    let Some(r) = r else { return calls };
     let size = (r[2].round().max(1.0) as u32, r[3].round().max(1.0) as u32);
     if slot.inst.size() != size {
         slot.inst.resize(size, ppp);
@@ -337,9 +451,7 @@ fn run(
             _ => {}
         }
     }
-    for msg in slot.inst.messages() {
-        log::info!("world says: {msg}");
-    }
+    calls
 }
 
 fn px(r: egui::Rect, ppp: f32) -> [f32; 4] {

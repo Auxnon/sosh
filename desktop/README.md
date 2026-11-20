@@ -36,6 +36,16 @@ been clicked) goes to it.
   chat and runs fenced off (`Policy::sandbox()`): no network, files,
   clipboard, console, other carts, microphone or host channel. Esc or the
   cross closes it.
+- **The book** (the book button on the rail): the blueprints book outside
+  any world. It's the same game again, in an instance of its own made when
+  the page opens and dropped when it's left, signed in with the app's
+  session but in book mode, so it never enters a server. The search field
+  above it filters the book's index; the pages are turned and steps done in
+  the book itself. In a world, when the game's book is open (O, or its
+  book button), the same field sits over the world pane and searches that
+  book; Esc in it shuts the book. While the field has the keys, the game
+  doesn't get them. The app and the game talk through the engine's host
+  calls (`client/README.md`, "The book's calls").
 - **Messages**: right-click one to react, pin it (a sign for your pockets,
   to place in the world: in a server only), or edit or delete your own.
 - **Updates**: every request says `X-Sosh-Client: desktop/<version>`, the
@@ -60,11 +70,11 @@ been clicked) goes to it.
 | `src/state.rs` | what the app knows and does (`AppState.kt`): calls run on threads, and come back as jobs applied once a frame |
 | `src/net.rs` | the JSON API (`Api.kt`) and a Phoenix channels client (`Phoenix.kt`); the socket has a thread of its own |
 | `src/models.rs` | what the server sends (`Models.kt`) |
-| `src/stage.rs` | the world and a shared game: Petrichor64 instances, their textures and input |
+| `src/stage.rs` | the world, a shared game and the book page: Petrichor64 instances, their textures, input and host calls |
 | `src/media.rs` | pictures: fetched, decoded (png and apng, jpeg, gif, webp; moving ones keep their frames), kept as textures |
 | `src/store.rs` | the server and session token, in `~/.config/sosh/session.json` (mode 600); `SOSH_CONFIG` points elsewhere |
 | `src/theme.rs` | colours, fonts, plastic and paper, drawn icons |
-| `src/ui/` | sign in (`auth`), the rail and its page (`drawer`), the open place (`chat`), the pages over it (`pages`) |
+| `src/ui/` | sign in (`auth`), the rail and its page (`drawer`), the open place (`chat`), the pages over it (`pages`), the book and its search (`book`) |
 
 Pictures are shared with the picture button, or by dropping a file on the
 window.
@@ -79,8 +89,11 @@ SOSH_CONFIG=some/dir cargo run -- --snapshot out.png --size 1400x860 --secs 6 \
 This draws the app offscreen (no display needed) for `--secs` seconds, then
 writes the picture; the world and games run in it too (with `SOSH_GAME` for
 the local game). `SOSH_CONFIG` holds a `session.json` with `server` and
-`token`. The `--click`s (logical pixels) land a second apart near the end.
-`--type` types into whatever has focus and presses Enter.
+`token`. The `--click`s (logical pixels) land a second apart near the end;
+`--call name[:arg]` takes a turn among them, making a host call into the
+world's game, or the book page's while that page shows (`--call book_open`, `--call book_search:bed`; `true`/`false`
+are booleans). `--type` types into whatever has focus and presses Enter
+(the book page's search field has it when the page opens).
 
 ## Not here yet
 
