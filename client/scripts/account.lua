@@ -867,6 +867,27 @@ end
 -- ---------------------------------------------------------------------------
 -- chat commands
 
+CALL_USAGE = "/call book_open | book_close | book_search <text> | book_show <item> | book_mode true|false"
+
+-- `/call <name> <rest>`: one of the book's host calls, by hand. Only those
+-- five; the rest of the line is the one argument (a boolean for book_mode).
+function Account.call_book(name, rest)
+	if name == "book_open" then
+		book_open()
+	elseif name == "book_close" then
+		book_close()
+	elseif name == "book_search" then
+		book_search(rest)
+	elseif name == "book_show" then
+		book_show(rest)
+	elseif name == "book_mode" then
+		local on = rest == "true" or rest == "on" or rest == "1"
+		book_mode(on)
+	else
+		add_chat(nil, CALL_USAGE, C_DIM)
+	end
+end
+
 -- `text` began with /: true if it was one of ours.
 function Account.command(text)
 	local words = U.words(text)
@@ -891,15 +912,12 @@ function Account.command(text)
 		Account.leave_world()
 		return true
 	end
-	-- the hooks an app hosting us would send (book.lua), typed: /hook open,
-	-- /hook search be, /hook show bed, /hook mode book
-	if cmd == "/hook" then
-		if words[2] == nil then
-			add_chat(nil, "/hook open | close | search <text> | show <item> | mode book", C_DIM)
-			return true
-		end
-		local value = text:match("^%S+%s+%S+%s+(.+)$") or ""
-		Book.on_hook(words[2], value)
+	-- the calls an app hosting us would make (book.lua), typed:
+	-- /call book_open, /call book_search be, /call book_show bed,
+	-- /call book_mode true
+	if cmd == "/call" then
+		local rest = text:match("^%S+%s+%S+%s+(.+)$") or ""
+		Account.call_book(words[2], rest)
 		return true
 	end
 	-- the book itself

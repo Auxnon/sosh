@@ -60,6 +60,32 @@ is `APP.embedded`, as in the Android app's world view: the app has the chat,
 the creator and the way home. Where nothing hosts it (`chor`, the web),
 `host` is nil or silent and nothing changes.
 
+### The book's calls
+
+The apps drive the book (`scripts/book.lua`) with the engine's host calls
+(Petrichor64's `guide/call.md`: `Instance::call` in Rust, `el.call(name,
+...args)` on the web), which call these globals by name before the next
+`loop()`:
+
+| Call | What it does |
+|---|---|
+| `book_open()` | opens the book |
+| `book_close()` | shuts it |
+| `book_search(text)` | filters the index by `text` (back to the index if a recipe is open); `""` clears it |
+| `book_show(item)` | opens that item's recipe, opening the book if it's shut |
+| `book_mode(on)` | `true`: the screen with only the book, out of any world (a session signs in but never enters a server); `false`: back to the usual screens |
+
+The game calls back with `host.call` (`Instance::calls`, or the element's
+`call` event with `detail` `{name, args}`), when there's a host:
+
+| Call | When |
+|---|---|
+| `book("open" \| "closed")` | the book opened or shut (it shuts while a station opened from it is up, and opens again after) |
+| `book_step(recipe, spread)` | what's showing changed: the recipe's item and its spread (0 the overview, then one per step); `""` and `0` on the index |
+
+`/call <name> [args]` in chat makes the same five calls by hand, e.g.
+`/call book_search cloth`, `/call book_show bed`, `/call book_mode true`.
+
 ## The world
 
 The world is a grid of **universes**. Each is 96×96 blocks of floating
@@ -98,8 +124,9 @@ click one in reach to open its screen. Pick a tool along the top (the
 bench saws and assembles), drag what goes in from the bag (or tap a slot),
 then draw the gesture on the work: a long stroke along the block at the
 veneer, a cut square across the plank at the bench, once round the
-spinning wheel, back and forth across the loom. A cleaner stroke makes
-more. What's made flies to the bag. Furniture too big for a bag asks
+spinning wheel, back and forth across the loom. Each go makes a batch
+(4 planks from 4 wood, 4 posts from 2 planks, 2 yarn from 4 wool, 2 cloth
+from 4 yarn) and a cleaner stroke makes more of it, half at worst. What's made flies to the bag. Furniture too big for a bag asks
 whether to build it there (aim it like placing, R turns it) or carry it.
 
 **Furniture**: chests, drawers, dressers, table, stool, wardrobe, bed,
@@ -139,8 +166,9 @@ into cloth.
   **R** turns furniture. A green outline shows where they'll
   go.
 - **O**: the book (type to search, left/right turn the pages, Esc closes
-  it). `/book` in chat does the same, and `/hook <key> <value>` feeds the
-  hooks an app sends (`open`, `close`, `search`, `show`, `mode book`).
+  it). `/book` in chat does the same, and `/call <name> [args]` makes the
+  calls an app makes (`book_open`, `book_close`, `book_search`,
+  `book_show`, `book_mode`; see "The book's calls").
 - **I**: the bag. With furniture open, click a bag slot to put that stack
   in and a furniture slot to take it out. Otherwise clicking a slot picks
   it to build with. **Esc** closes it.
@@ -199,6 +227,17 @@ and that turns a `conn` to `/sosh-bridge` into a channel to the page's
 (`scripts/web.lua`) sends it a cart to show and where, and a share ticket
 for the open chat (`user:<id>` `media_ticket`). The ticket can only post
 pictures into that one chat, for an hour; the page never sees the session.
+The same page is the book's bridge to the Android app. `soshCall(name, ...args)`
+calls a global function of the cart through the `<petrichor-64>` element's
+`call` (kept until the element is there): `book_open()`, `book_close()`,
+`book_search(text)`, `book_show(item)`, `book_mode(on)`. The cart's own calls
+back (`call` events on the element: `book` with `"open"` or `"closed"`,
+`book_step` with `(recipe, spread)`) go to `SoshHost.call(name, argsJson)`
+when the app put a `SoshHost` object on `window`; a browser has none. With
+`sosh-book` in the user agent the page asks for `book_mode(true)` and
+`book_open()` every second until the game says the book is open; the marker
+is read in the page, not in Lua (with no `sosh-enter/<id>` the game enters
+no world anyway).
 A cart runs on its own page, `/play/<key>` (`client/web/play.js`). Its
 Content-Security-Policy lets it fetch the engine and that one cart and
 connect nowhere, so it gets no `/socket` and no `/api`. It shows in a
@@ -301,7 +340,8 @@ Inside a server, the client also joins two channels for its universe:
     area, 0..1 each way) does a recipe step. Station steps need you in
     range of that kind of station by the server's own count (pushed as
     `stations` on `user:<id>`; nothing the client says counts), and a
-    better stroke yields more, never less than half and never none.
+    better stroke yields more of the step's batch, never less than half and
+    never none.
     Furniture too big for a bag needs `how`: `place` builds it at
     `position` (`on`, `rot`, within reach), `carry` puts it in your arms.
     Replies `step`, `item`, `n`, `score`, `how` (`bag`, `place` or

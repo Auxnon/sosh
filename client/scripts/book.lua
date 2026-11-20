@@ -19,12 +19,13 @@
 -- new left page on its back; the new right page is already under it.
 -- Backward, the other way round.
 --
--- Hooks: a host (the apps) calls the global hook(key, value): `open`,
--- `close`, `search` (the index filtered by the text), `show` (an item's
--- recipe) and `mode` (`book`: a screen with only the book). We tell it
--- `book` "open" / "closed" and `step` "<recipe>/<spread>" ("" on the
--- index) through host.hook, when the engine has it. `/hook key value` in
--- chat feeds the same handler.
+-- Calls (Petrichor64's host calls): a host (the apps) calls our globals
+-- book_open(), book_close(), book_search(text) (the index filtered by the
+-- text; "" clears it), book_show(item) (an item's recipe, opening the book)
+-- and book_mode(on) (true: a screen with only the book, false: back). We
+-- call it back with host.call("book", "open" | "closed") and
+-- host.call("book_step", recipe, spread) ("" and 0 on the index), when
+-- there's a host. `/call <name> [args]` in chat calls the same five.
 
 Book = {}
 
@@ -106,7 +107,7 @@ function Book.is_up()
 	return Book.up
 end
 
--- -- opening, closing, and the hooks
+-- -- opening, closing, and telling the host
 
 function Book.open_book()
 	if Book.up then
@@ -126,7 +127,7 @@ function Book.open_book()
 	end
 	Book.dirty = true
 	cin() -- nothing typed before it opened
-	Book.hook_out("book", "open")
+	Book.tell_open(true)
 end
 
 function Book.close()
@@ -134,7 +135,7 @@ function Book.close()
 		return
 	end
 	Book.up = false
-	Book.hook_out("book", "closed")
+	Book.tell_open(false)
 end
 
 function Book.toggle()
@@ -145,36 +146,25 @@ function Book.toggle()
 	end
 end
 
--- Tell the host something, if the engine lets us (host.hook is new).
-function Book.hook_out(key, value)
-	if host == nil or host.hook == nil then
+-- Tell the host the book opened (true) or closed, if there's a host (host
+-- is nil when sandboxed or standalone).
+function Book.tell_open(open)
+	if host == nil or host.call == nil then
 		return
 	end
-	host.hook(key, value or "")
+	local state = "closed"
+	if open then
+		state = "open"
+	end
+	host.call("book", state)
 end
 
--- From the host (or `/hook` in chat).
-function Book.on_hook(key, value)
-	if APP == nil or key == nil then
+-- Tell the host what's showing: the recipe ("" on the index) and spread.
+function Book.tell_step(recipe, spread)
+	if host == nil or host.call == nil then
 		return
 	end
-	local v = value or ""
-	if key == "open" then
-		Book.open_book()
-	elseif key == "close" then
-		Book.close()
-	elseif key == "search" then
-		Book.search(v)
-	elseif key == "show" then
-		Book.open_book()
-		Book.show(v)
-	elseif key == "mode" then
-		if v == "book" then
-			Book.enter_mode()
-		elseif v == "world" then
-			Book.leave_mode()
-		end
-	end
+	host.call("book_step", recipe, spread)
 end
 
 -- The index, filtered by `text`.
@@ -326,7 +316,7 @@ function Book.do_step(k)
 	-- the station takes over; the book comes back when it's done
 	Book.up = false
 	Book.for_station = true
-	Book.hook_out("book", "closed")
+	Book.tell_open(false)
 	Station.open(kind, nil, st, from)
 end
 
@@ -360,7 +350,7 @@ function Book.reopen()
 	if Book.for_station then
 		Book.for_station = false
 		Book.up = true
-		Book.hook_out("book", "open")
+		Book.tell_open(true)
 	end
 end
 
@@ -434,7 +424,6 @@ function Book.keys()
 		else
 			Book.dirty = true
 		end
-		Book.hook_out("search", Book.query.text)
 	end
 	if key("right", true) then
 		Book.next()
@@ -714,13 +703,16 @@ function Book.repaint()
 	Book.compose()
 	Book.dirty = false
 	-- where we are, for the host
-	local where = ""
+	local recipe = ""
+	local spread = 0
 	if v.recipe ~= nil then
-		where = v.recipe .. "/" .. tostring(v.spread)
+		recipe = v.recipe
+		spread = v.spread
 	end
+	local where = recipe .. "/" .. tostring(spread)
 	if where ~= Book.sent_step then
 		Book.sent_step = where
-		Book.hook_out("step", where)
+		Book.tell_step(recipe, spread)
 	end
 end
 
@@ -981,7 +973,12 @@ function Book.paint_overview_left(im, view, plan, rec)
 	end
 	local st = Recipes.making[item]
 	if st ~= nil then
-		Book.text(im, "takes", 12, y, P_DIM)
+		local takes = "takes"
+		local _, batch = Recipes.output(st)
+		if batch > 1 then
+			takes = "takes, makes up to " .. tostring(batch)
+		end
+		Book.text(im, takes, 12, y, P_DIM)
 		y = y + 12
 		local inputs = st.inputs
 		for i = 1, #inputs do
@@ -1087,7 +1084,11 @@ function Book.paint_step_left(im, view, plan, e, rec)
 		y = Book.para(im, goes, 12, y, 19, P_DIM)
 	end
 	y = y + 8
-	Book.text(im, "put in", 12, y, P_DIM)
+	local put = "put in"
+	if e.runs > 1 then
+		put = "put in, each go"
+	end
+	Book.text(im, put, 12, y, P_DIM)
 	y = y + 14
 	local inputs = st.inputs
 	for i = 1, #inputs do
@@ -1249,7 +1250,55 @@ function book_screen()
 	Fly.draw_labels()
 end
 
--- The host's events, one at a time, before loop() (Petrichor64's hook API).
-function hook(key, value)
-	Book.on_hook(key, value)
+-- -- what a host calls (Petrichor64 calls these by name, in order, before
+-- loop()); `/call` in chat calls them too (account.lua)
+
+function book_open()
+	if APP == nil then
+		return
+	end
+	Book.open_book()
+end
+
+function book_close()
+	if APP == nil then
+		return
+	end
+	Book.close()
+end
+
+-- The index filtered by `text` ("" clears it).
+function book_search(text)
+	if APP == nil then
+		return
+	end
+	local t = ""
+	if text ~= nil then
+		t = tostring(text)
+	end
+	Book.search(t)
+end
+
+-- That item's recipe, opening the book if it's shut.
+function book_show(item)
+	if APP == nil then
+		return
+	end
+	Book.open_book()
+	if item ~= nil then
+		local name = tostring(item)
+		Book.show(name)
+	end
+end
+
+-- true: the screen with only the book, out of any world; false: back.
+function book_mode(on)
+	if APP == nil then
+		return
+	end
+	if on == true then
+		Book.enter_mode()
+	else
+		Book.leave_mode()
+	end
 end

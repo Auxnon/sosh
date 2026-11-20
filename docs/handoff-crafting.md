@@ -27,6 +27,26 @@ For the agent building the crafting system. Written 2026-11-17 against `main`
 - **Still to do:** the sim's crafting rules (in progress), wiring them into
   `Sosh.Sim` and the action channel, the game client, both apps, the models.
 
+## Update, 2026-11-20: calls, not hooks
+
+The engine's `hook(key, value)` was replaced before it merged: Petrichor64
+`feat/call` (18cf493, which sosh is pinned to) lets the host call any global
+function of the cart by name, and the cart call back with `host.call`. Read
+"hook" below as that. The book's contract (`client/README.md`, "The book's
+calls"):
+- Host to game: `book_open()`, `book_close()`, `book_search(text)`,
+  `book_show(item)`, `book_mode(on)`.
+- Game to host: `host.call("book", "open" | "closed")` and
+  `host.call("book_step", recipe, spread)`.
+- `/call <name> [arg]` in the game's chat does the same by hand.
+
+Built since the last update: the server's crafting, the book and stations in
+the game, the desktop app's book page (a third engine instance in book mode)
+and its search field over the world, and the Android book screen and web
+bridge (compiled, never run). On the web nothing can call the game until
+sosh's page holds the engine itself, in a `<petrichor-64>` element, instead
+of patching the engine's stock page.
+
 ## Context
 
 The user wants a crafting system built around a **blueprints book**: a 3D book

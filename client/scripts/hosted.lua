@@ -10,8 +10,9 @@
 --     nobody's signed in yet: only the sea and the sky, slowly turning,
 --     for the app's sign-in page to sit on
 --
--- In book mode (the hook "mode" "book", book.lua) a session signs in the
--- same way but never goes into a server: the book is the whole screen.
+-- In book mode (the host calls book_mode(true), book.lua) a session signs
+-- in the same way but never goes into a server: the book is the whole
+-- screen.
 --
 -- `host` is nil where nothing hosts us (chor, the web), and quiet when the
 -- host never writes: the game runs as ever.

@@ -67,7 +67,7 @@ function main()
 	APP.tool = "walk"
 	-- what the build tool places (an item in the bag)
 	APP.build_item = nil
-	-- the book alone on the screen, never in a universe (hook "mode")
+	-- the book alone on the screen, never in a universe (book_mode(true))
 	APP.book_mode = false
 	-- quarter turns for furniture (R)
 	APP.rot = 0
