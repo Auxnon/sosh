@@ -221,6 +221,9 @@ into cloth.
   app): left stick or d-pad walk, right stick and the bumpers turn the
   camera, A takes the helm or lets go, B closes the bag, X is pose (G),
   Y the bag, the triggers climb and sink at a helm, and back asks a helper.
+- **Heights**: a block at z fills z..z+1 to the game and the server, but
+  the engine draws it centred on z, so every entity and the camera are
+  drawn half a block lower to match (`DRAW_DZ`, `scripts/util.lua`).
 
 ### Chat, pictures and shared games
 

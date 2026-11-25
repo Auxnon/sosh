@@ -886,7 +886,7 @@ function Fly.launch(item, n, x, y, z)
 		k = 1
 	end
 	for i = 1, k do
-		local e = make(model, x, y, z, scale)
+		local e = make(model, x, y, z + DRAW_DZ, scale)
 		local f = {}
 		f.ent = e
 		f.x = x
@@ -937,7 +937,7 @@ function Fly.update(dt)
 			local lift = sin(t * math.pi) * 0.6
 			e.x = U.lerp(f.x, ex, k) + A.ux * lift
 			e.y = U.lerp(f.y, ey, k) + A.uy * lift
-			e.z = U.lerp(f.z, ez, k) + A.uz * lift
+			e.z = U.lerp(f.z, ez, k) + A.uz * lift + DRAW_DZ
 			f.spin = f.spin + dt * 7
 			e.rz = f.spin
 			e.rx = f.spin * 0.6

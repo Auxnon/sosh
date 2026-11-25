@@ -491,7 +491,7 @@ function Book.place()
 	local rz = CAM.az - math.pi / 2
 	e.x = x
 	e.y = y
-	e.z = z
+	e.z = z + DRAW_DZ
 	e.rx = rx
 	e.ry = 0
 	e.rz = rz

@@ -48,5 +48,5 @@ function world_below(kind)
 	if kind == "land" then
 		model = "land"
 	end
-	BELOW = make(model, 0, 0, BELOW_Z, 1)
+	BELOW = make(model, 0, 0, BELOW_Z + DRAW_DZ, 1)
 end

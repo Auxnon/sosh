@@ -1,5 +1,13 @@
 -- util — small helpers silt's stdlib doesn't have.
 --
+-- Heights: to the game (and the server) a block at z fills z..z+1, so feet
+-- on it are at z+1. The engine draws a block centred on its z, half a block
+-- lower than that. So everything else is drawn half a block lower too:
+-- every entity put in the world gets DRAW_DZ added to its z, and so does
+-- the camera (place_camera, the creator's). Positions, rays and UI.project
+-- stay in the game's own heights. (A ship's own entity doesn't: its blocks
+-- are tiles in it, centred the same way.)
+--
 -- silt quirks this codebase works around (see petrichor64/SILT-BUGS.md):
 --  * a table constructor containing a local, assigned to a field or index
 --    inside a loop, miscompiles: build it into a `local` first, then assign.
@@ -9,6 +17,8 @@
 --  * no os/clock on the web build (clock() panics there): the engine's now()
 --    is the clock (U.tick), and older engines without it count frames, at
 --    roughly FPS frames a second. Movement uses it; timers still count frames.
+
+DRAW_DZ = -0.5
 
 U = {}
 

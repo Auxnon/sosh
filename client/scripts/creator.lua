@@ -119,7 +119,7 @@ function creator_screen()
 	local none = {}
 	c.preview:pose(0, 0, PREVIEW_Z, c.facing, "idle", none)
 	local h = 1.45 * (spec.height or 1)
-	local eye = { 3.4, 1.0, PREVIEW_Z + h * 0.6 }
+	local eye = { 3.4, 1.0, PREVIEW_Z + h * 0.6 + DRAW_DZ }
 	local look = { 3.14159, -0.02 }
 	cam({ pos = eye, rot = look })
 

@@ -1096,7 +1096,8 @@ function in_reach(me, cell, on)
 end
 
 -- The outline models (cursor.glb, ghost.glb) span a cell from its base, but
--- blocks draw centred on it, so the outlines sit this much lower to match,
+-- blocks draw centred on it, so the outlines sit this much lower to match
+-- (DRAW_DZ, util.lua),
 -- and a hair higher than that so their bottom doesn't z-fight the ground.
 OUTLINE_DZ = -0.5 + 0.0001
 

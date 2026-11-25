@@ -131,7 +131,7 @@ function Blocks.set(x, y, z, id)
 			tile(nil, x, y, z, 0)
 		end
 		if ent == nil then
-			ent = make(name, x, y, z, 1)
+			ent = make(name, x, y, z + DRAW_DZ, 1)
 			Blocks.models[k] = ent
 		end
 	else

@@ -54,7 +54,7 @@ function Farm.set(pos, stage)
 	-- hoisted: as `crop.ent = make("carrot" .. tostring(s), ...)` silt calls
 	-- the wrong value (petrichor64 SILT-BUGS.md #7)
 	local model = "carrot" .. tostring(s)
-	local ent = make(model, x, y, z, 1)
+	local ent = make(model, x, y, z + DRAW_DZ, 1)
 	local crop = {}
 	crop.stage = s
 	crop.ent = ent
@@ -91,7 +91,7 @@ function Herd.put(row)
 		c.z = row[4]
 		c.h = row[5]
 		c.moo = 0
-		c.ent = make("cow", c.x, c.y, c.z, 1)
+		c.ent = make("cow", c.x, c.y, c.z + DRAW_DZ, 1)
 		Herd.cows[id] = c
 	end
 	c.sx = row[2]
@@ -144,7 +144,7 @@ function Herd.update(me)
 		local e = c.ent
 		e.x = c.x
 		e.y = c.y
-		e.z = c.z
+		e.z = c.z + DRAW_DZ
 		e.rz = c.h
 	end
 end
@@ -257,7 +257,7 @@ function Flock.add(id, x, y, z, h, woolly)
 		sh.h = h
 		sh.woolly = woolly
 		local model = Flock.model(woolly)
-		local ent = make(model, x, y, z, 1)
+		local ent = make(model, x, y, z + DRAW_DZ, 1)
 		sh.ent = ent
 		Flock.sheep[id] = sh
 	end
@@ -296,7 +296,7 @@ function Flock.wool(p)
 	sh.woolly = woolly
 	sh.ent:kill()
 	local model = Flock.model(woolly)
-	local ent = make(model, sh.x, sh.y, sh.z, 1)
+	local ent = make(model, sh.x, sh.y, sh.z + DRAW_DZ, 1)
 	sh.ent = ent
 end
 
@@ -310,7 +310,7 @@ function Flock.update()
 		local e = sh.ent
 		e.x = sh.x
 		e.y = sh.y
-		e.z = sh.z
+		e.z = sh.z + DRAW_DZ
 		e.rz = sh.h
 	end
 end

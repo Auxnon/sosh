@@ -252,7 +252,7 @@ function Character:pose(x, y, z, facing, clip, turns, flat)
 	local k = self.k
 	e.x = x
 	e.y = y
-	e.z = z + self.lift
+	e.z = z + self.lift + DRAW_DZ
 	e.rz = facing
 	e.rx = 0
 	e.ry = 0

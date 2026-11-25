@@ -196,7 +196,7 @@ function Ships.update(dt)
 			local me = m.ent
 			me.x = mx
 			me.y = my
-			me.z = mz
+			me.z = mz + DRAW_DZ
 			me.rz = s.h
 		end
 	end

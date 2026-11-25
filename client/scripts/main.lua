@@ -833,7 +833,8 @@ function place_camera(x, y, z)
 		CAM.x = CAM.x + (fy / rl) * side
 		CAM.y = CAM.y - (fx / rl) * side
 	end
-	local pos = { CAM.x, CAM.y, CAM.z }
+	-- drawn half a block lower, like everything in the world (DRAW_DZ)
+	local pos = { CAM.x, CAM.y, CAM.z + DRAW_DZ }
 	local rot = { CAM.az, CAM.alt }
 	cam({ pos = pos, rot = rot })
 end

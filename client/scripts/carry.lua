@@ -234,7 +234,7 @@ function Carry.update()
 				local p = av.hold
 				e.x = p[1]
 				e.y = p[2]
-				e.z = p[3]
+				e.z = p[3] + DRAW_DZ
 				e.rz = p[4]
 			else
 				e.z = -1000

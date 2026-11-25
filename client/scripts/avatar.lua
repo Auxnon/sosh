@@ -1030,7 +1030,7 @@ function Dust.kick(x, y, z, vx, vy)
 	d.t = 0
 	d.k = 0.25 + rnd() * 0.15
 	-- hoisted (SILT-BUGS.md #7)
-	local ent = make("dust", d.x, d.y, d.z, d.k)
+	local ent = make("dust", d.x, d.y, d.z + DRAW_DZ, d.k)
 	d.ent = ent
 	table.insert(Dust.list, d)
 end
@@ -1054,7 +1054,7 @@ function Dust.update(dt)
 			local p = d.t / DUST_LIFE
 			d.ent.x = d.x
 			d.ent.y = d.y
-			d.ent.z = d.z
+			d.ent.z = d.z + DRAW_DZ
 			d.ent.scale = d.k * (1 + p * 1.5) * (1 - p * p)
 		end
 		i = i - 1

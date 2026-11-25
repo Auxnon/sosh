@@ -325,7 +325,7 @@ function Chips.burst(j, n)
 		c.t = 0
 		c.k = 0.08 + rnd() * 0.07
 		-- hoisted (SILT-BUGS.md #7)
-		local ent = make(tex, c.x, c.y, c.z, c.k)
+		local ent = make(tex, c.x, c.y, c.z + DRAW_DZ, c.k)
 		c.ent = ent
 		table.insert(Chips.list, c)
 	end
@@ -361,7 +361,7 @@ function Chips.update(dt)
 			local p = c.t / CHIP_LIFE
 			c.ent.x = c.x
 			c.ent.y = c.y
-			c.ent.z = c.z
+			c.ent.z = c.z + DRAW_DZ
 			c.ent.scale = c.k * (1 - p * p)
 		end
 		i = i - 1

@@ -202,7 +202,7 @@ function Furn.put(e, on, c, rot)
 	end
 	e.x = x
 	e.y = y
-	e.z = z
+	e.z = z + DRAW_DZ
 	e.rz = Furn.rz(rot) + h
 end
 
@@ -510,7 +510,7 @@ function Furn.carry(f)
 	local s = sin(heading)
 	e.x = cx + ox * c - oy * s
 	e.y = cy + ox * s + oy * c
-	e.z = sz / n
+	e.z = sz / n + DRAW_DZ
 	e.rz = heading
 end
 
@@ -546,7 +546,8 @@ function Furn.show_ghost(cells, on)
 		if i <= n then
 			Furn.put(g, on, cells[i], 0)
 			if g.z > -1000 then
-				g.z = g.z + OUTLINE_DZ
+				-- Furn.put has it down with the blocks: only the hair over the ground
+				g.z = g.z + OUTLINE_DZ - DRAW_DZ
 			end
 		else
 			g.z = -1000
