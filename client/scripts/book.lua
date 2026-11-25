@@ -46,6 +46,9 @@ BOOK_SPAN_H = 2
 -- how much of the world's view it takes at most, across and up
 BOOK_FILL_W = 0.86
 BOOK_FILL_H = 0.8
+-- how far off its fit may be before it moves again: a share of its size, and pixels up or down
+BOOK_FIT_SLACK = 0.02
+BOOK_LIFT_SLACK = 2
 -- tipped back from facing the camera, as if lying on a lectern
 BOOK_LEAN = 0.42
 BOOK_OPEN_TIME = 0.45 -- seconds to open or shut
@@ -560,10 +563,17 @@ function Book.fit(B)
 	local rh = h / (gui.h * BOOK_FILL_H)
 	local r = math.max(rw, rh)
 	r = U.clamp(r, 0.5, 2)
-	Book.dist = U.clamp(Book.dist * r, 1, 40)
+	-- the corners land on whole pixels, so it's never exactly right: left
+	-- to chase the last pixel it would breathe in and out for ever (a shake,
+	-- on a big screen). Near enough is where it stays.
+	if math.abs(r - 1) > BOOK_FIT_SLACK then
+		Book.dist = U.clamp(Book.dist * r, 1, 40)
+	end
 	local mid = (miny + maxy) / 2
 	local want = gui.h * 0.52
-	Book.lift = U.clamp(Book.lift + (want - mid) * 0.5, -gui.h * 0.4, gui.h * 0.4)
+	if math.abs(want - mid) > BOOK_LIFT_SLACK then
+		Book.lift = U.clamp(Book.lift + (want - mid) * 0.5, -gui.h * 0.4, gui.h * 0.4)
+	end
 end
 
 -- Smooth in and out, 0..1.
