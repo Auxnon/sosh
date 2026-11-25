@@ -40,7 +40,8 @@ DRAG_TILT = 2
 -- asks a helper for a hand; B takes the helm we stand at, or lets go;
 -- Enter opens chat.
 function world_keys(me)
-	if key("enter", true) then
+	-- (in the apps chat is theirs: there's no line of ours to type on)
+	if key("enter", true) and not APP.embedded then
 		APP.typing = true
 		APP.draft.text = ""
 		cin() -- swallow anything typed this frame

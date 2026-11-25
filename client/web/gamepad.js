@@ -4,22 +4,34 @@
 // keyboard would. The Android app's world view does this natively instead
 // (it can see controllers the web view can't), so this stays off there.
 //
-//   left stick / d-pad   walk (w a s d)        A   take the helm / let go (b)
-//   right stick, LB/RB   turn the camera (q e)  B   close the bag (escape)
-//   RT / LT              climb / sink at a helm X   pose, put down (g)
-//   back                 ask a helper (h)       Y   bag (i)
+//   left stick / d-pad   walk, steer (arrows)   A      take the helm / let go (b)
+//   right stick, LB/RB   turn the camera (q e)  B      close what's open (escape)
+//   RT / LT              climb / sink at a helm X      pose, put down (g)
+//   view (back)          ask a helper (h)       Y      bag (i)
+//   menu (start)         the book (o)           L3/R3  what the tool uses (z x)
+//
+// While the book is open its keys type into its search, so a controller only
+// turns its pages (left, right) and shuts it (B, menu).
 (function () {
   if (navigator.userAgent.includes("sosh-token/")) return;
 
   const DEAD = 0.4;
   const BUTTONS = {
-    0: "b", 1: "Escape", 2: "g", 3: "i", 4: "q", 5: "e", 6: "c", 7: " ", 8: "h",
-    12: "w", 13: "s", 14: "a", 15: "d",
+    0: "b", 1: "Escape", 2: "g", 3: "i", 4: "q", 5: "e", 6: "c", 7: " ", 8: "h", 9: "o", 10: "z", 11: "x",
+    12: "ArrowUp", 13: "ArrowDown", 14: "ArrowLeft", 15: "ArrowRight",
   };
   const KEYS = {
-    w: "KeyW", a: "KeyA", s: "KeyS", d: "KeyD", q: "KeyQ", e: "KeyE",
-    b: "KeyB", Escape: "Escape", g: "KeyG", i: "KeyI", c: "KeyC", " ": "Space", h: "KeyH",
+    ArrowUp: "ArrowUp", ArrowDown: "ArrowDown", ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight",
+    q: "KeyQ", e: "KeyE", b: "KeyB", Escape: "Escape", g: "KeyG", i: "KeyI",
+    c: "KeyC", " ": "Space", h: "KeyH", o: "KeyO", z: "KeyZ", x: "KeyX",
   };
+  const IN_BOOK = new Set(["ArrowLeft", "ArrowRight", "Escape"]);
+  // whether the game's book is open: it says so with host.call("book", ...)
+  let book = false;
+  addEventListener("call", (e) => {
+    const d = e.detail || {};
+    if (d.name === "book" && d.args) book = d.args[0] === "open";
+  }, true);
   const held = new Set();
 
   function send(key, down) {
@@ -31,19 +43,24 @@
   }
 
   function poll() {
-    const want = new Set();
+    let want = new Set();
     for (const pad of navigator.getGamepads ? navigator.getGamepads() : []) {
       if (!pad || !pad.connected) continue;
       const [lx = 0, ly = 0, rx = 0] = pad.axes;
-      if (ly < -DEAD) want.add("w");
-      if (ly > DEAD) want.add("s");
-      if (lx < -DEAD) want.add("a");
-      if (lx > DEAD) want.add("d");
+      if (ly < -DEAD) want.add("ArrowUp");
+      if (ly > DEAD) want.add("ArrowDown");
+      if (lx < -DEAD) want.add("ArrowLeft");
+      if (lx > DEAD) want.add("ArrowRight");
       if (rx < -DEAD) want.add("q");
       if (rx > DEAD) want.add("e");
       pad.buttons.forEach((b, i) => {
         if (b.pressed && BUTTONS[i]) want.add(BUTTONS[i]);
       });
+    }
+    if (book) {
+      // menu opened it, so menu shuts it
+      if (want.has("o")) want.add("Escape");
+      want = new Set([...want].filter((k) => IN_BOOK.has(k)));
     }
     for (const k of held) if (!want.has(k)) { held.delete(k); send(k, false); }
     for (const k of want) if (!held.has(k)) { held.add(k); send(k, true); }

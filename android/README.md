@@ -41,7 +41,7 @@ release builds only allow https.
 | `ui/CreatorScreen.kt` | the character creator: a front view drawn on a canvas, face sprites dragged into place |
 | `ui/GameWeb.kt` | what the world and the book screen share: `gameWebView` (the web view of the server's game page, its user agent marks, navigation kept on the server's origin), `SoshHost` (the page's calls to the app), `soshCall` (the app's calls to the game, arguments JSON-encoded) and the book's search field |
 | `ui/BookScreen.kt` | the blueprints book on its own, from the server rail: the game in book mode in a web view, the search field over it |
-| `ui/WorldPane.kt` | the world: the web game in a web view, and `Gamepad`, which hands a controller's buttons and sticks to it |
+| `ui/WorldPane.kt` | the world: the web game in a web view, and `Gamepad`, which hands a controller's buttons and sticks, and a keyboard's keys, to it |
 
 Item icons (`res/drawable-nodpi/item_*.png`) are the game's own block
 textures plus a few drawn to match: `python3 android/tools/item_icons.py`.
@@ -84,9 +84,12 @@ The fonts are under the SIL Open Font License (`FONTS.md`).
   socket signs in by it, and the game skips its own sign-in, opens that
   server and, told it's in the app, leaves chat, looks and the way home
   to the app. Tap the world to walk there (or act with the tool), drag it
-  to turn the camera. A controller works too: the activity hands its
-  events to `Gamepad`, which presses the game's keys (the mapping is in
-  `client/README.md`).
+  to turn the camera. A controller and a keyboard plugged into the
+  phone work too: the activity hands their events to `Gamepad` before
+  anything else sees them, and it presses the game's keys on the engine's
+  canvas (a controller's mapping is in `client/README.md`; a keyboard's
+  keys go as themselves, unless a text field of the app's is being typed
+  into).
 - **The crafting book.** In a world, when the game opens its blueprints
   book it calls `SoshHost.call("book", '["open"]')` and a search field
   slides in over the top of the world (an x closes the book, `book_close`);

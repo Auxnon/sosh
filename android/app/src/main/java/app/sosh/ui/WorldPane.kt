@@ -2,6 +2,7 @@ package app.sosh.ui
 
 import android.annotation.SuppressLint
 import android.view.InputDevice
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.webkit.WebView
@@ -30,14 +31,15 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import app.sosh.AppState
 import kotlinx.coroutines.delay
+import org.json.JSONObject
 
 /**
  * A server's world: the same web game the browser gets, in a web view. Its
  * socket signs in by user agent (`sosh-token/<token>`), the game opens this
  * server straight away (`sosh-enter/<id>`), and, knowing it's in the app,
  * leaves chat, looks and the way home to the app's own screens. Tapping the
- * world walks there and dragging it turns the camera; a controller works
- * too (`Gamepad`).
+ * world walks there and dragging it turns the camera; a controller and a
+ * keyboard work too (`Gamepad`).
  *
  * Its page tells the app when the crafting book opens or closes (`SoshHost`,
  * client/web/bridge.js): `book` says so, and the search field sits over it.
@@ -84,6 +86,7 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, book: BookState, mo
         if (shown) {
             w.onResume()
             Gamepad.web = w
+            Gamepad.book = { book.open }
         } else {
             w.onPause()
             if (Gamepad.web == w) Gamepad.web = null
@@ -155,15 +158,25 @@ private fun nudge(w: WebView) {
 }
 
 /**
- * A controller, pressing the game's keys in the world that's showing. The
- * web view can't be trusted to hand controllers to the page, so the
- * activity passes their events here (`MainActivity`). The same mapping as
- * the browser's (`client/web/gamepad.js`):
+ * A controller or a keyboard plugged into the phone, pressing the game's
+ * keys in the world that's showing. The web view can't be trusted to hand
+ * either to the page (it needs the focus, and the canvas in it the page's),
+ * so the activity passes their events here first (`MainActivity`) and they
+ * go to the engine's canvas as the browser's own key events would.
  *
- *   left stick / d-pad   walk (w a s d)        A   take the helm / let go (b)
- *   right stick, L1/R1   turn the camera (q e)  B   close the bag (escape)
- *   R2 / L2              climb / sink at a helm X   pose, put down (g)
- *   select               ask a helper (h)       Y   bag (i)
+ * A keyboard's keys go as themselves (the game's keys are in
+ * client/scripts/tools.lua), unless something of the app's is being typed
+ * into. A controller, laid out like an Xbox one, the same as the browser's
+ * (`client/web/gamepad.js`):
+ *
+ *   left stick / d-pad   walk, steer (arrows)   A      take the helm / let go (b)
+ *   right stick, LB/RB   turn the camera (q e)  B      close what's open (escape)
+ *   RT / LT              climb / sink at a helm X      pose, put down (g)
+ *   view (back)          ask a helper (h)       Y      bag (i)
+ *   menu (start)         the book (o)           L3/R3  what the tool uses (z x)
+ *
+ * While the book is open its keys type into its search, so a controller
+ * only turns its pages (left, right) and shuts it (B, menu).
  */
 object Gamepad {
     var web: WebView? = null
@@ -172,10 +185,14 @@ object Gamepad {
             field = v
         }
 
+    /** Whether the world's book is open (its keys are a search field's then). */
+    var book: () -> Boolean = { false }
+
     private const val DEAD = 0.4f
     private val CODES = mapOf(
-        "w" to "KeyW", "a" to "KeyA", "s" to "KeyS", "d" to "KeyD", "q" to "KeyQ", "e" to "KeyE",
-        "b" to "KeyB", "Escape" to "Escape", "g" to "KeyG", "i" to "KeyI", "c" to "KeyC", " " to "Space", "h" to "KeyH",
+        "ArrowUp" to "ArrowUp", "ArrowDown" to "ArrowDown", "ArrowLeft" to "ArrowLeft", "ArrowRight" to "ArrowRight",
+        "q" to "KeyQ", "e" to "KeyE", "b" to "KeyB", "Escape" to "Escape", "g" to "KeyG", "i" to "KeyI",
+        "c" to "KeyC", " " to "Space", "h" to "KeyH", "o" to "KeyO", "z" to "KeyZ", "x" to "KeyX",
     )
     private val BUTTONS = mapOf(
         KeyEvent.KEYCODE_BUTTON_A to "b",
@@ -187,32 +204,103 @@ object Gamepad {
         KeyEvent.KEYCODE_BUTTON_L2 to "c",
         KeyEvent.KEYCODE_BUTTON_R2 to " ",
         KeyEvent.KEYCODE_BUTTON_SELECT to "h",
-        KeyEvent.KEYCODE_DPAD_UP to "w",
-        KeyEvent.KEYCODE_DPAD_DOWN to "s",
-        KeyEvent.KEYCODE_DPAD_LEFT to "a",
-        KeyEvent.KEYCODE_DPAD_RIGHT to "d",
+        KeyEvent.KEYCODE_BUTTON_START to "o",
+        KeyEvent.KEYCODE_BUTTON_THUMBL to "z",
+        KeyEvent.KEYCODE_BUTTON_THUMBR to "x",
+        KeyEvent.KEYCODE_DPAD_UP to "ArrowUp",
+        KeyEvent.KEYCODE_DPAD_DOWN to "ArrowDown",
+        KeyEvent.KEYCODE_DPAD_LEFT to "ArrowLeft",
+        KeyEvent.KEYCODE_DPAD_RIGHT to "ArrowRight",
+    )
+    // all a controller may press while the book is open
+    private val IN_BOOK = setOf("ArrowLeft", "ArrowRight", "Escape")
+
+    // a keyboard's keys that aren't a character: Android's code to the page's `key` and `code`
+    private val NAMED = mapOf(
+        KeyEvent.KEYCODE_DPAD_UP to ("ArrowUp" to "ArrowUp"),
+        KeyEvent.KEYCODE_DPAD_DOWN to ("ArrowDown" to "ArrowDown"),
+        KeyEvent.KEYCODE_DPAD_LEFT to ("ArrowLeft" to "ArrowLeft"),
+        KeyEvent.KEYCODE_DPAD_RIGHT to ("ArrowRight" to "ArrowRight"),
+        KeyEvent.KEYCODE_ENTER to ("Enter" to "Enter"),
+        KeyEvent.KEYCODE_NUMPAD_ENTER to ("Enter" to "NumpadEnter"),
+        KeyEvent.KEYCODE_ESCAPE to ("Escape" to "Escape"),
+        KeyEvent.KEYCODE_TAB to ("Tab" to "Tab"),
+        KeyEvent.KEYCODE_DEL to ("Backspace" to "Backspace"),
+        KeyEvent.KEYCODE_FORWARD_DEL to ("Delete" to "Delete"),
+        KeyEvent.KEYCODE_SHIFT_LEFT to ("Shift" to "ShiftLeft"),
+        KeyEvent.KEYCODE_SHIFT_RIGHT to ("Shift" to "ShiftRight"),
+        KeyEvent.KEYCODE_SPACE to (" " to "Space"),
+    )
+    // and the ones that are, by where they sit on the board
+    private val PUNCTUATION = mapOf(
+        KeyEvent.KEYCODE_COMMA to "Comma", KeyEvent.KEYCODE_PERIOD to "Period", KeyEvent.KEYCODE_SLASH to "Slash",
+        KeyEvent.KEYCODE_SEMICOLON to "Semicolon", KeyEvent.KEYCODE_APOSTROPHE to "Quote",
+        KeyEvent.KEYCODE_LEFT_BRACKET to "BracketLeft", KeyEvent.KEYCODE_RIGHT_BRACKET to "BracketRight",
+        KeyEvent.KEYCODE_BACKSLASH to "Backslash", KeyEvent.KEYCODE_MINUS to "Minus",
+        KeyEvent.KEYCODE_EQUALS to "Equal", KeyEvent.KEYCODE_GRAVE to "Backquote",
     )
 
     // what the buttons and the sticks each hold down; the game sees both
     private val buttons = mutableSetOf<String>()
     private var axes = setOf<String>()
     private val held = mutableSetOf<String>()
+    // a keyboard's keys that are down, by the page's `code`, with the `key` each went down as
+    private val typed = mutableMapOf<String, String>()
 
     private fun fromController(source: Int) =
         source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
             source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 
-    /** A controller's button; true if the game took it. */
-    fun key(e: KeyEvent): Boolean {
+    /**
+     * A controller's button or a keyboard's key; true if the game took it.
+     * [typing] says whether the app has a text field of its own being typed
+     * into, which keeps the keyboard.
+     */
+    fun key(e: KeyEvent, typing: () -> Boolean): Boolean {
         if (web == null) return false
         val source = e.device?.sources ?: e.source
-        if (!fromController(source)) return false
+        if (!fromController(source)) return keyboard(e, typing)
         val k = BUTTONS[e.keyCode] ?: return false
         when (e.action) {
             KeyEvent.ACTION_DOWN -> if (e.repeatCount == 0) buttons.add(k)
             KeyEvent.ACTION_UP -> buttons.remove(k)
         }
         sync()
+        return true
+    }
+
+    /** The page's `key` and `code` for a keyboard's key, if it's one the game could want. */
+    private fun named(e: KeyEvent): Pair<String, String>? {
+        NAMED[e.keyCode]?.let { return it }
+        val code = when (e.keyCode) {
+            in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> "Key" + ('A' + (e.keyCode - KeyEvent.KEYCODE_A))
+            in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> "Digit" + (e.keyCode - KeyEvent.KEYCODE_0)
+            in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 -> "Numpad" + (e.keyCode - KeyEvent.KEYCODE_NUMPAD_0)
+            else -> PUNCTUATION[e.keyCode] ?: return null
+        }
+        val char = e.unicodeChar
+        if (char == 0 || char and KeyCharacterMap.COMBINING_ACCENT != 0) return null
+        return String(Character.toChars(char)) to code
+    }
+
+    /** A keyboard's key, to the game as itself. System keys and shortcuts stay the system's. */
+    private fun keyboard(e: KeyEvent, typing: () -> Boolean): Boolean {
+        if (e.isCtrlPressed || e.isAltPressed || e.isMetaPressed) return false
+        val (key, code) = named(e) ?: return false
+        when (e.action) {
+            KeyEvent.ACTION_DOWN -> {
+                // a key already down is ours to the end; a new one isn't while the app is typed into
+                if (code !in typed && typing()) return false
+                typed[code] = key
+                press(key, code, true, e.repeatCount > 0)
+            }
+            KeyEvent.ACTION_UP -> {
+                // let go as what went down (shift may have changed since)
+                val was = typed.remove(code) ?: return false
+                press(was, code, false)
+            }
+            else -> return false
+        }
         return true
     }
 
@@ -223,10 +311,10 @@ object Gamepad {
         val x = e.getAxisValue(MotionEvent.AXIS_X) + e.getAxisValue(MotionEvent.AXIS_HAT_X)
         val y = e.getAxisValue(MotionEvent.AXIS_Y) + e.getAxisValue(MotionEvent.AXIS_HAT_Y)
         val rx = e.getAxisValue(MotionEvent.AXIS_Z)
-        if (y < -DEAD) want.add("w")
-        if (y > DEAD) want.add("s")
-        if (x < -DEAD) want.add("a")
-        if (x > DEAD) want.add("d")
+        if (y < -DEAD) want.add("ArrowUp")
+        if (y > DEAD) want.add("ArrowDown")
+        if (x < -DEAD) want.add("ArrowLeft")
+        if (x > DEAD) want.add("ArrowRight")
         if (rx < -DEAD) want.add("q")
         if (rx > DEAD) want.add("e")
         if (maxOf(e.getAxisValue(MotionEvent.AXIS_RTRIGGER), e.getAxisValue(MotionEvent.AXIS_GAS)) > 0.5f) want.add(" ")
@@ -237,23 +325,30 @@ object Gamepad {
     }
 
     private fun sync() {
-        val want = buttons + axes
-        for (k in held.toList()) if (k !in want) { held.remove(k); press(k, false) }
-        for (k in want) if (k !in held) { held.add(k); press(k, true) }
+        var want = buttons + axes
+        if (book()) {
+            // menu opened it, so menu shuts it
+            if ("o" in want) want = want + "Escape"
+            want = want.filterTo(mutableSetOf()) { it in IN_BOOK }
+        }
+        for (k in held.toList()) if (k !in want) { held.remove(k); press(k, CODES.getValue(k), false) }
+        for (k in want) if (k !in held) { held.add(k); press(k, CODES.getValue(k), true) }
     }
 
     /** Let go of everything, so nothing stays held in a world we've left. */
     private fun release() {
         buttons.clear()
         axes = emptySet()
-        sync()
+        for (k in held.toList()) { held.remove(k); press(k, CODES.getValue(k), false) }
+        for ((code, key) in typed.toList()) press(key, code, false)
+        typed.clear()
     }
 
-    private fun press(k: String, down: Boolean) {
+    private fun press(key: String, code: String, down: Boolean, repeat: Boolean = false) {
         val type = if (down) "keydown" else "keyup"
         web?.evaluateJavascript(
-            "(function(){var t=document.querySelector('canvas')||document.body;" +
-                "t.dispatchEvent(new KeyboardEvent('$type',{key:'$k',code:'${CODES[k]}',bubbles:true}));})()",
+            "(function(){var t=document.querySelector('petrichor-64 canvas')||document.querySelector('canvas')||document.body;" +
+                "t.dispatchEvent(new KeyboardEvent('$type',{key:${JSONObject.quote(key)},code:'$code',repeat:$repeat,bubbles:true}));})()",
             null,
         )
     }

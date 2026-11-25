@@ -217,10 +217,13 @@ into cloth.
   carry (one cell ahead), let go of the helm, or sit and stand.
 - **Q/E, right-drag, or drag the world**: orbit the camera. **Scroll**: zoom.
   Clicks on the world act when let go, so a drag never digs or walks.
-- **A controller** (`client/web/gamepad.js` in the browser, natively in the
-  app): left stick or d-pad walk, right stick and the bumpers turn the
-  camera, A takes the helm or lets go, B closes the bag, X is pose (G),
-  Y the bag, the triggers climb and sink at a helm, and back asks a helper.
+- **A controller**, laid out like an Xbox one (`client/web/gamepad.js` in
+  the browser, natively in the app): left stick or d-pad walk and steer
+  (the arrow keys), right stick and the bumpers turn the camera, A takes
+  the helm or lets go, B closes what's open, X is pose (G), Y the bag, the
+  triggers climb and sink at a helm, view (back) asks a helper, menu
+  (start) opens the book, and the sticks' clicks change what the tool
+  uses (Z/X). With the book open it only turns the pages and shuts it.
 - **Heights**: a block at z fills z..z+1 to the game and the server, but
   the engine draws it centred on z, so every entity and the camera are
   drawn half a block lower to match (`DRAW_DZ`, `scripts/util.lua`).

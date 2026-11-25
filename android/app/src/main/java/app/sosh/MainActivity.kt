@@ -3,6 +3,7 @@ package app.sosh
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -84,8 +85,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // a controller drives the world that's showing, if one is
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean = Gamepad.key(event) || super.dispatchKeyEvent(event)
+    // a controller or a keyboard drives the world that's showing, if one is,
+    // unless a text field of ours has the keyboard
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        Gamepad.key(event) { currentFocus?.let { it !is WebView && it.onCheckIsTextEditor() } == true } ||
+            super.dispatchKeyEvent(event)
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
         Gamepad.motion(event) || super.dispatchGenericMotionEvent(event)
