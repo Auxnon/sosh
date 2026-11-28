@@ -138,6 +138,7 @@ function loop()
 		world_frame()
 	end
 	Web.update()
+	send_camera()
 end
 
 function draw() end
@@ -836,5 +837,22 @@ function place_camera(x, y, z)
 	-- drawn half a block lower, like everything in the world (DRAW_DZ)
 	local pos = { CAM.x, CAM.y, CAM.z + DRAW_DZ }
 	local rot = { CAM.az, CAM.alt }
-	cam({ pos = pos, rot = rot })
+	local view = {}
+	view.pos = pos
+	view.rot = rot
+	CAM.view = view
+end
+
+-- Hand the engine the camera placed this frame, last thing in the frame.
+-- It takes a camera as soon as it's told, but what's in the world only once
+-- the frame is done: told early, it could draw the new camera with the old
+-- frame's things, and what's held in front of the camera (the book) would
+-- shake whenever the camera moves.
+function send_camera()
+	local v = CAM.view
+	if v == nil then
+		return
+	end
+	CAM.view = nil
+	cam(v)
 end
