@@ -187,7 +187,10 @@ into cloth.
   walk over beside each in turn and dig it into your bag. It breaks
   furniture and takes scaffolding down (everything put in comes back).
   Walking (the keys, or a walk click) drops the queue.
-  **Build** places what's picked from the bag on the outlined face.
+  **Build** places what's picked from the bag on the outlined face. Press
+  and drag to draw a line of blocks: straight along any axis or a perfect
+  diagonal (a stair, if it climbs), shown in scaffolding until you let go
+  (up to 16 blocks, within reach and what the bag holds).
   **Plant** plants carrots on grass or dirt, or picks them once ripe.
   **Carry** lifts a pot, a cow or furniture over your head and puts it
   down on a face. The toolbar at the bottom does the same.

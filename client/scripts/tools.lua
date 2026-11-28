@@ -11,7 +11,8 @@
 --          of and all it held come back); scaffolding comes down
 --   build  place what's picked from the bag (Z/X, or click it in the bag)
 --          on the face it was hit through; furniture that packs into a
---          bag goes down turned (R)
+--          bag goes down turned (R). Press and drag to draw a straight or
+--          diagonal line of blocks (build.lua)
 --   plant  plant carrots on grass or dirt, or pick them once ripe
 --   carry  lift a pot, a cow or furniture over your head, and put it down
 --          on a face; heavy furniture needs a second carrier: another
@@ -284,7 +285,7 @@ function world_pointer(me)
 	if m.m2 and APP.right_world then
 		CAM.az = CAM.az - UI.move_x * DRAG_TURN
 		CAM.alt = U.clamp(CAM.alt + UI.move_y * DRAG_TILT, -1.3, -0.15)
-	elseif m.m1 and UI.dragging and APP.press_world then
+	elseif m.m1 and UI.dragging and APP.press_world and Build.line == nil then
 		CAM.az = CAM.az - UI.move_x * DRAG_TURN
 		CAM.alt = U.clamp(CAM.alt + UI.move_y * DRAG_TILT, -1.3, -0.15)
 	end
@@ -457,6 +458,12 @@ function world_pointer(me)
 		show_cursor(cell, on)
 	end
 	Furn.show_ghost(ghost, on)
+	-- a press and drag with a block draws a line of them (build.lua)
+	if tool == "build" then
+		Build.pointer(me, hit, over_hud)
+	elseif Build.line ~= nil then
+		Build.cancel()
+	end
 
 	if not UI.tapped or over_hud or not APP.press_world then
 		return
