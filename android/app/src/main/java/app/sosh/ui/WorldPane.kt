@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import app.sosh.AppState
 import kotlinx.coroutines.delay
 import org.json.JSONObject
@@ -114,13 +116,14 @@ fun WorldPane(app: AppState, serverId: Long, shown: Boolean, book: BookState, mo
         }
     }
 
-    Box(modifier) {
+    // around the web view, so it has each touch before they're marked used
+    Box(modifier.keepsTouches()) {
     AndroidView(
         factory = { ctx ->
             gameWebView(ctx, app.serverUrl, "sosh-token/$token sosh-enter/$serverId", SoshHost { book.open = it }, { loaded++ }).apply {
-                // a drag on the world is the world's (turning the camera), not
-                // the drawer's: holding off our parents makes Compose keep the
-                // whole gesture here
+                // a drag on the world is the world's (turning the camera):
+                // this holds off Android views around us; keepsTouches holds
+                // off Compose's own gestures (the drawer's swipe)
                 setOnTouchListener { v, e ->
                     if (e.actionMasked == MotionEvent.ACTION_DOWN) v.parent?.requestDisallowInterceptTouchEvent(true)
                     false
@@ -351,5 +354,20 @@ object Gamepad {
                 "t.dispatchEvent(new KeyboardEvent('$type',{key:${JSONObject.quote(key)},code:'$code',repeat:$repeat,bubbles:true}));})()",
             null,
         )
+    }
+}
+
+/**
+ * Touches on what's in this (a web view) stay its: once the web view has had
+ * each one (children get them first in the main pass), they're marked used, so a gesture around
+ * it, like the drawer's swipe, never takes a drag that started here. Swipes
+ * elsewhere are untouched.
+ */
+fun Modifier.keepsTouches(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            val e = awaitPointerEvent(PointerEventPass.Main)
+            e.changes.forEach { it.consume() }
+        }
     }
 }

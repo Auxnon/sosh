@@ -149,15 +149,10 @@ fun ChatScreen(app: AppState, go: (Screen) -> Unit) {
             Box(Modifier.weight(1f).fillMaxHeight()) { PlaceView(app, go, drag, origin, { origin = it }, null) { gift = null; giftOpen = true } }
         }
     } else {
-    // The world showing (all of it, or beside the chat): a drag that starts
-    // on it is the camera's, and the drawer's swipe would take it (the web
-    // view's requestDisallowInterceptTouchEvent doesn't reach a Compose
-    // gesture), so the servers only come out by the menu button (or back in
-    // by a swipe once they're out).
-    val worldShown = app.place is Place.InServer && app.pane != Pane.Chat
+    // The servers swipe out from anywhere but the world: a drag that starts
+    // on the world stays the camera's (WorldPane's keepsTouches).
     ModalNavigationDrawer(
         drawerState = drawer,
-        gesturesEnabled = drawer.isOpen || !worldShown,
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = Color.Transparent, drawerShape = RectangleShape,
